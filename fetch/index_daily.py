@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from config import TUSHARE_TOKEN
 
 # 限速：每分钟最多 300 次请求（滑动窗口）
-_RATE_LIMIT = 300
+_RATE_LIMIT = 250
 _WINDOW = 60.0
 _rate_lock = threading.Lock()
 _call_times: collections.deque = collections.deque()
