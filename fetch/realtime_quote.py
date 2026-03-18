@@ -133,3 +133,12 @@ def fetch_realtime_quotes(
         df["amount"] = (df["amount"] / 10000).round(2)
 
     return df.reset_index(drop=True)
+
+
+if __name__ == "__main__":
+    # 测试：同时查询指数和个股
+    codes = ["000001.SH", "600519.SH", "000001.SZ"]
+    print(f"查询代码：{codes}")
+    result = fetch_realtime_quotes(codes)
+    print(result[["ts_code", "name", "price", "pct_chg", "volume", "amount"]])
+    print(f"\n共 {len(result)} 条记录，列：{list(result.columns)}")
