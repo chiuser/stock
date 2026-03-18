@@ -124,7 +124,7 @@ def fetch_realtime_quotes(
 
     # 成交量单位：股 -> 手（100股/手）
     if "volume" in df.columns:
-        df["volume"] = (df["volume"] / 100).astype("Int64")
+        df["volume"] = (pd.to_numeric(df["volume"], errors="coerce") / 100).round().astype("Int64")
 
     # 成交额单位：元 -> 万元
     if "amount" in df.columns:
