@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS stock_basic (
 --    建议更新频率: 不常变化，手动维护即可
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS index_basic (
-    ts_code      VARCHAR(12)  NOT NULL,          -- 指数代码，如 000001.SH
+    ts_code      VARCHAR(32)  NOT NULL,          -- 指数代码，如 000001.SH
     name         VARCHAR(50)  NOT NULL,           -- 指数简称
     market       VARCHAR(10),                     -- 交易所或市场（SSE/SZSE/SW等）
     publisher    VARCHAR(30),                     -- 发布方（中证/上交所等）
@@ -134,7 +134,7 @@ CREATE INDEX IF NOT EXISTS idx_stock_daily_basic_date
 --    建议更新频率: 每个交易日收盘后
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS index_daily (
-    ts_code    VARCHAR(12)  NOT NULL,            -- 指数代码
+    ts_code    VARCHAR(32)  NOT NULL,            -- 指数代码
     trade_date DATE         NOT NULL,            -- 交易日期
     open       NUMERIC(12, 4),
     high       NUMERIC(12, 4),
