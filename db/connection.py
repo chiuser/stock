@@ -55,7 +55,7 @@ def upsert_df(df: pd.DataFrame, table: str, conflict_cols: list[str]) -> int:
 
     df = df.where(pd.notnull(df), None)  # NaN → None
     # NaT 在 timestamp 列中不会被 notnull 完全过滤，需额外处理
-    df = df.apply(lambda col: col.map(lambda v: None if v is pd.NaT else v))
+    df = df.apply(lambda col: col.map(lambda v: None if pd.isnull(v) else v))
 
     cols = list(df.columns)
     update_cols = [c for c in cols if c not in conflict_cols]
