@@ -36,7 +36,10 @@ def inspect(name, fn):
 # 1. 股票基本资料 —— 不指定 fields，获取所有字段
 inspect(
     "stock_basic — 股票基本资料",
-    lambda: pro.stock_basic(list_status="L"),
+    lambda: pro.stock_basic(
+        list_status="L",
+        fields="ts_code,symbol,name,area,industry,cnspell,market,list_date,act_name,act_ent_type,fullname,enname,exchange,curr_type,list_status,delist_date,is_hs",
+    ),
 )
 
 # 2. 指数基本资料
