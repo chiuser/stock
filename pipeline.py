@@ -18,7 +18,10 @@ python pipeline.py --table stock_daily stock_daily_basic --code 000001.SZ 600519
 # 按单个交易日更新全市场每日指标
 python pipeline.py --table stock_daily_basic --date 20241231
 
-# 更新所有表（stock_basic + 全部指数日线，不含个股——个股数量太大需分批）
+# 更新指数基本信息（需先执行，index_daily 依赖此表）
+python pipeline.py --table index_basic
+
+# 更新所有表（stock_basic + index_basic + 全部指数日线，不含个股——个股数量太大需分批）
 python pipeline.py --table all --start 20240101
 
 环境变量
@@ -44,12 +47,13 @@ import sys
 
 from load import (
     load_stock_basic,
+    load_index_basic,
     load_index_daily,
     load_stock_daily,
     load_stock_daily_basic,
 )
 
-TABLES = ["stock_basic", "index_daily", "stock_daily", "stock_daily_basic"]
+TABLES = ["stock_basic", "index_basic", "index_daily", "stock_daily", "stock_daily_basic"]
 
 
 def main():
@@ -89,6 +93,9 @@ def main():
 
         if table == "stock_basic":
             load_stock_basic()
+
+        elif table == "index_basic":
+            load_index_basic()
 
         elif table == "index_daily":
             load_index_daily(

@@ -12,11 +12,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import argparse
 import pandas as pd
 from fetch import fetch_index_daily
-from db import upsert_df
-from config import INDEX_CODES
+from db import get_conn, upsert_df
 
 TABLE = "index_daily"
 CONFLICT_COLS = ["ts_code", "trade_date"]
+
+
+def _get_codes_from_db() -> list[str]:
+    """从 index_basic 表读取所有指数代码。"""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT ts_code FROM index_basic ORDER BY ts_code")
+            rows = cur.fetchall()
+    return [r[0] for r in rows]
 
 
 def load(
@@ -29,12 +37,15 @@ def load(
 
     参数
     ----
-    ts_codes   : 指数代码列表；为 None 时使用 config.INDEX_CODES 全部指数
+    ts_codes   : 指数代码列表；为 None 时从 index_basic 表读取全部指数
     start_date : 开始日期，格式 YYYYMMDD
     end_date   : 结束日期，格式 YYYYMMDD
     """
     if ts_codes is None:
-        ts_codes = list(INDEX_CODES.values())
+        ts_codes = _get_codes_from_db()
+        if not ts_codes:
+            print("[index_daily] index_basic 表为空，请先运行 load_index_basic。")
+            return 0
 
     total = 0
     for code in ts_codes:
