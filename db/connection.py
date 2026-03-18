@@ -53,10 +53,6 @@ def upsert_df(df: pd.DataFrame, table: str, conflict_cols: list[str]) -> int:
     if df is None or df.empty:
         return 0
 
-    df = df.where(pd.notnull(df), None)  # NaN → None
-    # NaT 在 timestamp 列中不会被 notnull 完全过滤，需额外处理
-    df = df.apply(lambda col: col.map(lambda v: None if pd.isnull(v) else v))
-
     cols = list(df.columns)
     update_cols = [c for c in cols if c not in conflict_cols]
 
@@ -73,7 +69,11 @@ def upsert_df(df: pd.DataFrame, table: str, conflict_cols: list[str]) -> int:
         f"INSERT INTO {table} ({', '.join(cols)}) VALUES %s {on_conflict}"
     )
 
-    rows = [tuple(row) for row in df.itertuples(index=False, name=None)]
+    # 逐值将 NaN/NaT 转为 None，避免 datetime64 列 dtype 把 None 还原成 NaT
+    rows = [
+        tuple(None if pd.isnull(v) else v for v in row)
+        for row in df.itertuples(index=False, name=None)
+    ]
 
     with get_conn() as conn:
         with conn.cursor() as cur:
