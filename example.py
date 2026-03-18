@@ -1,81 +1,90 @@
 """
-接口字段探查：打印各接口实际返回的所有列名和数据类型。
+fetch 模块功能演示：调用各接口并打印结果。
 
 运行方式：
     python example.py
-
-用于在建表前确认各接口的完整字段列表。
 """
 
-import tushare as ts
-from config import TUSHARE_TOKEN
+from fetch import (
+    fetch_stock_basic,
+    fetch_stock_daily,
+    fetch_stock_daily_basic,
+    fetch_index_daily,
+    fetch_stk_mins,
+)
 
-ts.set_token(TUSHARE_TOKEN)
-pro = ts.pro_api()
 
-
-def inspect(name, fn):
+def show(title, df, cols=None):
     print(f"\n{'='*60}")
-    print(f"[字段探查] {name}")
+    print(f"[示例] {title}")
     print("-" * 60)
-    try:
-        df = fn()
-        if df is None or df.empty:
-            print("  返回空数据，无法探查字段")
-            return
-        print(f"  共 {len(df.columns)} 个字段:")
-        for col in df.columns:
-            sample = df[col].iloc[0] if len(df) > 0 else "N/A"
-            print(f"    {col:<25} dtype={str(df[col].dtype):<12} 示例={sample}")
-        print(f"\n  前2行数据:")
-        print(df.head(2).to_string(index=False))
-    except Exception as e:
-        print(f"  错误: {e}")
+    if df is None or df.empty:
+        print("  返回空数据")
+        return
+    print(f"  共 {len(df)} 行，{len(df.columns)} 列")
+    display = df[cols] if cols else df
+    print(display.head(3).to_string(index=False))
 
 
-# 1. 股票基本资料 —— 不指定 fields，获取所有字段
-inspect(
-    "stock_basic — 股票基本资料",
-    lambda: pro.stock_basic(
-        list_status="L",
-        fields="ts_code,symbol,name,area,industry,cnspell,market,list_date,act_name,act_ent_type,fullname,enname,exchange,curr_type,list_status,delist_date,is_hs",
-    ),
+# ── 1. 股票基本资料 ─────────────────────────────────────────
+df_basic = fetch_stock_basic(list_status="L")
+show(
+    "stock_basic — 股票基本资料（上市股票，前3行）",
+    df_basic,
+    cols=["ts_code", "name", "market", "industry", "list_date", "is_hs"],
 )
 
-# 2. 指数基本资料
-inspect(
-    "index_basic — 指数基本资料",
-    lambda: pro.index_basic(
-        market="SSE",
-        fields="ts_code,name,market,publisher,category,base_date,base_point,list_date,index_type,fullname,weight_rule,desc,exp_date",
-    ),
+# ── 2. 个股日线（含三组复权价格） ───────────────────────────
+df_daily = fetch_stock_daily(
+    ts_code="000001.SZ",
+    start_date="20250101",
+    end_date="20250110",
+)
+show(
+    "stock_daily — 平安银行日线（除权 vs 前复权 vs 后复权）",
+    df_daily,
+    cols=["trade_date", "close", "close_qfq", "close_hfq",
+          "open", "open_qfq", "open_hfq", "vol"],
 )
 
-# 3. 个股日线行情
-inspect(
-    "daily — 个股日线行情",
-    lambda: pro.daily(ts_code="000001.SZ", start_date="20250101", end_date="20250110"),
+# ── 3. 每日基本指标 ─────────────────────────────────────────
+df_basic_daily = fetch_stock_daily_basic(
+    ts_code="000001.SZ",
+    start_date="20250101",
+    end_date="20250110",
+)
+show(
+    "stock_daily_basic — 平安银行每日指标",
+    df_basic_daily,
+    cols=["trade_date", "close", "pe_ttm", "pb", "turnover_rate", "total_mv", "circ_mv"],
 )
 
-# 4. 每日基本指标
-inspect(
-    "daily_basic — 每日基本指标",
-    lambda: pro.daily_basic(ts_code="000001.SZ", trade_date="20250110"),
+# ── 4. 指数日线行情 ─────────────────────────────────────────
+df_index = fetch_index_daily(
+    ts_code="000001.SH",
+    start_date="20250101",
+    end_date="20250110",
+)
+show(
+    "index_daily — 上证指数日线",
+    df_index,
+    cols=["trade_date", "open", "high", "low", "close", "pct_chg", "vol"],
 )
 
-# 5. 指数日线行情
-inspect(
-    "index_daily — 指数日线行情",
-    lambda: pro.index_daily(ts_code="000001.SH", start_date="20250101", end_date="20250110"),
-)
+# ── 5. 分钟K线（注意：每日限访2次） ────────────────────────
+print(f"\n{'='*60}")
+print("[示例] stk_mins — 分钟K线（每日限访2次，已跳过自动调用）")
+print("-" * 60)
+print("  如需测试，手动取消注释：")
+print("  df_mins = fetch_stk_mins('000001.SZ', freq='5min',")
+print("                           start_date='2025-01-06 09:30:00',")
+print("                           end_date='2025-01-06 11:30:00')")
+print("  show('stk_mins', df_mins)")
 
-# 6. 分钟K线（只探查1min，字段结构各频率相同）
-inspect(
-    "stk_mins — 分钟K线 freq=1min",
-    lambda: pro.stk_mins(
-        ts_code="000001.SZ",
-        freq="1min",
-        start_date="2025-01-06 09:00:00",
-        end_date="2025-01-06 15:30:00",
-    ),
-)
+# df_mins = fetch_stk_mins(
+#     ts_code="000001.SZ",
+#     freq="5min",
+#     start_date="2025-01-06 09:30:00",
+#     end_date="2025-01-06 11:30:00",
+# )
+# show("stk_mins — 平安银行5分钟K线", df_mins)
