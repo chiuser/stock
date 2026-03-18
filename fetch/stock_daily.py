@@ -2,8 +2,13 @@
 使用 tushare 获取A股个股日线行情数据，包含除权、前复权、后复权三组价格。
 
 tushare 接口文档：
-  daily    https://tushare.pro/document/2?doc_id=27  （所需积分：120）
-  pro_bar  https://tushare.pro/document/2?doc_id=109 （复权行情封装）
+  daily       https://tushare.pro/document/2?doc_id=27   （所需积分：120）
+  adj_factor  https://tushare.pro/document/2?doc_id=28   （所需积分：100）
+
+复权计算方式：
+  设 f  = 当日复权因子，f_latest = 最新（最近一个交易日）复权因子
+  后复权价 = 除权价 × f
+  前复权价 = 除权价 × f / f_latest
 
 复权说明：
   除权  (unadj)：原始成交价，发生分红/送股后价格跳变。
@@ -12,10 +17,10 @@ tushare 接口文档：
 
 实现说明：
   - 除权价格及其他字段（pre_close/change/pct_chg/vol/amount）通过 pro.daily() 获取。
-  - 前/后复权的 open/high/low/close 通过 ts.pro_bar(adj='qfq'/'hfq') 获取后合并。
-  - ts.pro_bar() 必须指定 ts_code，因此：
+  - 复权因子通过 pro.adj_factor() 获取后手动计算，不依赖 ts.pro_bar()。
+  - pro.adj_factor() 必须指定 ts_code，因此：
       * 按 ts_code 查询时：三组价格均有值。
-      * 仅按 trade_date 查询全市场时：qfq/hfq 列为 NaN（需调用方自行循环或用 adj_factor 计算）。
+      * 仅按 trade_date 查询全市场时：qfq/hfq 列为 NaN（需调用方自行循环或预建因子表）。
 """
 
 import tushare as ts
@@ -41,6 +46,36 @@ def _get_pro_api():
         )
     ts.set_token(TUSHARE_TOKEN)
     return ts.pro_api()
+
+
+def _apply_adj_factor(df: pd.DataFrame, ts_code: str, pro) -> pd.DataFrame:
+    """
+    通过 pro.adj_factor() 计算前/后复权价格并合并到 df。
+
+    df 须含 trade_date（datetime）列及 _PRICE_COLS 各列。
+    结果新增 open/high/low/close 的 _qfq 和 _hfq 后缀列。
+    """
+    adj_df = pro.adj_factor(ts_code=ts_code)
+
+    if adj_df is None or adj_df.empty:
+        for col in _PRICE_COLS:
+            df[f"{col}_qfq"] = pd.NA
+            df[f"{col}_hfq"] = pd.NA
+        return df
+
+    adj_df["trade_date"] = pd.to_datetime(adj_df["trade_date"], format="%Y%m%d")
+
+    # 最新复权因子作为前复权的分母基准
+    latest_factor = adj_df.sort_values("trade_date").iloc[-1]["adj_factor"]
+
+    df = df.merge(adj_df[["trade_date", "adj_factor"]], on="trade_date", how="left")
+
+    for col in _PRICE_COLS:
+        df[f"{col}_hfq"] = (df[col] * df["adj_factor"]).round(4)
+        df[f"{col}_qfq"] = (df[col] * df["adj_factor"] / latest_factor).round(4)
+
+    df = df.drop(columns=["adj_factor"])
+    return df
 
 
 def fetch_stock_daily(
@@ -105,7 +140,7 @@ def fetch_stock_daily(
         if end_date:
             date_params["end_date"] = end_date
 
-    # ── 1. 除权价格（及 pre_close / change / pct_chg / vol / amount） ──
+    # 1. 除权价格
     daily_params = {"fields": _DAILY_FIELDS, **date_params}
     if ts_code:
         daily_params["ts_code"] = ts_code
@@ -116,25 +151,13 @@ def fetch_stock_daily(
 
     df["trade_date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d")
 
-    # ── 2. 前复权 / 后复权（仅在指定 ts_code 时可用） ──
-    for adj in ("qfq", "hfq"):
-        suffix = f"_{adj}"
-        rename_map = {c: f"{c}{suffix}" for c in _PRICE_COLS}
-
-        if ts_code:
-            adj_df = ts.pro_bar(ts_code=ts_code, adj=adj, **date_params)
-            if adj_df is not None and not adj_df.empty:
-                adj_df["trade_date"] = pd.to_datetime(adj_df["trade_date"], format="%Y%m%d")
-                adj_df = (
-                    adj_df[["trade_date"] + _PRICE_COLS]
-                    .rename(columns=rename_map)
-                )
-                df = df.merge(adj_df, on="trade_date", how="left")
-                continue
-
-        # 无法获取时补 NaN 列
-        for new_col in rename_map.values():
-            df[new_col] = pd.NA
+    # 2. 复权价格（仅在指定 ts_code 时可用）
+    if ts_code:
+        df = _apply_adj_factor(df, ts_code, pro)
+    else:
+        for col in _PRICE_COLS:
+            df[f"{col}_qfq"] = pd.NA
+            df[f"{col}_hfq"] = pd.NA
 
     # 统一列顺序，与 schema 保持一致
     col_order = [
