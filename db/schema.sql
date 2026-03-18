@@ -64,6 +64,8 @@ CREATE TABLE IF NOT EXISTS index_basic (
 CREATE TABLE IF NOT EXISTS stock_daily (
     ts_code    VARCHAR(12)  NOT NULL,            -- 股票代码
     trade_date DATE         NOT NULL,            -- 交易日期
+
+    -- 除权（未复权）价格
     open       NUMERIC(12, 4),                   -- 开盘价（元）
     high       NUMERIC(12, 4),                   -- 最高价（元）
     low        NUMERIC(12, 4),                   -- 最低价（元）
@@ -71,6 +73,19 @@ CREATE TABLE IF NOT EXISTS stock_daily (
     pre_close  NUMERIC(12, 4),                   -- 昨收价（元）
     change     NUMERIC(12, 4),                   -- 涨跌额（元）
     pct_chg    NUMERIC(8,  4),                   -- 涨跌幅（%，未复权）
+
+    -- 前复权价格（以当前价为基准，向历史调整；适合技术分析/画图）
+    open_qfq   NUMERIC(12, 4),                   -- 前复权开盘价
+    high_qfq   NUMERIC(12, 4),                   -- 前复权最高价
+    low_qfq    NUMERIC(12, 4),                   -- 前复权最低价
+    close_qfq  NUMERIC(12, 4),                   -- 前复权收盘价
+
+    -- 后复权价格（以上市首日为基准，向当前调整；适合计算实际收益率）
+    open_hfq   NUMERIC(12, 4),                   -- 后复权开盘价
+    high_hfq   NUMERIC(12, 4),                   -- 后复权最高价
+    low_hfq    NUMERIC(12, 4),                   -- 后复权最低价
+    close_hfq  NUMERIC(12, 4),                   -- 后复权收盘价
+
     vol        NUMERIC(20, 2),                   -- 成交量（手）
     amount     NUMERIC(20, 4),                   -- 成交额（千元）
     PRIMARY KEY (ts_code, trade_date)
