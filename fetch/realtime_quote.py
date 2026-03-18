@@ -67,8 +67,8 @@ def fetch_realtime_quotes(
 
     示例
     ----
-    >>> df = fetch_realtime_quotes(['000001.SH', '600519.SH'])
-    >>> print(df[['ts_code', 'name', 'price', 'pct_chg']])
+    >>> df = fetch_realtime_quotes(['000001.SH', '600519.SH'])  # doctest: +SKIP
+    >>> print(df[['ts_code', 'name', 'price', 'pct_chg']])  # doctest: +SKIP
     """
     if not TUSHARE_TOKEN:
         raise ValueError(
@@ -107,8 +107,10 @@ def fetch_realtime_quotes(
     df = df[list(existing.keys())].rename(columns=existing)
 
     # 还原原始 ts_code 映射
-    symbol_to_tscode = {_to_realtime_symbol(c): c for c in ts_codes}
-    df.insert(0, "ts_code", df["symbol"].map(symbol_to_tscode))
+    # tushare get_realtime_quotes 返回的 code 列只含 6 位数字（如 '000001'），
+    # 用 6 位 code 作为映射 key
+    code_to_tscode = {c.split(".")[0]: c for c in ts_codes}
+    df.insert(0, "ts_code", df["symbol"].map(code_to_tscode))
     df = df.drop(columns=["symbol"])
 
     # 数值列转换
