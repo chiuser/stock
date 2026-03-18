@@ -1,0 +1,134 @@
+"""
+数据管道主入口：从 Tushare 拉取数据并写入远程 PostgreSQL。
+
+运行方式
+--------
+# 查看帮助
+python pipeline.py --help
+
+# 仅更新股票基本资料
+python pipeline.py --table stock_basic
+
+# 更新指数日线（默认使用 config.INDEX_CODES，可指定日期范围）
+python pipeline.py --table index_daily --start 20240101 --end 20241231
+
+# 更新指定股票的日线 + 每日指标
+python pipeline.py --table stock_daily stock_daily_basic --code 000001.SZ 600519.SH --start 20240101
+
+# 按单个交易日更新全市场每日指标
+python pipeline.py --table stock_daily_basic --date 20241231
+
+# 更新所有表（stock_basic + 全部指数日线，不含个股——个股数量太大需分批）
+python pipeline.py --table all --start 20240101
+
+环境变量
+--------
+DB_HOST      远程服务器 IP / 域名
+DB_PORT      端口（默认 5432）
+DB_NAME      数据库名
+DB_USER      用户名
+DB_PASSWORD  密码
+
+示例（设置环境变量后运行）
+--------------------------
+export DB_HOST=your.server.ip
+export DB_PORT=5432
+export DB_NAME=stock
+export DB_USER=postgres
+export DB_PASSWORD=your_password
+python pipeline.py --table index_daily --start 20200101
+"""
+
+import argparse
+import sys
+
+from load import (
+    load_stock_basic,
+    load_index_daily,
+    load_stock_daily,
+    load_stock_daily_basic,
+)
+
+TABLES = ["stock_basic", "index_daily", "stock_daily", "stock_daily_basic"]
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Tushare → PostgreSQL 数据管道",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument(
+        "--table", nargs="+", required=True,
+        choices=TABLES + ["all"],
+        help="要更新的表，支持多个，'all' 表示全部（个股除外）",
+    )
+    parser.add_argument("--code",  nargs="+", help="股票代码列表（用于 stock_daily / stock_daily_basic）")
+    parser.add_argument("--codes-file", help="包含股票代码的文件，每行一个")
+    parser.add_argument("--start", help="开始日期 YYYYMMDD")
+    parser.add_argument("--end",   help="结束日期 YYYYMMDD")
+    parser.add_argument("--date",  help="单日 YYYYMMDD（用于 stock_daily_basic 全市场模式）")
+    parser.add_argument("--sleep", type=float, default=0.3,
+                        help="个股批量拉取时每只间隔秒数（默认 0.3）")
+    args = parser.parse_args()
+
+    tables = TABLES if "all" in args.table else args.table
+
+    # 读取股票代码列表
+    codes: list[str] = []
+    if args.codes_file:
+        with open(args.codes_file) as f:
+            codes = [line.strip() for line in f if line.strip()]
+    elif args.code:
+        codes = args.code
+
+    for table in tables:
+        print(f"\n{'='*60}")
+        print(f"  开始处理表：{table}")
+        print(f"{'='*60}")
+
+        if table == "stock_basic":
+            load_stock_basic()
+
+        elif table == "index_daily":
+            load_index_daily(
+                ts_codes=codes or None,
+                start_date=args.start,
+                end_date=args.end,
+            )
+
+        elif table == "stock_daily":
+            if not codes:
+                print("[pipeline] --table stock_daily 需要提供 --code 或 --codes-file。")
+                sys.exit(1)
+            load_stock_daily(
+                ts_codes=codes,
+                start_date=args.start,
+                end_date=args.end,
+                sleep_sec=args.sleep,
+            )
+
+        elif table == "stock_daily_basic":
+            if args.date:
+                # 按交易日拉全市场
+                load_stock_daily_basic(trade_date=args.date)
+            elif codes:
+                # 按股票逐个拉
+                for code in codes:
+                    load_stock_daily_basic(
+                        ts_code=code,
+                        start_date=args.start,
+                        end_date=args.end,
+                    )
+            else:
+                print("[pipeline] stock_daily_basic 请指定 --date（全市场单日）"
+                      " 或 --code + --start/--end（单股区间）。")
+                sys.exit(1)
+
+    print(f"\n{'='*60}")
+    print("  所有任务完成。")
+    print(f"{'='*60}\n")
+
+
+if __name__ == "__main__":
+    main()
