@@ -23,6 +23,7 @@ tushare 接口文档：
       * 仅按 trade_date 查询全市场时：qfq/hfq 列为 NaN（需调用方自行循环或预建因子表）。
 """
 
+import datetime
 import tushare as ts
 import pandas as pd
 from typing import Optional
@@ -55,7 +56,9 @@ def _apply_adj_factor(df: pd.DataFrame, ts_code: str, pro) -> pd.DataFrame:
     df 须含 trade_date（datetime）列及 _PRICE_COLS 各列。
     结果新增 open/high/low/close 的 _qfq 和 _hfq 后缀列。
     """
-    adj_df = pro.adj_factor(ts_code=ts_code)
+    # 查询范围内的因子（用于逐日乘价格）
+    min_date = df["trade_date"].min().strftime("%Y%m%d")
+    adj_df = pro.adj_factor(ts_code=ts_code, start_date=min_date)
 
     if adj_df is None or adj_df.empty:
         for col in _PRICE_COLS:
@@ -65,8 +68,13 @@ def _apply_adj_factor(df: pd.DataFrame, ts_code: str, pro) -> pd.DataFrame:
 
     adj_df["trade_date"] = pd.to_datetime(adj_df["trade_date"], format="%Y%m%d")
 
-    # 最新复权因子作为前复权的分母基准
-    latest_factor = adj_df.sort_values("trade_date").iloc[-1]["adj_factor"]
+    # 前复权分母：单独取「今天以前最近一条」复权因子，避免被默认行数限制截断
+    today = datetime.date.today().strftime("%Y%m%d")
+    adj_latest = pro.adj_factor(ts_code=ts_code, end_date=today, limit=1)
+    if adj_latest is not None and not adj_latest.empty:
+        latest_factor = float(adj_latest["adj_factor"].iloc[0])
+    else:
+        latest_factor = float(adj_df.sort_values("trade_date").iloc[-1]["adj_factor"])
 
     df = df.merge(adj_df[["trade_date", "adj_factor"]], on="trade_date", how="left")
 
