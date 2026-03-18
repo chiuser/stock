@@ -45,7 +45,10 @@ inspect(
 # 2. 指数基本资料
 inspect(
     "index_basic — 指数基本资料",
-    lambda: pro.index_basic(market="SSE"),
+    lambda: pro.index_basic(
+        market="SSE",
+        fields="ts_code,name,market,publisher,category,base_date,base_point,list_date,index_type,fullname,weight_rule,desc,exp_date",
+    ),
 )
 
 # 3. 个股日线行情
