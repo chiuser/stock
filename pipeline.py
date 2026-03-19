@@ -106,11 +106,8 @@ def main():
             )
 
         elif table == "stock_daily":
-            if not codes:
-                print("[pipeline] --table stock_daily 需要提供 --code 或 --codes-file。")
-                sys.exit(1)
             load_stock_daily(
-                ts_codes=codes,
+                ts_codes=codes or None,
                 start_date=args.start,
                 end_date=args.end,
                 sleep_sec=args.sleep,

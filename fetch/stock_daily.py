@@ -24,6 +24,10 @@ tushare 接口文档：
 """
 
 import datetime
+import time
+import collections
+import threading
+
 import tushare as ts
 import pandas as pd
 from typing import Optional
@@ -32,6 +36,24 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from config import TUSHARE_TOKEN
+
+# 限速：每分钟最多 250 次请求（滑动窗口）
+_RATE_LIMIT = 250
+_WINDOW = 60.0
+_rate_lock = threading.Lock()
+_call_times: collections.deque = collections.deque()
+
+
+def _rate_limit_wait():
+    with _rate_lock:
+        now = time.monotonic()
+        while _call_times and _call_times[0] < now - _WINDOW:
+            _call_times.popleft()
+        if len(_call_times) >= _RATE_LIMIT:
+            sleep_for = _WINDOW - (now - _call_times[0])
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+        _call_times.append(time.monotonic())
 
 _DAILY_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
 _PRICE_COLS   = ["open", "high", "low", "close"]
@@ -58,6 +80,7 @@ def _apply_adj_factor(df: pd.DataFrame, ts_code: str, pro) -> pd.DataFrame:
     """
     # 查询范围内的因子（用于逐日乘价格）
     min_date = df["trade_date"].min().strftime("%Y%m%d")
+    _rate_limit_wait()
     adj_df = pro.adj_factor(ts_code=ts_code, start_date=min_date)
 
     if adj_df is None or adj_df.empty:
@@ -70,6 +93,7 @@ def _apply_adj_factor(df: pd.DataFrame, ts_code: str, pro) -> pd.DataFrame:
 
     # 前复权分母：单独取「今天以前最近一条」复权因子，避免被默认行数限制截断
     today = datetime.date.today().strftime("%Y%m%d")
+    _rate_limit_wait()
     adj_latest = pro.adj_factor(ts_code=ts_code, end_date=today, limit=1)
     if adj_latest is not None and not adj_latest.empty:
         latest_factor = float(adj_latest["adj_factor"].iloc[0])
@@ -153,6 +177,7 @@ def fetch_stock_daily(
     if ts_code:
         daily_params["ts_code"] = ts_code
 
+    _rate_limit_wait()
     df = pro.daily(**daily_params)
     if df is None or df.empty:
         return pd.DataFrame()
