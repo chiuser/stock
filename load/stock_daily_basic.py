@@ -2,7 +2,10 @@
 加载 stock_daily_basic（个股每日基本指标）到远程 PostgreSQL。
 
 运行方式：
-    # 按交易日拉取全市场（推荐，每次一天）
+    # 按交易日区间循环拉取全市场（推荐）
+    python -m load.stock_daily_basic --start 20240101 --end 20241231
+
+    # 按单个交易日拉取全市场
     python -m load.stock_daily_basic --date 20241231
 
     # 按股票代码 + 日期范围
@@ -14,7 +17,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import argparse
-import time
+import pandas as pd
+from datetime import date
 from fetch import fetch_stock_daily_basic
 from db import upsert_df
 
@@ -53,6 +57,37 @@ def load(
     return n
 
 
+def load_date_range(start_date: str, end_date: str | None = None) -> int:
+    """
+    按交易日区间循环拉取全市场每日基本指标。
+
+    逐个工作日调用 load(trade_date=...)，每次一个 API 请求获取全市场数据。
+    节假日 tushare 返回空，自动跳过。
+
+    参数
+    ----
+    start_date : 开始日期，格式 YYYYMMDD
+    end_date   : 结束日期，格式 YYYYMMDD；默认为今天
+    """
+    if end_date is None:
+        end_date = date.today().strftime("%Y%m%d")
+
+    # pd.bdate_range 只生成工作日（周一~周五），节假日由空返回自动跳过
+    dates = pd.bdate_range(
+        start=pd.to_datetime(start_date, format="%Y%m%d"),
+        end=pd.to_datetime(end_date, format="%Y%m%d"),
+    )
+
+    total = 0
+    for i, dt in enumerate(dates, 1):
+        d = dt.strftime("%Y%m%d")
+        print(f"[stock_daily_basic] [{i}/{len(dates)}] {d}")
+        total += load(trade_date=d)
+
+    print(f"[stock_daily_basic] 全部完成，共 upsert {total} 行。")
+    return total
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="加载每日基本指标到数据库")
     parser.add_argument("--code",  help="股票代码，如 000001.SZ")
@@ -61,9 +96,14 @@ if __name__ == "__main__":
     parser.add_argument("--end",   help="结束日期 YYYYMMDD")
     args = parser.parse_args()
 
-    load(
-        ts_code=args.code,
-        trade_date=args.date,
-        start_date=args.start,
-        end_date=args.end,
-    )
+    if args.date:
+        load(trade_date=args.date)
+    elif args.start and not args.code:
+        load_date_range(start_date=args.start, end_date=args.end)
+    else:
+        load(
+            ts_code=args.code,
+            trade_date=args.date,
+            start_date=args.start,
+            end_date=args.end,
+        )

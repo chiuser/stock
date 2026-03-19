@@ -51,6 +51,7 @@ from load import (
     load_index_daily,
     load_stock_daily,
     load_stock_daily_basic,
+    load_stock_daily_basic_date_range,
 )
 
 TABLES = ["stock_basic", "index_basic", "index_daily", "stock_daily", "stock_daily_basic"]
@@ -117,8 +118,14 @@ def main():
 
         elif table == "stock_daily_basic":
             if args.date:
-                # 按交易日拉全市场
+                # 单日全市场
                 load_stock_daily_basic(trade_date=args.date)
+            elif args.start and not codes:
+                # 日期区间，按交易日循环拉全市场（推荐）
+                load_stock_daily_basic_date_range(
+                    start_date=args.start,
+                    end_date=args.end,
+                )
             elif codes:
                 # 按股票逐个拉
                 for code in codes:
@@ -128,8 +135,8 @@ def main():
                         end_date=args.end,
                     )
             else:
-                print("[pipeline] stock_daily_basic 请指定 --date（全市场单日）"
-                      " 或 --code + --start/--end（单股区间）。")
+                print("[pipeline] stock_daily_basic 请指定 --start（全市场区间）"
+                      "、--date（全市场单日）或 --code + --start/--end（单股区间）。")
                 sys.exit(1)
 
     print(f"\n{'='*60}")

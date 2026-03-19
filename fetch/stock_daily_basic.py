@@ -5,6 +5,10 @@ tushare 接口文档：https://tushare.pro/document/2?doc_id=32
 所需积分：120
 """
 
+import time
+import collections
+import threading
+
 import tushare as ts
 import pandas as pd
 from typing import Optional
@@ -13,6 +17,24 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from config import TUSHARE_TOKEN
+
+# 限速：每分钟最多 250 次请求（滑动窗口）
+_RATE_LIMIT = 250
+_WINDOW = 60.0
+_rate_lock = threading.Lock()
+_call_times: collections.deque = collections.deque()
+
+
+def _rate_limit_wait():
+    with _rate_lock:
+        now = time.monotonic()
+        while _call_times and _call_times[0] < now - _WINDOW:
+            _call_times.popleft()
+        if len(_call_times) >= _RATE_LIMIT:
+            sleep_for = _WINDOW - (now - _call_times[0])
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+        _call_times.append(time.monotonic())
 
 
 def _get_pro_api():
@@ -94,6 +116,7 @@ def fetch_stock_daily_basic(
         if end_date:
             params["end_date"] = end_date
 
+    _rate_limit_wait()
     df = pro.daily_basic(**params)
 
     if df is None or df.empty:
