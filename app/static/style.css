@@ -1,0 +1,126 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #131722;
+  color: #d1d4dc;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Toolbar ─────────────────────────────────────────────── */
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  background: #1e222d;
+  border-bottom: 1px solid #2a2e39;
+  flex-wrap: wrap;
+  position: relative;
+  z-index: 20;
+  flex-shrink: 0;
+}
+
+.divider {
+  width: 1px;
+  height: 20px;
+  background: #2a2e39;
+}
+
+/* ── Search ──────────────────────────────────────────────── */
+#search-wrap { position: relative; }
+
+#search {
+  width: 190px;
+  padding: 5px 10px;
+  background: #2a2e39;
+  border: 1px solid #363c4e;
+  border-radius: 4px;
+  color: #d1d4dc;
+  font-size: 13px;
+  outline: none;
+  transition: border-color .15s;
+}
+#search:focus { border-color: #2962ff; }
+
+#suggestions {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 260px;
+  background: #1e222d;
+  border: 1px solid #363c4e;
+  border-radius: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  box-shadow: 0 6px 20px rgba(0,0,0,.5);
+  z-index: 100;
+}
+.sug-item {
+  padding: 7px 12px;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  font-family: monospace;
+  font-size: 13px;
+}
+.sug-item:hover { background: #2a2e39; }
+.sug-code { color: #d1d4dc; min-width: 90px; }
+.sug-name { color: #787b86; }
+
+/* ── Stock name label ────────────────────────────────────── */
+#stock-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  min-width: 140px;
+}
+
+/* ── Button groups ───────────────────────────────────────── */
+.btn-group { display: flex; gap: 3px; }
+
+button {
+  padding: 4px 9px;
+  background: transparent;
+  border: 1px solid #363c4e;
+  border-radius: 3px;
+  color: #787b86;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all .15s;
+  white-space: nowrap;
+}
+button:hover { border-color: #aaa; color: #d1d4dc; }
+
+/* Adj buttons active */
+.adj-btn.active {
+  background: #2962ff22;
+  border-color: #2962ff;
+  color: #2962ff;
+}
+
+/* Range buttons active */
+.range-btn.active {
+  background: #2962ff22;
+  border-color: #2962ff;
+  color: #2962ff;
+}
+
+/* MA buttons: use CSS variable for per-button color */
+.ma-btn.active {
+  background: color-mix(in srgb, var(--ma-color) 15%, transparent);
+  border-color: var(--ma-color);
+  color: var(--ma-color);
+}
+
+/* ── Chart ───────────────────────────────────────────────── */
+#chart-container {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+}
