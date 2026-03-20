@@ -100,6 +100,7 @@ function initChart() {
   // ── 成交量图（独立面板，右轴显示成交量刻度）
   volChart = LightweightCharts.createChart(volumeEl, {
     ...BASE_OPTS,
+    localization: { timeFormatter: fmtDate },
     rightPriceScale: {
       borderColor:  '#2a2e39',
       scaleMargins: { top: 0.08, bottom: 0.02 },

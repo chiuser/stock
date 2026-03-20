@@ -118,6 +118,9 @@ button:hover { border-color: #aaa; color: #d1d4dc; }
   color: var(--ma-color);
 }
 
+/* ── 隐藏 TradingView 品牌链接 ───────────────────────────── */
+#candle-chart a, #volume-chart a { display: none !important; }
+
 /* ── Charts wrapper ──────────────────────────────────────── */
 #charts-wrapper {
   flex: 1;
