@@ -14,14 +14,21 @@ function fmtDate(time) {
   return String(time).slice(0, 10);
 }
 
-// 横轴刻度：年 / 年月 / 月日 三级
+// 横轴刻度：年 / 年月 / 日（仅周一·周三·周五显示）
+const _WEEK = ['日','一','二','三','四','五','六'];
 function tickFormatter(time, tickMarkType) {
   const s = fmtDate(time);
   const [y, m, d] = s.split('-').map(Number);
   switch (tickMarkType) {
     case 0: return `${y}年`;
-    case 1: return `${y}年${m}月`;
-    case 2: return `${m}月${d}日`;
+    case 1: return `${y}/${String(m).padStart(2,'0')}`;
+    case 2: {
+      const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0=日 1=一 … 6=六
+      if (dow === 1 || dow === 3 || dow === 5) {
+        return `${String(m).padStart(2,'0')}/${String(d).padStart(2,'0')} 周${_WEEK[dow]}`;
+      }
+      return '';   // 周二·周四·周末不显示标签
+    }
     default: return s;
   }
 }
