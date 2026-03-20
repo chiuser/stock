@@ -80,22 +80,26 @@ function initChart() {
     height: container.clientHeight,
   });
 
-  // K 线
+  // K 线（红涨绿跌，A股惯例）
   candleSeries = chart.addCandlestickSeries({
-    upColor:      '#26a69a',
-    downColor:    '#ef5350',
+    upColor:      '#ef5350',
+    downColor:    '#26a69a',
     borderVisible: false,
-    wickUpColor:   '#26a69a',
-    wickDownColor: '#ef5350',
+    wickUpColor:   '#ef5350',
+    wickDownColor: '#26a69a',
+  });
+  // K线占上方 70%，底部留给成交量
+  chart.priceScale('right').applyOptions({
+    scaleMargins: { top: 0.05, bottom: 0.3 },
   });
 
-  // 成交量（叠加在主图底部 25%）
+  // 成交量（独立价格轴，占底部 25%）
   volumeSeries = chart.addHistogramSeries({
     priceFormat:  { type: 'volume' },
     priceScaleId: 'volume',
   });
   chart.priceScale('volume').applyOptions({
-    scaleMargins: { top: 0.75, bottom: 0 },
+    scaleMargins: { top: 0.78, bottom: 0 },
   });
 
   // 均线
