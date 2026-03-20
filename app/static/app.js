@@ -1,5 +1,31 @@
 'use strict';
 
+// ── 日期格式化（BusinessDay 对象 → YYYY-MM-DD） ───────────────
+function fmtDate(time) {
+  if (time && typeof time === 'object' && 'year' in time) {
+    const m = String(time.month).padStart(2, '0');
+    const d = String(time.day).padStart(2, '0');
+    return `${time.year}-${m}-${d}`;
+  }
+  return String(time);
+}
+
+// 横轴刻度：年 / 年月 / 月日 三级
+function tickFormatter(time, tickMarkType) {
+  const s = fmtDate(time);
+  const [y, m, d] = s.split('-').map(Number);
+  switch (tickMarkType) {
+    case 0: return `${y}年`;
+    case 1: return `${y}年${m}月`;
+    case 2: return `${m}月${d}日`;
+    default: return s;
+  }
+}
+
+// ── 每个时间范围默认显示的 K 线根数 ─────────────────────────
+//   短周期全部显示；3年/全部默认只显示最近 ~1 年，可左滑查看更早
+const VISIBLE_BARS = { 1: 25, 3: 70, 6: 135, 12: 260, 36: 260, 0: 260 };
+
 // ── MA 配色 ──────────────────────────────────────────────────
 const MA_COLORS = {
   5:   '#FF6B35',
@@ -35,12 +61,16 @@ function initChart() {
       horzLines: { color: '#1e222d' },
     },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    localization: {
+      timeFormatter: fmtDate,   // 十字线底部日期标签
+    },
     rightPriceScale: { borderColor: '#2a2e39' },
     timeScale: {
-      borderColor:  '#2a2e39',
-      timeVisible:  true,
-      fixLeftEdge:  true,
-      fixRightEdge: true,
+      borderColor:      '#2a2e39',
+      timeVisible:      true,
+      fixLeftEdge:      true,
+      fixRightEdge:     true,
+      tickMarkFormatter: tickFormatter,  // 横轴刻度标签
     },
     width:  container.clientWidth,
     height: container.clientHeight,
@@ -124,6 +154,20 @@ async function loadData(tsCode) {
   MA_WINDOWS.forEach(w => {
     maSeries[w].setData(data.ma[String(w)] || []);
   });
+
+  // 设置可视 K 线窗口
+  const candles = data.candles;
+  if (candles.length > 0) {
+    const targetBars = VISIBLE_BARS[currentRange] ?? 260;
+    if (candles.length <= targetBars) {
+      chart.timeScale().fitContent();
+    } else {
+      chart.timeScale().setVisibleRange({
+        from: candles[candles.length - targetBars].time,
+        to:   candles[candles.length - 1].time,
+      });
+    }
+  }
 }
 
 // ── 搜索 ─────────────────────────────────────────────────────
