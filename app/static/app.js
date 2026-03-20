@@ -1,20 +1,18 @@
 'use strict';
 
-// ── 日期格式化（兼容 BusinessDay 对象 / UNIX 秒时间戳 / 字符串） ──
+// ── 日期格式化 ────────────────────────────────────────────
 function fmtDate(time) {
   if (time && typeof time === 'object' && 'year' in time) {
-    // { year, month, day }
     return `${time.year}-${String(time.month).padStart(2,'0')}-${String(time.day).padStart(2,'0')}`;
   }
   if (typeof time === 'number') {
-    // UNIX 秒级时间戳（库内部实际传递的形式）
     const d = new Date(time * 1000);
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
   }
   return String(time).slice(0, 10);
 }
 
-// 横轴刻度：年 / 年月 / 日
+// 横轴刻度
 function tickFormatter(time, tickMarkType) {
   const s = fmtDate(time);
   const [y, m, d] = s.split('-').map(Number);
@@ -26,11 +24,9 @@ function tickFormatter(time, tickMarkType) {
   }
 }
 
-// ── 每个时间范围默认显示的 K 线根数 ─────────────────────────
-//   短周期全部显示；3年/全部默认只显示最近 ~1 年，可左滑查看更早
+// ── 配置 ──────────────────────────────────────────────────
 const VISIBLE_BARS = { 1: 25, 3: 70, 6: 135, 12: 260, 36: 260, 0: 260 };
 
-// ── MA 配色 ──────────────────────────────────────────────────
 const MA_COLORS = {
   5:   '#FF6B35',
   10:  '#FFE66D',
@@ -42,68 +38,54 @@ const MA_COLORS = {
 };
 const MA_WINDOWS = Object.keys(MA_COLORS).map(Number);
 
-// ── 状态 ─────────────────────────────────────────────────────
-let chart, candleSeries, volumeSeries;
+// ── 状态 ─────────────────────────────────────────────────
+let chart, candleSeries;
+let volChart, volumeSeries;
 const maSeries = {};
 
 let currentCode  = null;
 let currentAdj   = 'qfq';
-let currentRange = 6;        // months；0 = 全部
+let currentRange = 6;
 let activeMA     = new Set([5, 10, 20, 60]);
 
-// ── 初始化图表 ───────────────────────────────────────────────
-function initChart() {
-  const container = document.getElementById('chart-container');
+// ── 公共图表配置 ──────────────────────────────────────────
+const BASE_OPTS = {
+  layout:     { background: { color: '#131722' }, textColor: '#787b86' },
+  grid:       { vertLines: { color: '#1e222d' }, horzLines: { color: '#1e222d' } },
+  rightPriceScale: { borderColor: '#2a2e39' },
+};
 
-  chart = LightweightCharts.createChart(container, {
-    layout: {
-      background: { color: '#131722' },
-      textColor:  '#787b86',
-    },
-    grid: {
-      vertLines: { color: '#1e222d' },
-      horzLines: { color: '#1e222d' },
-    },
-    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-    localization: {
-      timeFormatter: fmtDate,   // 十字线底部日期标签
-    },
-    rightPriceScale: { borderColor: '#2a2e39' },
-    leftPriceScale:  { borderColor: '#2a2e39', visible: true },
-    timeScale: {
-      borderColor:      '#2a2e39',
-      timeVisible:      false,   // 日线无需显示时间，避免出现 00:00:00
-      fixLeftEdge:      true,
-      fixRightEdge:     true,
-      tickMarkFormatter: tickFormatter,  // 横轴刻度标签
-    },
-    width:  container.clientWidth,
-    height: container.clientHeight,
+const BASE_TIMESCALE = {
+  borderColor:       '#2a2e39',
+  fixLeftEdge:       true,
+  fixRightEdge:      true,
+  timeVisible:       false,
+  tickMarkFormatter: tickFormatter,
+};
+
+// ── 初始化图表 ────────────────────────────────────────────
+function initChart() {
+  const candleEl = document.getElementById('candle-chart');
+  const volumeEl = document.getElementById('volume-chart');
+
+  // ── K 线图（隐藏底部时间轴，时间轴由成交量图统一显示）
+  chart = LightweightCharts.createChart(candleEl, {
+    ...BASE_OPTS,
+    crosshair:    { mode: LightweightCharts.CrosshairMode.Normal },
+    localization: { timeFormatter: fmtDate },
+    timeScale:    { ...BASE_TIMESCALE, visible: false },
+    width:  candleEl.clientWidth,
+    height: candleEl.clientHeight,
   });
 
-  // K 线（红涨绿跌，A股惯例）
   candleSeries = chart.addCandlestickSeries({
-    upColor:      '#ef5350',
-    downColor:    '#26a69a',
+    upColor:       '#ef5350',
+    downColor:     '#26a69a',
     borderVisible: false,
     wickUpColor:   '#ef5350',
     wickDownColor: '#26a69a',
   });
-  // K线占上方 70%，底部留给成交量
-  chart.priceScale('right').applyOptions({
-    scaleMargins: { top: 0.05, bottom: 0.3 },
-  });
 
-  // 成交量（左轴，占底部 22%）
-  volumeSeries = chart.addHistogramSeries({
-    priceFormat:  { type: 'volume' },
-    priceScaleId: 'left',
-  });
-  chart.priceScale('left').applyOptions({
-    scaleMargins: { top: 0.78, bottom: 0 },
-  });
-
-  // 均线
   MA_WINDOWS.forEach(w => {
     maSeries[w] = chart.addLineSeries({
       color:                  MA_COLORS[w],
@@ -115,17 +97,48 @@ function initChart() {
     });
   });
 
-  // 响应窗口大小
-  const ro = new ResizeObserver(() => {
-    chart.applyOptions({
-      width:  container.clientWidth,
-      height: container.clientHeight,
-    });
+  // ── 成交量图（独立面板，右轴显示成交量刻度）
+  volChart = LightweightCharts.createChart(volumeEl, {
+    ...BASE_OPTS,
+    rightPriceScale: {
+      borderColor:  '#2a2e39',
+      scaleMargins: { top: 0.08, bottom: 0.02 },
+    },
+    timeScale: { ...BASE_TIMESCALE },
+    width:  volumeEl.clientWidth,
+    height: volumeEl.clientHeight,
   });
-  ro.observe(container);
+
+  volumeSeries = volChart.addHistogramSeries({
+    priceFormat:  { type: 'volume' },
+    priceScaleId: 'right',
+  });
+
+  // ── 两图时间轴联动（滚动/缩放同步）
+  let syncing = false;
+  chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+    if (syncing || !range) return;
+    syncing = true;
+    volChart.timeScale().setVisibleLogicalRange(range);
+    syncing = false;
+  });
+  volChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+    if (syncing || !range) return;
+    syncing = true;
+    chart.timeScale().setVisibleLogicalRange(range);
+    syncing = false;
+  });
+
+  // ── 响应窗口大小
+  const ro = new ResizeObserver(() => {
+    chart.applyOptions({   width: candleEl.clientWidth, height: candleEl.clientHeight });
+    volChart.applyOptions({ width: volumeEl.clientWidth, height: volumeEl.clientHeight });
+  });
+  ro.observe(candleEl);
+  ro.observe(volumeEl);
 }
 
-// ── 计算起始日期 ─────────────────────────────────────────────
+// ── 计算起始日期 ──────────────────────────────────────────
 function calcStartDate(months) {
   if (!months) return null;
   const d = new Date();
@@ -133,7 +146,7 @@ function calcStartDate(months) {
   return d.toISOString().slice(0, 10).replace(/-/g, '');
 }
 
-// ── 加载数据 ─────────────────────────────────────────────────
+// ── 加载数据 ──────────────────────────────────────────────
 async function loadData(tsCode) {
   if (!tsCode) return;
   currentCode = tsCode;
@@ -149,37 +162,32 @@ async function loadData(tsCode) {
   const data = await dailyRes.json();
   const info = await infoRes.json();
 
-  // 更新标题
   document.getElementById('stock-name').textContent =
     info ? `${info.name}（${info.ts_code}）` : tsCode;
 
-  // K 线
   candleSeries.setData(data.candles);
-
-  // 成交量
   volumeSeries.setData(data.volume);
+  MA_WINDOWS.forEach(w => maSeries[w].setData(data.ma[String(w)] || []));
 
-  // 均线
-  MA_WINDOWS.forEach(w => {
-    maSeries[w].setData(data.ma[String(w)] || []);
-  });
-
-  // 设置可视 K 线窗口
+  // 设置可视 K 线窗口（两图同步设置）
   const candles = data.candles;
   if (candles.length > 0) {
     const targetBars = VISIBLE_BARS[currentRange] ?? 260;
     if (candles.length <= targetBars) {
       chart.timeScale().fitContent();
+      volChart.timeScale().fitContent();
     } else {
-      chart.timeScale().setVisibleRange({
+      const range = {
         from: candles[candles.length - targetBars].time,
         to:   candles[candles.length - 1].time,
-      });
+      };
+      chart.timeScale().setVisibleRange(range);
+      volChart.timeScale().setVisibleRange(range);
     }
   }
 }
 
-// ── 搜索 ─────────────────────────────────────────────────────
+// ── 搜索 ──────────────────────────────────────────────────
 let searchTimer = null;
 const searchEl      = document.getElementById('search');
 const suggestionsEl = document.getElementById('suggestions');
@@ -211,7 +219,7 @@ function renderSuggestions(results) {
   suggestionsEl.innerHTML = '';
   if (!results.length) { hideSuggestions(); return; }
   results.forEach(r => {
-    const item    = document.createElement('div');
+    const item     = document.createElement('div');
     item.className = 'sug-item';
     item.innerHTML = `<span class="sug-code">${r.ts_code}</span><span class="sug-name">${r.name}</span>`;
     item.addEventListener('click', () => {
@@ -228,7 +236,7 @@ function hideSuggestions() {
   suggestionsEl.style.display = 'none';
 }
 
-// ── 复权切换 ─────────────────────────────────────────────────
+// ── 复权切换 ──────────────────────────────────────────────
 document.querySelectorAll('.adj-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.adj-btn').forEach(b => b.classList.remove('active'));
@@ -238,7 +246,7 @@ document.querySelectorAll('.adj-btn').forEach(btn => {
   });
 });
 
-// ── 均线开关 ─────────────────────────────────────────────────
+// ── 均线开关 ──────────────────────────────────────────────
 document.querySelectorAll('.ma-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const w = parseInt(btn.dataset.ma);
@@ -254,7 +262,7 @@ document.querySelectorAll('.ma-btn').forEach(btn => {
   });
 });
 
-// ── 时间范围切换 ─────────────────────────────────────────────
+// ── 时间范围切换 ──────────────────────────────────────────
 document.querySelectorAll('.range-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
@@ -264,5 +272,5 @@ document.querySelectorAll('.range-btn').forEach(btn => {
   });
 });
 
-// ── 启动 ─────────────────────────────────────────────────────
+// ── 启动 ──────────────────────────────────────────────────
 initChart();

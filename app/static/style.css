@@ -118,9 +118,40 @@ button:hover { border-color: #aaa; color: #d1d4dc; }
   color: var(--ma-color);
 }
 
-/* ── Chart ───────────────────────────────────────────────── */
-#chart-container {
+/* ── Charts wrapper ──────────────────────────────────────── */
+#charts-wrapper {
   flex: 1;
-  width: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#candle-chart {
+  flex: 2;
+  min-height: 0;
+}
+
+#volume-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid #2a2e39;
+}
+
+#volume-header {
+  flex-shrink: 0;
+  height: 24px;
+  line-height: 24px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: #787b86;
+  background: #1e222d;
+  border-bottom: 1px solid #2a2e39;
+  user-select: none;
+}
+
+#volume-chart {
+  flex: 1;
   min-height: 0;
 }
