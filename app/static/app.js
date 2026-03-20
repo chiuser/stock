@@ -1,13 +1,17 @@
 'use strict';
 
-// ── 日期格式化（BusinessDay 对象 → YYYY-MM-DD） ───────────────
+// ── 日期格式化（兼容 BusinessDay 对象 / UNIX 秒时间戳 / 字符串） ──
 function fmtDate(time) {
   if (time && typeof time === 'object' && 'year' in time) {
-    const m = String(time.month).padStart(2, '0');
-    const d = String(time.day).padStart(2, '0');
-    return `${time.year}-${m}-${d}`;
+    // { year, month, day }
+    return `${time.year}-${String(time.month).padStart(2,'0')}-${String(time.day).padStart(2,'0')}`;
   }
-  return String(time);
+  if (typeof time === 'number') {
+    // UNIX 秒级时间戳（库内部实际传递的形式）
+    const d = new Date(time * 1000);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+  }
+  return String(time).slice(0, 10);
 }
 
 // 横轴刻度：年 / 年月 / 月日 三级
@@ -67,7 +71,7 @@ function initChart() {
     rightPriceScale: { borderColor: '#2a2e39' },
     timeScale: {
       borderColor:      '#2a2e39',
-      timeVisible:      true,
+      timeVisible:      false,   // 日线无需显示时间，避免出现 00:00:00
       fixLeftEdge:      true,
       fixRightEdge:     true,
       tickMarkFormatter: tickFormatter,  // 横轴刻度标签
