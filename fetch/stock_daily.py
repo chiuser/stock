@@ -202,5 +202,10 @@ def fetch_stock_daily(
     ]
     df = df[[c for c in col_order if c in df.columns]]
 
+    # pct_chg 列定义为 NUMERIC(8,4)，整数部分最多 4 位（±9999.9999）
+    # 北交所新股首日无涨跌幅限制，可能超出范围，裁剪以避免溢出
+    if "pct_chg" in df.columns:
+        df["pct_chg"] = df["pct_chg"].clip(-9999.9999, 9999.9999)
+
     df = df.sort_values(["ts_code", "trade_date"]).reset_index(drop=True)
     return df
