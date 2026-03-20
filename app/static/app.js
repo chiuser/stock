@@ -42,6 +42,8 @@ const MA_WINDOWS = Object.keys(MA_COLORS).map(Number);
 let chart, candleSeries;
 let volChart, volumeSeries;
 const maSeries = {};
+const candleMap = new Map();  // time → close，供十字线联动用
+const volumeMap = new Map();  // time → vol
 
 let currentCode  = null;
 let currentAdj   = 'qfq';
@@ -115,6 +117,18 @@ function initChart() {
     priceScaleId: 'right',
   });
 
+  // ── 十字线联动：光标在K线时同步驱动成交量图十字线，使日期始终显示在底部
+  chart.subscribeCrosshairMove(param => {
+    if (!param.time) { volChart.clearCrosshairPosition(); return; }
+    const vol = volumeMap.get(fmtDate(param.time)) ?? 0;
+    volChart.setCrosshairPosition(vol, param.time, volumeSeries);
+  });
+  volChart.subscribeCrosshairMove(param => {
+    if (!param.time) { chart.clearCrosshairPosition(); return; }
+    const price = candleMap.get(fmtDate(param.time)) ?? 0;
+    chart.setCrosshairPosition(price, param.time, candleSeries);
+  });
+
   // ── 两图时间轴联动（滚动/缩放同步）
   let syncing = false;
   chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
@@ -169,6 +183,12 @@ async function loadData(tsCode) {
   candleSeries.setData(data.candles);
   volumeSeries.setData(data.volume);
   MA_WINDOWS.forEach(w => maSeries[w].setData(data.ma[String(w)] || []));
+
+  // 更新十字线联动 Map
+  candleMap.clear();
+  data.candles.forEach(c => candleMap.set(c.time, c.close));
+  volumeMap.clear();
+  data.volume.forEach(v => volumeMap.set(v.time, v.value));
 
   // 设置可视 K 线窗口（两图同步设置）
   const candles = data.candles;
