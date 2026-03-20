@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS stock_daily (
     close      NUMERIC(12, 4),                   -- 收盘价（元）
     pre_close  NUMERIC(12, 4),                   -- 昨收价（元）
     change     NUMERIC(12, 4),                   -- 涨跌额（元）
-    pct_chg    NUMERIC(8,  4),                   -- 涨跌幅（%，未复权）
+    pct_chg    NUMERIC(12, 4),                   -- 涨跌幅（%，未复权；北交所新股首日可超 10000%）
 
     -- 前复权价格（以当前价为基准，向历史调整；适合技术分析/画图）
     open_qfq   NUMERIC(12, 4),                   -- 前复权开盘价
