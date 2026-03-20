@@ -69,6 +69,7 @@ function initChart() {
       timeFormatter: fmtDate,   // 十字线底部日期标签
     },
     rightPriceScale: { borderColor: '#2a2e39' },
+    leftPriceScale:  { borderColor: '#2a2e39', visible: true },
     timeScale: {
       borderColor:      '#2a2e39',
       timeVisible:      false,   // 日线无需显示时间，避免出现 00:00:00
@@ -93,12 +94,12 @@ function initChart() {
     scaleMargins: { top: 0.05, bottom: 0.3 },
   });
 
-  // 成交量（独立价格轴，占底部 25%）
+  // 成交量（左轴，占底部 22%）
   volumeSeries = chart.addHistogramSeries({
     priceFormat:  { type: 'volume' },
-    priceScaleId: 'volume',
+    priceScaleId: 'left',
   });
-  chart.priceScale('volume').applyOptions({
+  chart.priceScale('left').applyOptions({
     scaleMargins: { top: 0.78, bottom: 0 },
   });
 
