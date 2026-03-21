@@ -76,6 +76,7 @@ let currentCode  = null;
 let currentAdj   = 'qfq';
 let currentRange = 6;
 let activeMA     = new Set([5, 10, 20, 60]);
+let allCandleCount = 0;   // 全量已加载的 K 线根数，供滑动窗口计算
 
 // ── 公共图表配置 ──────────────────────────────────────────
 const BASE_OPTS = {
@@ -234,22 +235,13 @@ function setupInteraction() {
   applyCrosshairVisibility();
 }
 
-// ── 计算起始日期 ──────────────────────────────────────────
-function calcStartDate(months) {
-  if (!months) return null;
-  const d = new Date();
-  d.setMonth(d.getMonth() - months);
-  return d.toISOString().slice(0, 10).replace(/-/g, '');
-}
-
-// ── 加载数据 ──────────────────────────────────────────────
+// ── 加载数据（全量加载，前端控制滑动窗口） ────────────────
 async function loadData(tsCode) {
   if (!tsCode) return;
   currentCode = tsCode;
 
+  // 不传 start/end，一次性取全部历史，拖动时才能滑窗到更早的K线
   const params = new URLSearchParams({ adj: currentAdj });
-  const start  = calcStartDate(currentRange);
-  if (start) params.set('start', start);
 
   const [dailyRes, infoRes] = await Promise.all([
     fetch(`/api/stock/${tsCode}/daily?${params}`, { headers: authHeaders() }),
@@ -272,27 +264,30 @@ async function loadData(tsCode) {
   volumeMap.clear();
   data.volume.forEach(v => volumeMap.set(v.time, v.value));
 
-  const candles = data.candles;
-  if (candles.length > 0) {
-    const targetBars = VISIBLE_BARS[currentRange];
-    if (!targetBars || candles.length <= targetBars) {
-      chart.timeScale().fitContent();
-      volChart.timeScale().fitContent();
-    } else {
-      const range = {
-        from: candles[candles.length - targetBars].time,
-        to:   candles[candles.length - 1].time,
-      };
-      chart.timeScale().setVisibleRange(range);
-      volChart.timeScale().setVisibleRange(range);
-    }
-  }
+  allCandleCount = data.candles.length;
+  applyVisibleRange();
 
   const maSnapshot = data.ma;
   requestAnimationFrame(() => {
     MA_WINDOWS.forEach(w => maSeries[w].setData(maSnapshot[String(w)] || []));
     syncPriceScaleWidth();
   });
+}
+
+// ── 按 currentRange 设置可见窗口（不重新请求数据） ─────────
+function applyVisibleRange() {
+  if (!allCandleCount) return;
+  const targetBars = VISIBLE_BARS[currentRange];
+  if (!targetBars || allCandleCount <= targetBars) {
+    // 全部 或 数据不足指定范围 → 自适应
+    chart.timeScale().fitContent();
+    volChart.timeScale().fitContent();
+  } else {
+    // 定位到最新的 targetBars 根，logical index 从 0 起
+    const range = { from: allCandleCount - targetBars, to: allCandleCount - 1 };
+    chart.timeScale().setVisibleLogicalRange(range);
+    volChart.timeScale().setVisibleLogicalRange(range);
+  }
 }
 
 // ── 搜索 ──────────────────────────────────────────────────
@@ -371,13 +366,13 @@ document.querySelectorAll('.ma-btn').forEach(btn => {
   });
 });
 
-// ── 时间范围切换 ──────────────────────────────────────────
+// ── 时间范围切换（只改可见窗口，不重新加载） ─────────────
 document.querySelectorAll('.range-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     currentRange = parseInt(btn.dataset.months);
-    if (currentCode) loadData(currentCode);
+    applyVisibleRange();
   });
 });
 
