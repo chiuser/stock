@@ -79,7 +79,7 @@ function renderPortfolio(items) {
       <td class="num-col">${fmt(item.turnover_rate)}%</td>
       <td class="num-col">${fmt(item.turnover_rate_f)}%</td>
       <td class="num-col">${fmt(item.volume_ratio)}</td>
-      <td class="num-col">${fmt(item.pe_ttm)}</td>
+      <td class="num-col${item.pe_ttm === null ? ' pct-down' : ''}">${item.pe_ttm === null ? '亏损' : fmt(item.pe_ttm)}</td>
       <td class="num-col">${fmt(item.dv_ratio)}%</td>
       <td class="num-col">${fmt(item.dv_ttm)}%</td>
       <td class="num-col">${fmtWan(item.total_share)}</td>
