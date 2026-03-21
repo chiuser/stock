@@ -182,7 +182,6 @@ async function loadData(tsCode) {
 
   candleSeries.setData(data.candles);
   volumeSeries.setData(data.volume);
-  MA_WINDOWS.forEach(w => maSeries[w].setData(data.ma[String(w)] || []));
 
   // 更新十字线联动 Map
   candleMap.clear();
@@ -190,7 +189,7 @@ async function loadData(tsCode) {
   volumeMap.clear();
   data.volume.forEach(v => volumeMap.set(v.time, v.value));
 
-  // 设置可视 K 线窗口（两图同步设置）
+  // 先确定可视时间窗口，再设置均线数据，避免首次加载时 LWC 时间轴未就绪导致均线不渲染
   const candles = data.candles;
   if (candles.length > 0) {
     const targetBars = VISIBLE_BARS[currentRange] ?? 260;
@@ -206,6 +205,8 @@ async function loadData(tsCode) {
       volChart.timeScale().setVisibleRange(range);
     }
   }
+
+  MA_WINDOWS.forEach(w => maSeries[w].setData(data.ma[String(w)] || []));
 }
 
 // ── 搜索 ──────────────────────────────────────────────────
