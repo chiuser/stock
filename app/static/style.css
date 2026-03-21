@@ -208,7 +208,7 @@ body.portfolio-body {
 /* Portfolio table */
 .portfolio-table-wrap {
   flex: 1;
-  overflow-y: auto;
+  overflow: auto;
   padding: 0 24px 24px;
 }
 

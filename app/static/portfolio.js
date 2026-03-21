@@ -35,6 +35,14 @@ function fmtVol(v) {
   return n.toFixed(0);
 }
 
+// 万元 / 万股 单位的大数：>= 10000万 显示为"xx亿"
+function fmtWan(v) {
+  if (v === null || v === undefined) return '—';
+  const n = Number(v);
+  if (n >= 10000) return (n / 10000).toFixed(2) + '亿';
+  return n.toFixed(0) + '万';
+}
+
 // ── 渲染持仓列表 ──────────────────────────────────────────
 function renderPortfolio(items) {
   const emptyHint = document.getElementById('empty-hint');
@@ -69,6 +77,16 @@ function renderPortfolio(items) {
       <td class="num-col ${pctClass}">${pctText}</td>
       <td class="num-col">${fmtVol(item.vol)}</td>
       <td class="num-col">${fmt(item.turnover_rate)}%</td>
+      <td class="num-col">${fmt(item.turnover_rate_f)}%</td>
+      <td class="num-col">${fmt(item.volume_ratio)}</td>
+      <td class="num-col">${fmt(item.pe_ttm)}</td>
+      <td class="num-col">${fmt(item.dv_ratio)}%</td>
+      <td class="num-col">${fmt(item.dv_ttm)}%</td>
+      <td class="num-col">${fmtWan(item.total_share)}</td>
+      <td class="num-col">${fmtWan(item.float_share)}</td>
+      <td class="num-col">${fmtWan(item.free_share)}</td>
+      <td class="num-col">${fmtWan(item.total_mv)}</td>
+      <td class="num-col">${fmtWan(item.circ_mv)}</td>
       <td><button class="del-btn" data-code="${item.ts_code}" title="移除">×</button></td>
     `;
 

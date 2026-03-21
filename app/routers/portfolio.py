@@ -37,6 +37,16 @@ def list_portfolio(user: dict = Depends(get_current_user)):
                     sd.pct_chg,
                     sd.vol,
                     sdb.turnover_rate,
+                    sdb.turnover_rate_f,
+                    sdb.volume_ratio,
+                    sdb.pe_ttm,
+                    sdb.dv_ratio,
+                    sdb.dv_ttm,
+                    sdb.total_share,
+                    sdb.float_share,
+                    sdb.free_share,
+                    sdb.total_mv,
+                    sdb.circ_mv,
                     up.added_at
                 FROM user_portfolio up
                 LEFT JOIN stock_basic sb ON sb.ts_code = up.ts_code
@@ -48,7 +58,10 @@ def list_portfolio(user: dict = Depends(get_current_user)):
                     LIMIT 1
                 ) sd ON true
                 LEFT JOIN LATERAL (
-                    SELECT turnover_rate
+                    SELECT turnover_rate, turnover_rate_f, volume_ratio,
+                           pe_ttm, dv_ratio, dv_ttm,
+                           total_share, float_share, free_share,
+                           total_mv, circ_mv
                     FROM stock_daily_basic
                     WHERE ts_code = up.ts_code
                     ORDER BY trade_date DESC
@@ -59,17 +72,34 @@ def list_portfolio(user: dict = Depends(get_current_user)):
             """, (user_id,))
             rows = cur.fetchall()
 
+    def _f(v):
+        return float(v) if v is not None else None
+
     result = []
     for i, row in enumerate(rows, start=1):
-        ts_code, name, close, pct_chg, vol, turnover_rate, added_at = row
+        (ts_code, name, close, pct_chg, vol,
+         turnover_rate, turnover_rate_f, volume_ratio,
+         pe_ttm, dv_ratio, dv_ttm,
+         total_share, float_share, free_share,
+         total_mv, circ_mv, added_at) = row
         result.append({
-            "idx":          i,
-            "ts_code":      ts_code,
-            "name":         name or ts_code,
-            "close":        float(close)        if close        is not None else None,
-            "pct_chg":      float(pct_chg)      if pct_chg      is not None else None,
-            "vol":          float(vol)          if vol          is not None else None,
-            "turnover_rate": float(turnover_rate) if turnover_rate is not None else None,
+            "idx":            i,
+            "ts_code":        ts_code,
+            "name":           name or ts_code,
+            "close":          _f(close),
+            "pct_chg":        _f(pct_chg),
+            "vol":            _f(vol),
+            "turnover_rate":  _f(turnover_rate),
+            "turnover_rate_f": _f(turnover_rate_f),
+            "volume_ratio":   _f(volume_ratio),
+            "pe_ttm":         _f(pe_ttm),
+            "dv_ratio":       _f(dv_ratio),
+            "dv_ttm":         _f(dv_ttm),
+            "total_share":    _f(total_share),
+            "float_share":    _f(float_share),
+            "free_share":     _f(free_share),
+            "total_mv":       _f(total_mv),
+            "circ_mv":        _f(circ_mv),
         })
     return result
 
