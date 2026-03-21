@@ -1,5 +1,31 @@
 'use strict';
 
+// ── Auth 工具 ─────────────────────────────────────────────
+function getToken() { return localStorage.getItem('token'); }
+function getUsername() { return localStorage.getItem('username'); }
+
+function requireAuth() {
+  if (!getToken()) { location.href = '/login'; }
+}
+
+function logout() {
+  localStorage.removeItem('token');
+  localStorage.removeItem('username');
+  location.href = '/login';
+}
+
+function authHeaders() {
+  return { 'Authorization': `Bearer ${getToken()}` };
+}
+
+// ── 初始化导航栏 ──────────────────────────────────────────
+function initNav() {
+  const usernameEl = document.getElementById('nav-username');
+  const logoutBtn  = document.getElementById('nav-logout');
+  if (usernameEl) usernameEl.textContent = getUsername() || '';
+  if (logoutBtn)  logoutBtn.addEventListener('click', logout);
+}
+
 // ── 日期格式化 ────────────────────────────────────────────
 function fmtDate(time) {
   if (time && typeof time === 'object' && 'year' in time) {
@@ -25,7 +51,7 @@ function tickFormatter(time, tickMarkType) {
 }
 
 // ── 配置 ──────────────────────────────────────────────────
-const VISIBLE_BARS = { 1: 25, 3: 70, 6: 135, 12: 260, 36: 780 };  // 0（全部）不在此表，直接 fitContent
+const VISIBLE_BARS = { 1: 25, 3: 70, 6: 135, 12: 260, 36: 780 };
 
 const MA_COLORS = {
   5:   '#FF6B35',
@@ -43,8 +69,8 @@ const MA_WINDOWS = Object.keys(MA_COLORS).map(Number);
 let chart, candleSeries;
 let volChart, volumeSeries;
 const maSeries = {};
-const candleMap = new Map();  // time → close，供十字线联动用
-const volumeMap = new Map();  // time → vol
+const candleMap = new Map();
+const volumeMap = new Map();
 
 let currentCode  = null;
 let currentAdj   = 'qfq';
@@ -71,7 +97,6 @@ function initChart() {
   const candleEl = document.getElementById('candle-chart');
   const volumeEl = document.getElementById('volume-chart');
 
-  // ── K 线图（隐藏底部时间轴，时间轴由成交量图统一显示）
   chart = LightweightCharts.createChart(candleEl, {
     ...BASE_OPTS,
     crosshair:    { mode: LightweightCharts.CrosshairMode.Normal },
@@ -100,7 +125,6 @@ function initChart() {
     });
   });
 
-  // ── 成交量图（独立面板，右轴显示成交量刻度）
   volChart = LightweightCharts.createChart(volumeEl, {
     ...BASE_OPTS,
     localization: { timeFormatter: fmtDate },
@@ -118,7 +142,6 @@ function initChart() {
     priceScaleId: 'right',
   });
 
-  // ── 十字线联动：光标在K线时同步驱动成交量图十字线，使日期始终显示在底部
   chart.subscribeCrosshairMove(param => {
     if (!param.time) { volChart.clearCrosshairPosition(); return; }
     const vol = volumeMap.get(fmtDate(param.time)) ?? 0;
@@ -130,7 +153,6 @@ function initChart() {
     chart.setCrosshairPosition(price, param.time, candleSeries);
   });
 
-  // ── 两图时间轴联动（滚动/缩放同步）
   let syncing = false;
   chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
     if (syncing || !range) return;
@@ -145,7 +167,6 @@ function initChart() {
     syncing = false;
   });
 
-  // ── 响应窗口大小
   const ro = new ResizeObserver(() => {
     chart.applyOptions({   width: candleEl.clientWidth, height: candleEl.clientHeight });
     volChart.applyOptions({ width: volumeEl.clientWidth, height: volumeEl.clientHeight });
@@ -172,9 +193,12 @@ async function loadData(tsCode) {
   if (start) params.set('start', start);
 
   const [dailyRes, infoRes] = await Promise.all([
-    fetch(`/api/stock/${tsCode}/daily?${params}`),
-    fetch(`/api/stock/${tsCode}/info`),
+    fetch(`/api/stock/${tsCode}/daily?${params}`, { headers: authHeaders() }),
+    fetch(`/api/stock/${tsCode}/info`,            { headers: authHeaders() }),
   ]);
+
+  if (dailyRes.status === 401 || infoRes.status === 401) { logout(); return; }
+
   const data = await dailyRes.json();
   const info = await infoRes.json();
 
@@ -184,16 +208,14 @@ async function loadData(tsCode) {
   candleSeries.setData(data.candles);
   volumeSeries.setData(data.volume);
 
-  // 更新十字线联动 Map
   candleMap.clear();
   data.candles.forEach(c => candleMap.set(c.time, c.close));
   volumeMap.clear();
   data.volume.forEach(v => volumeMap.set(v.time, v.value));
 
-  // 先确定可视时间窗口，再设置均线数据，避免首次加载时 LWC 时间轴未就绪导致均线不渲染
   const candles = data.candles;
   if (candles.length > 0) {
-    const targetBars = VISIBLE_BARS[currentRange];  // undefined → 全部
+    const targetBars = VISIBLE_BARS[currentRange];
     if (!targetBars || candles.length <= targetBars) {
       chart.timeScale().fitContent();
       volChart.timeScale().fitContent();
@@ -207,7 +229,6 @@ async function loadData(tsCode) {
     }
   }
 
-  // 延迟到下一帧渲染均线：确保 LWC 内部时间轴已完成 fit/setVisibleRange 后再填入数据
   const maSnapshot = data.ma;
   requestAnimationFrame(() => {
     MA_WINDOWS.forEach(w => maSeries[w].setData(maSnapshot[String(w)] || []));
@@ -224,7 +245,8 @@ searchEl.addEventListener('input', () => {
   const q = searchEl.value.trim();
   if (!q) { hideSuggestions(); return; }
   searchTimer = setTimeout(async () => {
-    const res     = await fetch(`/api/stocks/search?q=${encodeURIComponent(q)}`);
+    const res     = await fetch(`/api/stocks/search?q=${encodeURIComponent(q)}`, { headers: authHeaders() });
+    if (res.status === 401) { logout(); return; }
     const results = await res.json();
     renderSuggestions(results);
   }, 180);
@@ -300,4 +322,10 @@ document.querySelectorAll('.range-btn').forEach(btn => {
 });
 
 // ── 启动 ──────────────────────────────────────────────────
+requireAuth();
+initNav();
 initChart();
+
+// 读取 URL 参数 ?code=600519.SH 自动加载
+const urlCode = new URLSearchParams(location.search).get('code');
+if (urlCode) loadData(urlCode);

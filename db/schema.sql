@@ -249,3 +249,29 @@ CREATE TABLE IF NOT EXISTS stock_news (
 
 CREATE INDEX IF NOT EXISTS idx_stock_news_ts_code  ON stock_news (ts_code);
 CREATE INDEX IF NOT EXISTS idx_stock_news_datetime ON stock_news (datetime);
+
+
+-- -------------------------------------------------------------
+-- 8. 用户账号
+--    无注册功能，由管理员通过 scripts/create_user.py 添加
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS users (
+    id            SERIAL       PRIMARY KEY,
+    username      VARCHAR(32)  NOT NULL UNIQUE,
+    password_hash VARCHAR(128) NOT NULL,
+    created_at    TIMESTAMP    NOT NULL DEFAULT NOW()
+);
+
+
+-- -------------------------------------------------------------
+-- 9. 用户持仓股
+--    每个用户独立维护，关联 stock_basic
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_portfolio (
+    id         SERIAL    PRIMARY KEY,
+    user_id    INT       NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ts_code    VARCHAR(12) NOT NULL REFERENCES stock_basic(ts_code),
+    added_at   TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE (user_id, ts_code)
+);
+CREATE INDEX IF NOT EXISTS idx_user_portfolio_user ON user_portfolio(user_id);

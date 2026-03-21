@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>我的持仓 - Stock Charts</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="portfolio-body">
+  <nav class="nav-bar">
+    <div class="nav-left">
+      <a class="nav-link nav-active" href="/portfolio">持仓股</a>
+      <a class="nav-link" href="/chart">行情</a>
+    </div>
+    <div class="nav-right">
+      <span class="nav-username" id="nav-username"></span>
+      <button class="nav-logout" id="nav-logout">退出登录</button>
+    </div>
+  </nav>
+
+  <!-- 持仓头部 -->
+  <div class="portfolio-header">
+    <h2>我的持仓股</h2>
+    <button class="portfolio-add-btn" id="open-modal">
+      <span class="plus-icon">＋</span> 添加股票
+    </button>
+  </div>
+
+  <!-- 主内容区：空状态 / 持仓列表 -->
+  <div id="main-content" style="flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;">
+    <!-- 空状态 -->
+    <div class="empty-hint" id="empty-hint">
+      <div class="big-plus">＋</div>
+      <p>点击添加第一只持仓股</p>
+    </div>
+
+    <!-- 列表 -->
+    <div class="portfolio-table-wrap" id="table-wrap" style="display:none;">
+      <table class="portfolio-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>代码</th>
+            <th>名称</th>
+            <th class="num-col">现价</th>
+            <th class="num-col">涨跌幅</th>
+            <th class="num-col">成交量（手）</th>
+            <th class="num-col">换手率（%）</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="portfolio-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 添加股票浮层 -->
+  <div class="modal-overlay" id="modal">
+    <div class="modal-box">
+      <button class="modal-close" id="close-modal">×</button>
+      <h3>添加持仓股</h3>
+      <div class="modal-search-wrap">
+        <input id="modal-search" type="text" placeholder="代码 / 名称 / 拼音" autocomplete="off" spellcheck="false">
+        <div class="modal-suggestions" id="modal-suggestions"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/portfolio.js"></script>
+</body>
+</html>

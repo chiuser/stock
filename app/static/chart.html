@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>行情 - Stock Charts</title>
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <nav class="nav-bar">
+    <div class="nav-left">
+      <a class="nav-link" href="/portfolio">持仓股</a>
+      <a class="nav-link nav-active" href="/chart">行情</a>
+    </div>
+    <div class="nav-right">
+      <span class="nav-username" id="nav-username"></span>
+      <button class="nav-logout" id="nav-logout">退出登录</button>
+    </div>
+  </nav>
+
+  <div id="toolbar">
+    <div id="search-wrap">
+      <input id="search" type="text" placeholder="代码 / 名称 / 拼音" autocomplete="off" spellcheck="false">
+      <div id="suggestions"></div>
+    </div>
+
+    <span id="stock-name"></span>
+
+    <div class="btn-group" id="adj-buttons">
+      <button class="adj-btn active" data-adj="qfq">前复权</button>
+      <button class="adj-btn"        data-adj="">不复权</button>
+      <button class="adj-btn"        data-adj="hfq">后复权</button>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="btn-group" id="ma-buttons">
+      <button class="ma-btn active" data-ma="5"   style="--ma-color:#FF6B35">MA5</button>
+      <button class="ma-btn active" data-ma="10"  style="--ma-color:#FFE66D">MA10</button>
+      <button class="ma-btn"        data-ma="15"  style="--ma-color:#F9A825">MA15</button>
+      <button class="ma-btn active" data-ma="20"  style="--ma-color:#4ECDC4">MA20</button>
+      <button class="ma-btn"        data-ma="30"  style="--ma-color:#A8E6CF">MA30</button>
+      <button class="ma-btn active" data-ma="60"  style="--ma-color:#C7CEEA">MA60</button>
+      <button class="ma-btn"        data-ma="120" style="--ma-color:#FF8B94">MA120</button>
+      <button class="ma-btn"        data-ma="250" style="--ma-color:#9B9B9B">MA250</button>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="btn-group" id="range-buttons">
+      <button class="range-btn"        data-months="1">1月</button>
+      <button class="range-btn"        data-months="3">3月</button>
+      <button class="range-btn active" data-months="6">6月</button>
+      <button class="range-btn"        data-months="12">1年</button>
+      <button class="range-btn"        data-months="36">3年</button>
+      <button class="range-btn"        data-months="0">全部</button>
+    </div>
+  </div>
+
+  <div id="charts-wrapper">
+    <div id="candle-chart"></div>
+    <div id="volume-panel">
+      <div id="volume-header">成交量</div>
+      <div id="volume-chart"></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
