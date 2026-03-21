@@ -170,9 +170,20 @@ function initChart() {
   const ro = new ResizeObserver(() => {
     chart.applyOptions({   width: candleEl.clientWidth, height: candleEl.clientHeight });
     volChart.applyOptions({ width: volumeEl.clientWidth, height: volumeEl.clientHeight });
+    syncPriceScaleWidth();
   });
   ro.observe(candleEl);
   ro.observe(volumeEl);
+}
+
+// ── 同步两图右侧价格刻度宽度，消除网格错位 ───────────────
+function syncPriceScaleWidth() {
+  const w = Math.max(
+    chart.priceScale('right').width(),
+    volChart.priceScale('right').width(),
+  );
+  chart.applyOptions({   rightPriceScale: { minimumWidth: w } });
+  volChart.applyOptions({ rightPriceScale: { minimumWidth: w } });
 }
 
 // ── 计算起始日期 ──────────────────────────────────────────
@@ -232,6 +243,7 @@ async function loadData(tsCode) {
   const maSnapshot = data.ma;
   requestAnimationFrame(() => {
     MA_WINDOWS.forEach(w => maSeries[w].setData(maSnapshot[String(w)] || []));
+    syncPriceScaleWidth();
   });
 }
 

@@ -209,33 +209,38 @@ body.portfolio-body {
 .portfolio-table-wrap {
   flex: 1;
   overflow: auto;
-  padding: 0 24px 24px;
+  padding: 16px 24px 24px;
 }
 
 .portfolio-table {
-  width: 100%;
   border-collapse: collapse;
-  margin-top: 16px;
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .portfolio-table th {
-  text-align: left;
-  padding: 8px 12px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 7px 12px;
   font-size: 12px;
-  color: #787b86;
+  color: #9598a1;
   font-weight: 500;
-  border-bottom: 1px solid #2a2e39;
+  background: #1a1e2e;
+  border: 1px solid #2a2e39;
   white-space: nowrap;
+  text-align: left;
 }
 
 .portfolio-table td {
-  padding: 10px 12px;
-  font-size: 13px;
-  border-bottom: 1px solid #1e222d;
+  padding: 7px 12px;
+  border: 1px solid #2a2e39;
+  color: #d1d4dc;
   white-space: nowrap;
+  background: #131722;
 }
 
-.portfolio-table tr:hover td { background: #1e222d; cursor: pointer; }
+.portfolio-table tbody tr:hover td { background: #1e222d; cursor: pointer; }
 
 .portfolio-table td.num-col  { font-family: monospace; text-align: right; }
 .portfolio-table th.num-col  { text-align: right; }
