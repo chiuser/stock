@@ -399,6 +399,15 @@ td.pct-flat { color: #787b86; }
 .sug-item:hover { background: #2a2e39; }
 .sug-code { color: #d1d4dc; min-width: 90px; }
 .sug-name { color: #787b86; }
+.sug-badge {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+.sug-badge-index { background: #2962ff33; color: #6b9bff; border: 1px solid #2962ff55; }
 
 /* ── Stock name label ────────────────────────────────────── */
 #stock-name {

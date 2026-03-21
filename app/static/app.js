@@ -325,7 +325,10 @@ function renderSuggestions(results) {
   results.forEach(r => {
     const item     = document.createElement('div');
     item.className = 'sug-item';
-    item.innerHTML = `<span class="sug-code">${r.ts_code}</span><span class="sug-name">${r.name}</span>`;
+    const badge = r.type === 'index'
+      ? `<span class="sug-badge sug-badge-index">指数</span>`
+      : '';
+    item.innerHTML = `${badge}<span class="sug-code">${r.ts_code}</span><span class="sug-name">${r.name}</span>`;
     item.addEventListener('click', () => {
       searchEl.value = r.ts_code;
       hideSuggestions();

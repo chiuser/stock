@@ -23,12 +23,25 @@ _ADJ_COLS = {
 
 @router.get("/stocks/search")
 def search_stocks(q: str = Query("", max_length=50)):
-    """搜索股票，支持代码、名称、拼音缩写。"""
+    """搜索指数和股票，指数结果在前；支持代码、名称、拼音缩写。"""
     q = q.strip()
     if not q:
         return []
     with get_conn() as conn:
         with conn.cursor() as cur:
+            # 先查指数（index_basic 无拼音列，按代码和名称匹配）
+            cur.execute("""
+                SELECT ts_code, name, market
+                FROM index_basic
+                WHERE ts_code ILIKE %s OR name ILIKE %s
+                ORDER BY
+                    CASE WHEN ts_code ILIKE %s THEN 0 ELSE 1 END,
+                    ts_code
+                LIMIT 10
+            """, (f"{q}%", f"%{q}%", f"{q}%"))
+            index_rows = cur.fetchall()
+
+            # 再查个股（支持拼音缩写）
             cur.execute("""
                 SELECT ts_code, name, market
                 FROM stock_basic
@@ -40,8 +53,13 @@ def search_stocks(q: str = Query("", max_length=50)):
                     ts_code
                 LIMIT 20
             """, (f"{q}%", f"%{q}%", f"{q}%", f"{q}%"))
-            rows = cur.fetchall()
-    return [{"ts_code": r[0], "name": r[1], "market": r[2]} for r in rows]
+            stock_rows = cur.fetchall()
+
+    results = [{"ts_code": r[0], "name": r[1], "market": r[2], "type": "index"}
+               for r in index_rows]
+    results += [{"ts_code": r[0], "name": r[1], "market": r[2], "type": "stock"}
+                for r in stock_rows]
+    return results[:20]
 
 
 @router.get("/stock/{ts_code}/info")
