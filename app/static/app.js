@@ -206,7 +206,11 @@ async function loadData(tsCode) {
     }
   }
 
-  MA_WINDOWS.forEach(w => maSeries[w].setData(data.ma[String(w)] || []));
+  // 延迟到下一帧渲染均线：确保 LWC 内部时间轴已完成 fit/setVisibleRange 后再填入数据
+  const maSnapshot = data.ma;
+  requestAnimationFrame(() => {
+    MA_WINDOWS.forEach(w => maSeries[w].setData(maSnapshot[String(w)] || []));
+  });
 }
 
 // ── 搜索 ──────────────────────────────────────────────────
