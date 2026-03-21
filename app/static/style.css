@@ -379,7 +379,7 @@ td.pct-flat { color: #787b86; }
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
-  width: 260px;
+  width: 420px;
   background: #1e222d;
   border: 1px solid #363c4e;
   border-radius: 4px;
@@ -392,12 +392,13 @@ td.pct-flat { color: #787b86; }
   padding: 7px 12px;
   cursor: pointer;
   display: flex;
+  align-items: center;
   gap: 10px;
-  font-family: monospace;
   font-size: 13px;
+  white-space: nowrap;
 }
 .sug-item:hover { background: #2a2e39; }
-.sug-code { color: #d1d4dc; min-width: 90px; }
+.sug-code { font-family: monospace; color: #d1d4dc; min-width: 100px; }
 .sug-name { color: #787b86; }
 .sug-badge {
   font-size: 10px;

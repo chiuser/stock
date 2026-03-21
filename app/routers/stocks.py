@@ -8,9 +8,28 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from db import get_conn
 
+from pypinyin import lazy_pinyin, Style
+
 router = APIRouter()
 
 MA_WINDOWS = [5, 10, 15, 20, 30, 60, 120, 250]
+
+# ── 指数拼音缓存（内存，进程级）──────────────────────────────
+_index_cache: list | None = None
+
+def _get_index_cache():
+    global _index_cache
+    if _index_cache is None:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT ts_code, name, market FROM index_basic")
+                rows = cur.fetchall()
+        _index_cache = [
+            (r[0], r[1], r[2],
+             ''.join(lazy_pinyin(r[1], style=Style.FIRST_LETTER)).lower())
+            for r in rows
+        ]
+    return _index_cache
 
 # 白名单：避免列名注入
 _ADJ_COLS = {
@@ -27,21 +46,21 @@ def search_stocks(q: str = Query("", max_length=50)):
     q = q.strip()
     if not q:
         return []
+
+    # 指数：从内存缓存过滤（支持代码、名称、拼音首字母缩写）
+    ql = q.lower()
+    cache = _get_index_cache()
+    code_matches, other_matches = [], []
+    for ts_code, name, market, pinyin in cache:
+        if ts_code.lower().startswith(ql):
+            code_matches.append((ts_code, name, market))
+        elif name.startswith(q) or ql in name.lower() or pinyin.startswith(ql):
+            other_matches.append((ts_code, name, market))
+    index_rows = (code_matches + other_matches)[:10]
+
+    # 个股：数据库查询（支持拼音缩写列 cnspell）
     with get_conn() as conn:
         with conn.cursor() as cur:
-            # 先查指数（index_basic 无拼音列，按代码和名称匹配）
-            cur.execute("""
-                SELECT ts_code, name, market
-                FROM index_basic
-                WHERE ts_code ILIKE %s OR name ILIKE %s
-                ORDER BY
-                    CASE WHEN ts_code ILIKE %s THEN 0 ELSE 1 END,
-                    ts_code
-                LIMIT 10
-            """, (f"{q}%", f"%{q}%", f"{q}%"))
-            index_rows = cur.fetchall()
-
-            # 再查个股（支持拼音缩写）
             cur.execute("""
                 SELECT ts_code, name, market
                 FROM stock_basic
