@@ -132,7 +132,8 @@ function initChart() {
       borderColor:  '#2a2e39',
       scaleMargins: { top: 0.08, bottom: 0.02 },
     },
-    timeScale: { ...BASE_TIMESCALE },
+    timeScale:    { ...BASE_TIMESCALE },
+    handleScroll: { pressedMouseMove: false, horzTouchDrag: false },
     width:  volumeEl.clientWidth,
     height: volumeEl.clientHeight,
   });
@@ -143,11 +144,13 @@ function initChart() {
   });
 
   chart.subscribeCrosshairMove(param => {
+    if (!_crosshairOn) return;
     if (!param.time) { volChart.clearCrosshairPosition(); return; }
     const vol = volumeMap.get(fmtDate(param.time)) ?? 0;
     volChart.setCrosshairPosition(vol, param.time, volumeSeries);
   });
   volChart.subscribeCrosshairMove(param => {
+    if (!_crosshairOn) return;
     if (!param.time) { chart.clearCrosshairPosition(); return; }
     const price = candleMap.get(fmtDate(param.time)) ?? 0;
     chart.setCrosshairPosition(price, param.time, candleSeries);
@@ -184,6 +187,51 @@ function syncPriceScaleWidth() {
   );
   chart.applyOptions({   rightPriceScale: { minimumWidth: w } });
   volChart.applyOptions({ rightPriceScale: { minimumWidth: w } });
+}
+
+// ── 十字线开关状态 ────────────────────────────────────────
+let _crosshairOn = false;
+
+function applyCrosshairVisibility() {
+  const v = _crosshairOn;
+  const opts = {
+    vertLine: { visible: v, labelVisible: v },
+    horzLine: { visible: v, labelVisible: v },
+  };
+  chart.applyOptions({ crosshair: opts });
+  volChart.applyOptions({ crosshair: opts });
+  if (!v) {
+    chart.clearCrosshairPosition();
+    volChart.clearCrosshairPosition();
+  }
+}
+
+// ── 单击两图区域切换十字线；左键拖拽仅限K线图 ────────────
+function setupInteraction() {
+  const candleEl = document.getElementById('candle-chart');
+  const volumeEl = document.getElementById('volume-chart');
+  const DRAG_PX  = 4;
+  let   _downPos = null;
+
+  [candleEl, volumeEl].forEach(el => {
+    el.addEventListener('mousedown', e => {
+      if (e.button === 0) _downPos = { x: e.clientX, y: e.clientY };
+    });
+    el.addEventListener('mouseup', e => {
+      if (e.button === 0 && _downPos) {
+        const moved = Math.abs(e.clientX - _downPos.x) > DRAG_PX
+                   || Math.abs(e.clientY - _downPos.y) > DRAG_PX;
+        if (!moved) {
+          _crosshairOn = !_crosshairOn;
+          applyCrosshairVisibility();
+        }
+        _downPos = null;
+      }
+    });
+  });
+
+  // 初始状态：隐藏十字线
+  applyCrosshairVisibility();
 }
 
 // ── 计算起始日期 ──────────────────────────────────────────
@@ -337,6 +385,7 @@ document.querySelectorAll('.range-btn').forEach(btn => {
 requireAuth();
 initNav();
 initChart();
+setupInteraction();
 
 // 读取 URL 参数 ?code=，无参数时默认加载上证指数
 const urlCode = new URLSearchParams(location.search).get('code');
