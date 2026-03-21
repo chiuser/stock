@@ -338,6 +338,6 @@ requireAuth();
 initNav();
 initChart();
 
-// 读取 URL 参数 ?code=600519.SH 自动加载
+// 读取 URL 参数 ?code=，无参数时默认加载上证指数
 const urlCode = new URLSearchParams(location.search).get('code');
-if (urlCode) loadData(urlCode);
+loadData(urlCode || '000001.SH');

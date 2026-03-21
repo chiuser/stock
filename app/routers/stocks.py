@@ -46,12 +46,28 @@ def search_stocks(q: str = Query("", max_length=50)):
 
 @router.get("/stock/{ts_code}/info")
 def get_stock_info(ts_code: str):
-    """获取股票基本信息。"""
+    """获取股票或指数基本信息。"""
     with get_conn() as conn:
         with conn.cursor() as cur:
+            # 先查个股
             cur.execute(
                 "SELECT ts_code, name, industry, market, list_date "
                 "FROM stock_basic WHERE ts_code = %s",
+                (ts_code,),
+            )
+            row = cur.fetchone()
+            if row:
+                return {
+                    "ts_code":   row[0],
+                    "name":      row[1],
+                    "industry":  row[2],
+                    "market":    row[3],
+                    "list_date": str(row[4]) if row[4] else None,
+                }
+            # 再查指数
+            cur.execute(
+                "SELECT ts_code, name, market, list_date "
+                "FROM index_basic WHERE ts_code = %s",
                 (ts_code,),
             )
             row = cur.fetchone()
@@ -60,9 +76,9 @@ def get_stock_info(ts_code: str):
     return {
         "ts_code":   row[0],
         "name":      row[1],
-        "industry":  row[2],
-        "market":    row[3],
-        "list_date": str(row[4]) if row[4] else None,
+        "industry":  None,
+        "market":    row[2],
+        "list_date": str(row[3]) if row[3] else None,
     }
 
 
@@ -108,6 +124,15 @@ def get_stock_daily(
         with conn.cursor() as cur:
             cur.execute(sql, params)
             rows = cur.fetchall()
+
+            # 个股表无数据时，回退到指数日线表（指数无复权价，固定用原始 OHLC）
+            if not rows:
+                idx_sql = (
+                    "SELECT trade_date, open, high, low, close, vol "
+                    f"FROM index_daily WHERE {where} ORDER BY trade_date ASC"
+                )
+                cur.execute(idx_sql, params)
+                rows = cur.fetchall()
 
     if not rows:
         return {"ts_code": ts_code, "candles": [], "volume": [], "ma": {}}
