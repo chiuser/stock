@@ -25,7 +25,7 @@ function tickFormatter(time, tickMarkType) {
 }
 
 // ── 配置 ──────────────────────────────────────────────────
-const VISIBLE_BARS = { 1: 25, 3: 70, 6: 135, 12: 260, 36: 260, 0: 260 };
+const VISIBLE_BARS = { 1: 25, 3: 70, 6: 135, 12: 260, 36: 780 };  // 0（全部）不在此表，直接 fitContent
 
 const MA_COLORS = {
   5:   '#FF6B35',
@@ -192,8 +192,8 @@ async function loadData(tsCode) {
   // 先确定可视时间窗口，再设置均线数据，避免首次加载时 LWC 时间轴未就绪导致均线不渲染
   const candles = data.candles;
   if (candles.length > 0) {
-    const targetBars = VISIBLE_BARS[currentRange] ?? 260;
-    if (candles.length <= targetBars) {
+    const targetBars = VISIBLE_BARS[currentRange];  // undefined → 全部
+    if (!targetBars || candles.length <= targetBars) {
       chart.timeScale().fitContent();
       volChart.timeScale().fitContent();
     } else {
