@@ -13,14 +13,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from passlib.context import CryptContext
+import bcrypt
 from db import get_conn
-
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def create_user(username: str, password: str) -> None:
-    password_hash = pwd_ctx.hash(password)
+    password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     with get_conn() as conn:
         with conn.cursor() as cur:
             try:

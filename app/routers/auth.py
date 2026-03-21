@@ -6,15 +6,20 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
+import bcrypt
 from jose import jwt
-from passlib.context import CryptContext
 
 from db import get_conn
 
 router = APIRouter()
 
-# ── 密码哈希上下文 ─────────────────────────────────────────
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def _hash_password(plain: str) -> str:
+    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
+
+
+def _verify_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 # ── JWT 配置 ───────────────────────────────────────────────
 # 可通过环境变量 JWT_SECRET 覆盖
@@ -63,7 +68,7 @@ def login(body: LoginRequest):
             )
             row = cur.fetchone()
 
-    if not row or not pwd_ctx.verify(body.password, row[2]):
+    if not row or not _verify_password(body.password, row[2]):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="用户名或密码错误",
