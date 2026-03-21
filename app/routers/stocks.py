@@ -10,7 +10,7 @@ from db import get_conn
 
 router = APIRouter()
 
-MA_WINDOWS = [5, 10, 20, 30, 60, 120, 250]
+MA_WINDOWS = [5, 10, 15, 20, 30, 60, 120, 250]
 
 # 白名单：避免列名注入
 _ADJ_COLS = {
