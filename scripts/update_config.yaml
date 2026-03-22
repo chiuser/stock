@@ -1,0 +1,139 @@
+# =============================================================
+# 每日数据更新配置
+# 修改后执行 bash scripts/install_cron.sh 重新安装定时任务
+# =============================================================
+
+# ------------------------------------------------------------
+# 全局设置
+# ------------------------------------------------------------
+global:
+  # 项目根目录（绝对路径，必须修改为实际部署路径）
+  project_root: /home/user/stock
+
+  # Python 解释器路径（建议使用虚拟环境绝对路径）
+  # 示例: /home/user/stock/.venv/bin/python
+  python: python3
+
+  # 日志目录（相对于 project_root 或绝对路径）
+  log_dir: logs/daily_update
+
+  # 可选：环境变量文件路径（.env 格式，每行 KEY=VALUE）
+  # 用于覆盖 TUSHARE_TOKEN、DB_HOST 等敏感配置
+  # env_file: /etc/stock/stock.env
+
+
+# ------------------------------------------------------------
+# 执行阶段定义
+#
+# 规则：
+#   - 同一 stage 内的 tasks 并行执行
+#   - stages 之间按列表顺序串行执行（保证依赖）
+#   - cron 字段控制每个 stage 的独立调度时间（周一至周五）
+#   - only_on 控制触发条件（不填=每天都跑）
+#
+# only_on 可用值：
+#   weekday       周一到周五（工作日）
+#   friday        每周五
+#   month_early   每月 1~5 日
+#   month_last    每月最后 5 天（粗略覆盖月末交易日）
+#
+# cmd 占位符（自动替换为当日对应日期字符串）：
+#   {today}         当日 YYYYMMDD
+#   {yesterday}     昨日 YYYYMMDD
+#   {week_monday}   本周一 YYYYMMDD
+#   {month_start}   本月第一天 YYYYMMDD
+#   {current_month} 当前月 YYYYMM
+# ------------------------------------------------------------
+
+stages:
+
+  # ----------------------------------------------------------
+  # 阶段 1：基础列表（无依赖，最先跑）
+  #   stock_basic  和 index_basic 并行执行，约 30~60 秒
+  #   cron: 周一至周五 19:00
+  # ----------------------------------------------------------
+  - name: 基础列表
+    cron: "0 19 * * 1-5"
+    only_on: [weekday]
+    tasks:
+      - name: stock_basic
+        cmd: ["--table", "stock_basic"]
+
+      - name: index_basic
+        cmd: ["--table", "index_basic"]
+
+
+  # ----------------------------------------------------------
+  # 阶段 2：日线行情（依赖阶段 1 完成，全部并行）
+  #   6 个任务同时拉取，完成时间取决于最慢的任务
+  #
+  #   ⚠️ stock_daily 说明：
+  #     当不指定 --code 时，会对 stock_basic 中所有股票
+  #     逐只发起请求（约 5000 次 API 调用），耗时较长。
+  #     若只需跟踪自选股，可改为：
+  #       cmd: ["--table", "stock_daily", "--start", "{today}",
+  #             "--end", "{today}", "--code", "000001.SZ", "600519.SH"]
+  #
+  #   cron: 周一至周五 19:10（留 10 分钟等阶段 1 完成）
+  # ----------------------------------------------------------
+  - name: 日线行情
+    cron: "10 19 * * 1-5"
+    only_on: [weekday]
+    tasks:
+      - name: index_daily
+        cmd: ["--table", "index_daily", "--start", "{today}", "--end", "{today}"]
+
+      - name: stock_daily_basic
+        cmd: ["--table", "stock_daily_basic", "--date", "{today}"]
+
+      # ↓ 全市场日线，较慢；如只跟踪自选股请修改 cmd 添加 --code 参数
+      - name: stock_daily
+        cmd: ["--table", "stock_daily", "--start", "{today}", "--end", "{today}"]
+
+      - name: moneyflow_dc
+        cmd: ["--table", "moneyflow_dc", "--date", "{today}"]
+
+      - name: moneyflow_ind_dc
+        cmd: ["--table", "moneyflow_ind_dc", "--date", "{today}"]
+
+      - name: moneyflow_mkt_dc
+        cmd: ["--table", "moneyflow_mkt_dc", "--date", "{today}"]
+
+
+  # ----------------------------------------------------------
+  # 阶段 3：周线行情（仅周五执行）
+  #   拉取本周（周一→今日）的周线数据
+  #   cron: 每周五 19:00（与阶段 1 同时开始，数据独立不冲突）
+  # ----------------------------------------------------------
+  - name: 周线行情
+    cron: "0 19 * * 5"
+    only_on: [friday]
+    tasks:
+      - name: stock_weekly
+        cmd: ["--table", "stock_weekly", "--start", "{week_monday}", "--end", "{today}"]
+
+
+  # ----------------------------------------------------------
+  # 阶段 4：月线行情（仅月末最后 5 天执行）
+  #   拉取本月（月初→今日）的月线数据
+  #   cron: 每天 20:00（only_on 控制仅月末生效）
+  # ----------------------------------------------------------
+  - name: 月线行情
+    cron: "0 20 * * 1-5"
+    only_on: [month_last]
+    tasks:
+      - name: stock_monthly
+        cmd: ["--table", "stock_monthly", "--start", "{month_start}", "--end", "{today}"]
+
+
+  # ----------------------------------------------------------
+  # 阶段 5：券商金股（仅每月 1~5 日执行）
+  #   数据一般于每月 1~3 日更新
+  #   cron: 每天 21:00（only_on 控制仅月初生效）
+  # ----------------------------------------------------------
+  - name: 券商金股
+    cron: "0 21 * * 1-5"
+    only_on: [month_early]
+    tasks:
+      - name: broker_recommend
+        cmd: ["--table", "broker_recommend", "--month", "{current_month}"]
