@@ -45,10 +45,13 @@ _PAGE_SIZE = 4800   # 保守低于接口上限 5000
 _IDX_TYPES = ["行业板块", "概念板块", "地域板块"]
 
 _COLS = [
-    "ts_code", "trade_date", "name", "leading", "leading_code",
+    "ts_code", "trade_date", "name", "leading_name", "leading_code",
     "pct_change", "leading_pct", "total_mv", "turnover_rate",
     "up_num", "down_num", "idx_type", "level",
 ]
+
+# tushare 接口返回字段名为 leading，落库映射为 leading_name
+_RENAME = {"leading": "leading_name"}
 
 
 def _rate_limit_wait():
@@ -76,6 +79,8 @@ def _get_pro_api():
 def _clean(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
+    # tushare 返回 leading，重命名为 leading_name 避免 PostgreSQL 保留字冲突
+    df = df.rename(columns=_RENAME)
     cols = [c for c in _COLS if c in df.columns]
     df = df[cols].copy()
     if "trade_date" in df.columns:

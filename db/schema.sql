@@ -745,7 +745,7 @@ CREATE TABLE IF NOT EXISTS dc_index (
     ts_code        VARCHAR(20)  NOT NULL,       -- 概念代码，如 BK1186.DC
     trade_date     DATE         NOT NULL,        -- 交易日期
     name           VARCHAR(40),                  -- 概念名称
-    leading        VARCHAR(20),                  -- 领涨股票名称
+    leading_name   VARCHAR(20),                  -- 领涨股票名称
     leading_code   VARCHAR(12),                  -- 领涨股票代码
     pct_change     NUMERIC(10, 4),               -- 涨跌幅（%）
     leading_pct    NUMERIC(10, 4),               -- 领涨股票涨跌幅（%）

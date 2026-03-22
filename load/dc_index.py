@@ -31,7 +31,7 @@ TABLE = "dc_index"
 CONFLICT_COLS = ["ts_code", "trade_date"]
 
 KEEP_COLS = [
-    "ts_code", "trade_date", "name", "leading", "leading_code",
+    "ts_code", "trade_date", "name", "leading_name", "leading_code",
     "pct_change", "leading_pct", "total_mv", "turnover_rate",
     "up_num", "down_num", "idx_type", "level",
 ]
