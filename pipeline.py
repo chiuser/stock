@@ -93,6 +93,9 @@ from load import (
     load_moneyflow_mkt_dc_date,
     load_moneyflow_mkt_dc_range,
     load_sw_industry,
+    load_sw_industry_member,
+    load_sw_industry_member_by_l3,
+    load_sw_industry_member_by_ts,
 )
 
 TABLES = [
@@ -101,7 +104,7 @@ TABLES = [
     "stock_weekly", "stock_monthly",
     "broker_recommend",
     "moneyflow_dc", "moneyflow_ind_dc", "moneyflow_mkt_dc",
-    "sw_industry",
+    "sw_industry", "sw_industry_member",
 ]
 
 
@@ -128,7 +131,9 @@ def main():
                         help="个股批量拉取时每只间隔秒数（默认 0.3）")
     parser.add_argument("--sw-src", default="SW2021",
                         choices=["SW2021", "SW2014", "all"],
-                        help="申万行业分类版本（默认 SW2021，用于 sw_industry）")
+                        help="申万行业版本（默认 SW2021，用于 sw_industry / sw_industry_member）")
+    parser.add_argument("--sw-l3", metavar="L3_CODE",
+                        help="只拉取指定 L3 行业成分（用于 sw_industry_member），如 850531.SI")
     args = parser.parse_args()
 
     tables = TABLES if "all" in args.table else args.table
@@ -244,6 +249,16 @@ def main():
 
         elif table == "sw_industry":
             load_sw_industry(src=args.sw_src)
+
+        elif table == "sw_industry_member":
+            if codes:
+                # 按股票代码查询行业归属
+                for code in codes:
+                    load_sw_industry_member_by_ts(code)
+            elif getattr(args, "sw_l3", None):
+                load_sw_industry_member_by_l3(args.sw_l3)
+            else:
+                load_sw_industry_member(src=args.sw_src, sleep_sec=args.sleep)
 
     print(f"\n{'='*60}")
     print("  所有任务完成。")

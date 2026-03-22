@@ -465,3 +465,40 @@ CREATE TABLE IF NOT EXISTS sw_industry_class (
 );
 CREATE INDEX IF NOT EXISTS idx_sw_industry_class_level  ON sw_industry_class(level, src);
 CREATE INDEX IF NOT EXISTS idx_sw_industry_class_parent ON sw_industry_class(parent_code, src);
+
+
+-- -------------------------------------------------------------
+-- 13. 申万行业成分构成（分级）
+--    来源: pro.index_member_all()
+--    记录每只股票归属哪个三级行业，含历史变更记录
+--    建议更新频率: 行业调整时（通常每季度或年度）手动更新
+--
+--    主键设计：(l3_code, ts_code, in_date)
+--      - 同一股票历史上可多次进出同一 L3 行业
+--      - in_date 不可为 NULL（API 实测总有值；极端情形填哨兵 1900-01-01）
+--
+--    关联关系：
+--      l3_code → sw_industry_class.index_code (level='L3')
+--      l2_code → sw_industry_class.index_code (level='L2')
+--      l1_code → sw_industry_class.index_code (level='L1')
+--      ts_code → stock_basic.ts_code
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS sw_industry_member (
+    l3_code    VARCHAR(12)  NOT NULL,          -- 三级行业指数代码，如 850531.SI
+    l2_code    VARCHAR(12),                     -- 二级行业指数代码（冗余，方便查询）
+    l1_code    VARCHAR(12),                     -- 一级行业指数代码（冗余，方便查询）
+    ts_code    VARCHAR(12)  NOT NULL,           -- 成分股票代码，如 000506.SZ
+    name       VARCHAR(20),                     -- 成分股票名称
+    in_date    DATE         NOT NULL,           -- 纳入日期
+    out_date   DATE,                            -- 剔除日期（NULL = 仍在成分中）
+    is_new     VARCHAR(2)   NOT NULL DEFAULT 'Y', -- 是否最新成分 Y/N
+    updated_at TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (l3_code, ts_code, in_date)
+);
+-- 按股票查询其行业归属（最常用）
+CREATE INDEX IF NOT EXISTS idx_sw_ind_member_ts     ON sw_industry_member(ts_code);
+-- 按一级 / 二级行业筛选成分
+CREATE INDEX IF NOT EXISTS idx_sw_ind_member_l1     ON sw_industry_member(l1_code);
+CREATE INDEX IF NOT EXISTS idx_sw_ind_member_l2     ON sw_industry_member(l2_code);
+-- 快速取当前成分（is_new='Y'）
+CREATE INDEX IF NOT EXISTS idx_sw_ind_member_is_new ON sw_industry_member(is_new, l3_code);
