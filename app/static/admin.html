@@ -114,6 +114,55 @@
     </div>
   </div>
 
+  <!-- ======================== 手动执行弹层 ======================== -->
+  <div class="modal-overlay" id="trigger-modal">
+    <div class="trigger-modal-box">
+      <div class="trigger-modal-header">
+        <span id="trigger-modal-title">手动执行</span>
+        <button class="modal-close" id="trigger-modal-close">×</button>
+      </div>
+      <div class="trigger-modal-body">
+
+        <!-- 任务列表 -->
+        <div class="trigger-task-list" id="trigger-task-list"></div>
+
+        <!-- 日期范围（range 类型） -->
+        <div class="trigger-date-section hidden" id="trigger-range-section">
+          <div class="trigger-date-label">日期范围</div>
+          <div class="trigger-date-row">
+            <div class="trigger-date-field">
+              <label>开始日期</label>
+              <input type="date" id="trigger-start" class="trigger-date-input">
+            </div>
+            <span class="trigger-date-arrow">→</span>
+            <div class="trigger-date-field">
+              <label>结束日期</label>
+              <input type="date" id="trigger-end" class="trigger-date-input">
+            </div>
+          </div>
+          <p class="trigger-hint" id="trigger-range-hint"></p>
+        </div>
+
+        <!-- 月份选择（month 类型） -->
+        <div class="trigger-date-section hidden" id="trigger-month-section">
+          <div class="trigger-date-label">月份</div>
+          <input type="month" id="trigger-month" class="trigger-date-input trigger-month-input">
+          <p class="trigger-hint">选择要拉取的月份，默认为当前月</p>
+        </div>
+
+        <!-- 无日期参数提示 -->
+        <div class="trigger-none-note hidden" id="trigger-none-note">
+          此阶段无日期参数，将直接执行
+        </div>
+
+      </div>
+      <div class="trigger-modal-footer">
+        <button class="admin-btn admin-btn-ghost" id="trigger-modal-cancel">取消</button>
+        <button class="admin-btn admin-btn-primary" id="trigger-modal-confirm">立即执行</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ======================== 日志查看弹层 ======================== -->
   <div class="modal-overlay" id="log-modal">
     <div class="log-modal-box">

@@ -917,6 +917,138 @@ body.admin-body {
   border-radius: 0 0 8px 8px;
 }
 
+/* ── Trigger Modal ──────────────────────────────────────────── */
+.trigger-modal-box {
+  background: #1e222d;
+  border: 1px solid #2a2e39;
+  border-radius: 8px;
+  width: min(500px, 94vw);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 12px 40px rgba(0,0,0,.6);
+}
+
+.trigger-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid #2a2e39;
+  font-size: 14px;
+  font-weight: 600;
+  color: #d1d4dc;
+  flex-shrink: 0;
+}
+
+.trigger-modal-body {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.trigger-task-list {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.trigger-tasks-label {
+  font-size: 11px;
+  color: #787b86;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.trigger-task-chip {
+  font-size: 11px;
+  font-family: monospace;
+  color: #9598a1;
+  background: #242835;
+  border: 1px solid #2a2e39;
+  border-radius: 4px;
+  padding: 2px 8px;
+}
+
+.trigger-date-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: #181c28;
+  border: 1px solid #2a2e39;
+  border-radius: 6px;
+}
+.trigger-date-section.hidden { display: none; }
+
+.trigger-date-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #9598a1;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+
+.trigger-date-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.trigger-date-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1;
+}
+.trigger-date-field label { font-size: 11px; color: #787b86; }
+
+.trigger-date-input {
+  width: 100%;
+  padding: 7px 10px;
+  background: #2a2e39;
+  border: 1px solid #363c4e;
+  border-radius: 4px;
+  color: #d1d4dc;
+  font-size: 13px;
+  outline: none;
+  transition: border-color .15s;
+  color-scheme: dark;
+}
+.trigger-date-input:focus { border-color: #2962ff; }
+.trigger-month-input { max-width: 180px; }
+
+.trigger-date-arrow {
+  color: #4a4e5c;
+  font-size: 16px;
+  padding-bottom: 9px;
+  flex-shrink: 0;
+}
+
+.trigger-hint {
+  font-size: 11px;
+  color: #4a4e5c;
+  line-height: 1.55;
+}
+
+.trigger-none-note {
+  font-size: 12px;
+  color: #787b86;
+  padding: 10px 14px;
+  background: #242835;
+  border-radius: 4px;
+  border: 1px solid #2a2e39;
+}
+.trigger-none-note.hidden { display: none; }
+
+.trigger-modal-footer {
+  padding: 14px 18px;
+  border-top: 1px solid #2a2e39;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
 /* ── Toast ──────────────────────────────────────────────────── */
 .toast-wrap {
   position: fixed;

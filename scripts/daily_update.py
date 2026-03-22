@@ -272,6 +272,14 @@ def main() -> None:
         "--list", action="store_true",
         help="列出所有阶段及今日触发状态后退出",
     )
+    parser.add_argument(
+        "--start", metavar="YYYYMMDD",
+        help="覆盖起始日期（替换 {week_monday}/{month_start}/{current_month}），用于补拉历史数据",
+    )
+    parser.add_argument(
+        "--end", metavar="YYYYMMDD",
+        help="覆盖结束日期（替换 {today}），用于补拉历史数据",
+    )
     args = parser.parse_args()
 
     # 定位配置文件
@@ -302,6 +310,14 @@ def main() -> None:
 
     stages: list[dict] = config.get("stages", [])
     placeholders = _build_placeholders()
+
+    # 允许通过 --start / --end 覆盖日期占位符（用于补拉历史数据）
+    if args.start:
+        placeholders["{week_monday}"]   = args.start
+        placeholders["{month_start}"]   = args.start
+        placeholders["{current_month}"] = args.start[:6]
+    if args.end:
+        placeholders["{today}"] = args.end
 
     # --list 模式
     if args.list:

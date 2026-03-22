@@ -210,6 +210,19 @@ class SaveConfigRequest(BaseModel):
 
 class TriggerRequest(BaseModel):
     stage: str
+    start_date: Optional[str] = None   # YYYYMMDD，覆盖起始日期占位符
+    end_date:   Optional[str] = None   # YYYYMMDD，覆盖结束日期占位符
+
+
+def _stage_date_type(stage: dict) -> str:
+    """检测阶段的日期参数类型：'none' | 'range' | 'month'"""
+    for task in stage.get("tasks", []):
+        cmd_str = " ".join(task.get("cmd", []))
+        if "{current_month}" in cmd_str:
+            return "month"
+        if any(p in cmd_str for p in ("{today}", "{yesterday}", "{week_monday}", "{month_start}")):
+            return "range"
+    return "none"
 
 
 # ------------------------------------------------------------------ #
@@ -254,6 +267,7 @@ def get_status(user: dict = Depends(_get_current_user)):
             "condition_reason": condition_reason,
             "triggered_today": trigger_info["triggered"],
             "trigger_reason": trigger_info["reason"],
+            "date_type": _stage_date_type(stage),
             "tasks": tasks_status,
         })
 
@@ -351,6 +365,15 @@ def trigger_stage(body: TriggerRequest, user: dict = Depends(_get_current_user))
     if body.stage not in valid_stages:
         raise HTTPException(status_code=400, detail=f"未知阶段: {body.stage}")
 
+    # 验证日期格式
+    _date_re = re.compile(r"^\d{8}$")
+    if body.start_date and not _date_re.match(body.start_date):
+        raise HTTPException(status_code=400, detail="start_date 格式应为 YYYYMMDD")
+    if body.end_date and not _date_re.match(body.end_date):
+        raise HTTPException(status_code=400, detail="end_date 格式应为 YYYYMMDD")
+    if body.start_date and body.end_date and body.start_date > body.end_date:
+        raise HTTPException(status_code=400, detail="start_date 不能晚于 end_date")
+
     # 若 python_exe 是相对路径，相对于 project_root
     p = Path(python_exe)
     if not p.is_absolute() and str(p) != "python3":
@@ -360,9 +383,15 @@ def trigger_stage(body: TriggerRequest, user: dict = Depends(_get_current_user))
     today = datetime.date.today()
     trigger_log = log_dir / f"trigger_{body.stage.replace(' ', '_')}_{today:%Y%m%d_%H%M%S}.log"
 
+    run_cmd = [python_exe, str(scheduler), "--stage", body.stage]
+    if body.start_date:
+        run_cmd += ["--start", body.start_date]
+    if body.end_date:
+        run_cmd += ["--end", body.end_date]
+
     try:
         proc = subprocess.Popen(
-            [python_exe, str(scheduler), "--stage", body.stage],
+            run_cmd,
             cwd=str(project_root),
             stdout=open(trigger_log, "w", encoding="utf-8"),
             stderr=subprocess.STDOUT,

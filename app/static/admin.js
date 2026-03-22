@@ -95,11 +95,38 @@ function timeRange(start, end) {
   return `${fmt(start)} → ${fmt(end)}  (${timeDiff(start, end)})`;
 }
 
+// ── 日期工具 ──────────────────────────────────────────────────────
+
+function _fmtDate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function getTodayStr() { return _fmtDate(new Date()); }
+function getWeekMondayStr() {
+  const d = new Date();
+  const wd = d.getDay();
+  d.setDate(d.getDate() + (wd === 0 ? -6 : 1 - wd));
+  return _fmtDate(d);
+}
+function getMonthStartStr() {
+  const d = new Date(); d.setDate(1); return _fmtDate(d);
+}
+function getCurrentMonthStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 // ── 任务状态渲染 ──────────────────────────────────────────────────
+
+// 存储 stage 数据供弹层使用
+const _stageDataMap = new Map();
 
 function renderStages(data) {
   const container = document.getElementById("stages-container");
   container.innerHTML = "";
+  _stageDataMap.clear();
 
   // 更新日期标签
   document.getElementById("admin-date").textContent =
@@ -111,6 +138,7 @@ function renderStages(data) {
   }
 
   data.stages.forEach(stage => {
+    _stageDataMap.set(stage.name, stage);
     const card = document.createElement("div");
     card.className = "stage-card" + (stage.enabled === false ? " stage-disabled" : "");
 
@@ -179,7 +207,10 @@ function renderStages(data) {
 
   // 绑定手动执行按钮
   container.querySelectorAll(".admin-btn-trigger").forEach(btn => {
-    btn.addEventListener("click", () => triggerStage(btn.dataset.stage, btn));
+    btn.addEventListener("click", () => {
+      const stage = _stageDataMap.get(btn.dataset.stage);
+      openTriggerModal(stage);
+    });
   });
 
   // 绑定日志查看按钮
@@ -188,23 +219,108 @@ function renderStages(data) {
   });
 }
 
-async function triggerStage(stageName, btn) {
+// ── 手动执行弹层 ──────────────────────────────────────────────────
+
+let _currentTriggerStage = null;
+
+function openTriggerModal(stage) {
+  _currentTriggerStage = stage;
+
+  document.getElementById("trigger-modal-title").textContent = `执行：${stage.name}`;
+
+  // 任务列表
+  const taskNames = stage.tasks.map(t => t.name);
+  document.getElementById("trigger-task-list").innerHTML =
+    `<span class="trigger-tasks-label">包含任务</span>` +
+    taskNames.map(n => `<span class="trigger-task-chip">${n}</span>`).join("");
+
+  // 根据 date_type 显示对应区域
+  const dateType = stage.date_type || "none";
+  const rangeSection = document.getElementById("trigger-range-section");
+  const monthSection = document.getElementById("trigger-month-section");
+  const noneNote     = document.getElementById("trigger-none-note");
+
+  rangeSection.classList.add("hidden");
+  monthSection.classList.add("hidden");
+  noneNote.classList.add("hidden");
+
+  const today      = getTodayStr();
+  const onlyOn     = stage.only_on || [];
+
+  if (dateType === "range") {
+    rangeSection.classList.remove("hidden");
+
+    let defaultStart = today;
+    if (onlyOn.includes("friday")) {
+      defaultStart = getWeekMondayStr();
+    } else if (onlyOn.includes("month_last")) {
+      defaultStart = getMonthStartStr();
+    }
+
+    document.getElementById("trigger-start").value = defaultStart;
+    document.getElementById("trigger-end").value   = today;
+    document.getElementById("trigger-range-hint").textContent =
+      `默认：${defaultStart} → ${today}。可修改为任意历史区间以补拉数据。`;
+
+  } else if (dateType === "month") {
+    monthSection.classList.remove("hidden");
+    document.getElementById("trigger-month").value = getCurrentMonthStr();
+
+  } else {
+    noneNote.classList.remove("hidden");
+  }
+
+  // 重置确认按钮状态
+  const confirmBtn = document.getElementById("trigger-modal-confirm");
+  confirmBtn.disabled = false;
+  confirmBtn.textContent = "立即执行";
+
+  document.getElementById("trigger-modal").classList.add("open");
+}
+
+async function confirmTrigger() {
+  const stage = _currentTriggerStage;
+  if (!stage) return;
+
+  const dateType = stage.date_type || "none";
+  const payload  = { stage: stage.name };
+
+  if (dateType === "range") {
+    const start = document.getElementById("trigger-start").value;
+    const end   = document.getElementById("trigger-end").value;
+    if (start) payload.start_date = start.replace(/-/g, "");
+    if (end)   payload.end_date   = end.replace(/-/g, "");
+    if (payload.start_date && payload.end_date && payload.start_date > payload.end_date) {
+      showToast("开始日期不能晚于结束日期", "error");
+      return;
+    }
+  } else if (dateType === "month") {
+    const month = document.getElementById("trigger-month").value; // YYYY-MM
+    if (month) payload.start_date = month.replace("-", "") + "01";
+  }
+
+  const btn = document.getElementById("trigger-modal-confirm");
   btn.disabled = true;
   btn.textContent = "启动中…";
+
   try {
     const res = await apiFetch("/api/admin/run", {
       method: "POST",
-      body: JSON.stringify({ stage: stageName }),
+      body: JSON.stringify(payload),
     });
     showToast(res.message, "success");
-    // 3秒后刷新状态
+    document.getElementById("trigger-modal").classList.remove("open");
     setTimeout(() => loadStatus(), 3000);
   } catch (e) {
     showToast(`触发失败：${e.message}`, "error");
-  } finally {
     btn.disabled = false;
-    btn.textContent = "手动执行";
+    btn.textContent = "立即执行";
   }
+}
+
+function closeTriggerModal() {
+  document.getElementById("trigger-modal").classList.remove("open");
+  _currentTriggerStage = null;
 }
 
 async function openLogModal(taskName) {
@@ -417,6 +533,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 保存配置
   document.getElementById("btn-save-config").addEventListener("click", saveConfig);
+
+  // 手动执行弹层
+  document.getElementById("trigger-modal-confirm").addEventListener("click", confirmTrigger);
+  document.getElementById("trigger-modal-cancel").addEventListener("click", closeTriggerModal);
+  document.getElementById("trigger-modal-close").addEventListener("click", closeTriggerModal);
+  document.getElementById("trigger-modal").addEventListener("click", e => {
+    if (e.target === e.currentTarget) closeTriggerModal();
+  });
+  // 日期联动：结束日期不能早于开始日期
+  document.getElementById("trigger-start").addEventListener("change", () => {
+    const s = document.getElementById("trigger-start").value;
+    const e = document.getElementById("trigger-end");
+    if (s && e.value && e.value < s) e.value = s;
+    e.min = s || "";
+  });
 
   // 日志弹层关闭
   document.getElementById("log-modal-close").addEventListener("click", () => {
