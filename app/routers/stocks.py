@@ -142,21 +142,32 @@ def get_stock_daily(
             pd.to_datetime(start, format="%Y%m%d") - timedelta(days=400)
         ).strftime("%Y%m%d")
 
-    conditions = ["ts_code = %s"]
+    # 构建两套条件：stock_daily 用别名 sd，index_daily 不用别名
+    stock_conds = ["sd.ts_code = %s"]
+    idx_conds   = ["ts_code = %s"]
     params: list = [ts_code]
     if lookback_start:
-        conditions.append("trade_date >= %s")
+        stock_conds.append("sd.trade_date >= %s")
+        idx_conds.append("trade_date >= %s")
         params.append(lookback_start)
     if end:
-        conditions.append("trade_date <= %s")
+        stock_conds.append("sd.trade_date <= %s")
+        idx_conds.append("trade_date <= %s")
         params.append(end)
 
-    where = " AND ".join(conditions)
+    stock_where = " AND ".join(stock_conds)
+    idx_where   = " AND ".join(idx_conds)
+
     sql = (
-        f"SELECT trade_date, {o}, {h}, {l}, {c}, vol "
-        f"FROM stock_daily WHERE {where} ORDER BY trade_date ASC"
+        f"SELECT sd.trade_date, sd.{o}, sd.{h}, sd.{l}, sd.{c}, sd.vol, "
+        f"sd.pct_chg, sd.amount, sdb.turnover_rate "
+        f"FROM stock_daily sd "
+        f"LEFT JOIN stock_daily_basic sdb "
+        f"  ON sdb.ts_code = sd.ts_code AND sdb.trade_date = sd.trade_date "
+        f"WHERE {stock_where} ORDER BY sd.trade_date ASC"
     )
 
+    is_index = False
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, params)
@@ -165,16 +176,19 @@ def get_stock_daily(
             # 个股表无数据时，回退到指数日线表（指数无复权价，固定用原始 OHLC）
             if not rows:
                 idx_sql = (
-                    "SELECT trade_date, open, high, low, close, vol "
-                    f"FROM index_daily WHERE {where} ORDER BY trade_date ASC"
+                    "SELECT trade_date, open, high, low, close, vol, "
+                    "pct_chg, amount, NULL::float AS turnover_rate "
+                    f"FROM index_daily WHERE {idx_where} ORDER BY trade_date ASC"
                 )
                 cur.execute(idx_sql, params)
                 rows = cur.fetchall()
+                is_index = True
 
     if not rows:
-        return {"ts_code": ts_code, "candles": [], "volume": [], "ma": {}}
+        return {"ts_code": ts_code, "candles": [], "volume": [], "ma": {}, "is_index": is_index}
 
-    df = pd.DataFrame(rows, columns=["trade_date", "open", "high", "low", "close", "vol"])
+    df = pd.DataFrame(rows, columns=["trade_date", "open", "high", "low", "close", "vol",
+                                     "pct_chg", "amount", "turnover_rate"])
     df["trade_date"] = pd.to_datetime(df["trade_date"])
     df = df.dropna(subset=["open", "close"]).reset_index(drop=True)
 
@@ -186,16 +200,27 @@ def get_stock_daily(
         start_dt = pd.to_datetime(start, format="%Y%m%d")
         df = df[df["trade_date"] >= start_dt].reset_index(drop=True)
 
+    def _sf(v):
+        """安全转 float，None/NaN 返回 None。"""
+        try:
+            f = float(v)
+            return None if pd.isna(f) else f
+        except (TypeError, ValueError):
+            return None
+
     # 序列化
     candles, volume = [], []
     for row in df.itertuples(index=False):
         d = str(row.trade_date)[:10]
         candles.append({
-            "time":  d,
-            "open":  float(row.open),
-            "high":  float(row.high),
-            "low":   float(row.low),
-            "close": float(row.close),
+            "time":          d,
+            "open":          float(row.open),
+            "high":          float(row.high),
+            "low":           float(row.low),
+            "close":         float(row.close),
+            "pct_chg":       _sf(row.pct_chg),
+            "amount":        _sf(row.amount),
+            "turnover_rate": _sf(row.turnover_rate),
         })
         volume.append({
             "time":  d,
@@ -212,4 +237,4 @@ def get_stock_daily(
             if pd.notna(getattr(row, col))
         ]
 
-    return {"ts_code": ts_code, "candles": candles, "volume": volume, "ma": ma_out}
+    return {"ts_code": ts_code, "candles": candles, "volume": volume, "ma": ma_out, "is_index": is_index}

@@ -1140,3 +1140,34 @@ body.admin-body {
 .toast-success { background: #26a69a11; border-color: #26a69a44; color: #26a69a; }
 .toast-error   { background: #ef535011; border-color: #ef535044; color: #ef5350; }
 
+/* ── K 线详情浮窗 ──────────────────────────────────────── */
+.kline-detail-panel {
+  position: fixed;
+  top: 90px;
+  left: 10px;
+  right: auto;
+  width: 155px;
+  background: transparent;
+  pointer-events: none;
+  z-index: 100;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.kd-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 2px 0;
+}
+
+.kd-label {
+  color: #ffffff;
+  flex-shrink: 0;
+}
+
+.kd-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+

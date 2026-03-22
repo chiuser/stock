@@ -53,6 +53,10 @@ function tickFormatter(time, tickMarkType) {
 // ── 配置 ──────────────────────────────────────────────────
 const VISIBLE_BARS = { 1: 25, 3: 70, 6: 135, 12: 260, 36: 780 };
 
+const KLINE_RED   = '#E04040';
+const KLINE_GREEN = '#45AA55';
+const KLINE_WHITE = '#d1d4dc';
+
 const MA_COLORS = {
   5:   '#FF6B35',
   10:  '#FFE66D',
@@ -77,6 +81,9 @@ let currentAdj   = 'qfq';
 let currentRange = 6;
 let activeMA     = new Set([5, 10, 20, 60]);
 let allCandleCount = 0;   // 全量已加载的 K 线根数，供滑动窗口计算
+
+const detailMap = new Map();  // time → {open,high,low,close,pct_chg,amount,turnover_rate,prevClose}
+let currentIsIndex = false;
 
 // ── 公共图表配置 ──────────────────────────────────────────
 const BASE_OPTS = {
@@ -166,15 +173,27 @@ function initChart() {
 
   chart.subscribeCrosshairMove(param => {
     if (!_crosshairOn) return;
-    if (!param.time) { volChart.clearCrosshairPosition(); return; }
-    const vol = volumeMap.get(fmtDate(param.time)) ?? 0;
+    if (!param.time) {
+      volChart.clearCrosshairPosition();
+      hideDetailPanel();
+      return;
+    }
+    const t = fmtDate(param.time);
+    const vol = volumeMap.get(t) ?? 0;
     volChart.setCrosshairPosition(vol, param.time, volumeSeries);
+    updateDetailPanel(t, param.point);
   });
   volChart.subscribeCrosshairMove(param => {
     if (!_crosshairOn) return;
-    if (!param.time) { chart.clearCrosshairPosition(); return; }
-    const price = candleMap.get(fmtDate(param.time)) ?? 0;
+    if (!param.time) {
+      chart.clearCrosshairPosition();
+      hideDetailPanel();
+      return;
+    }
+    const t = fmtDate(param.time);
+    const price = candleMap.get(t) ?? 0;
     chart.setCrosshairPosition(price, param.time, candleSeries);
+    updateDetailPanel(t, param.point);
   });
 
   let syncing = false;
@@ -224,7 +243,99 @@ function applyCrosshairVisibility() {
   if (!v) {
     chart.clearCrosshairPosition();
     volChart.clearCrosshairPosition();
+    hideDetailPanel();
   }
+}
+
+// ── K 线详情浮窗 ──────────────────────────────────────────
+function _colorOf(val, ref) {
+  if (ref === null || val === null || ref === undefined || val === undefined) return KLINE_WHITE;
+  if (val > ref) return KLINE_RED;
+  if (val < ref) return KLINE_GREEN;
+  return KLINE_WHITE;
+}
+
+function _fmtVol(vol) {
+  if (vol === null || vol === undefined) return '-';
+  if (vol >= 1e8)  return (vol / 1e8).toFixed(2) + '亿手';
+  if (vol >= 1e4)  return (vol / 1e4).toFixed(2) + '万手';
+  return vol.toFixed(0) + '手';
+}
+
+function _fmtAmount(amount) {
+  // amount 单位：千元
+  if (amount === null || amount === undefined) return '-';
+  if (amount >= 1e5) return (amount / 1e5).toFixed(2) + '亿';
+  if (amount >= 10)  return (amount / 10).toFixed(2) + '万';
+  return amount.toFixed(0) + '千';
+}
+
+function _fmtPct(v) {
+  if (v === null || v === undefined) return '-';
+  return (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+}
+
+function _setText(id, text, color) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.style.color  = color;
+}
+
+function updateDetailPanel(timeStr, point) {
+  const detail = detailMap.get(timeStr);
+  if (!detail) { hideDetailPanel(); return; }
+
+  const panel = document.getElementById('kline-detail');
+  if (!panel) return;
+
+  const { open, high, low, close, pct_chg, amount, turnover_rate, prevClose } = detail;
+  const vol = volumeMap.get(timeStr);
+
+  // 颜色计算
+  const openColor  = _colorOf(open,  prevClose);
+  const closeColor = _colorOf(close, open);
+  const highColor  = _colorOf(high,  prevClose);
+  const lowColor   = _colorOf(low,   prevClose);
+
+  // 振幅 = (最高 - 最低) / 昨收 × 100%
+  const ampStr = (prevClose !== null && prevClose !== undefined && prevClose !== 0)
+    ? ((high - low) / prevClose * 100).toFixed(2) + '%'
+    : '-';
+
+  _setText('kd-time',     timeStr,                   KLINE_WHITE);
+  _setText('kd-open',     open.toFixed(2),            openColor);
+  _setText('kd-close',    close.toFixed(2),           closeColor);
+  _setText('kd-high',     high.toFixed(2),            highColor);
+  _setText('kd-low',      low.toFixed(2),             lowColor);
+  _setText('kd-pct',      _fmtPct(pct_chg),           closeColor);
+  _setText('kd-amp',      ampStr,                     KLINE_WHITE);
+  _setText('kd-vol',      _fmtVol(vol),               KLINE_WHITE);
+  _setText('kd-amount',   _fmtAmount(amount),         KLINE_WHITE);
+  if (!currentIsIndex) {
+    const trStr = (turnover_rate !== null && turnover_rate !== undefined)
+      ? turnover_rate.toFixed(2) + '%' : '-';
+    _setText('kd-turnover', trStr, KLINE_WHITE);
+  }
+
+  panel.style.display = '';
+
+  // 位置：十字线 x < 面板宽+边距 时切换到右上角，否则默认左上角
+  if (point) {
+    const panelW = panel.offsetWidth + 15;
+    if (point.x < panelW) {
+      panel.style.left  = 'auto';
+      panel.style.right = '10px';
+    } else {
+      panel.style.left  = '10px';
+      panel.style.right = 'auto';
+    }
+  }
+}
+
+function hideDetailPanel() {
+  const panel = document.getElementById('kline-detail');
+  if (panel) panel.style.display = 'none';
 }
 
 // ── 单击两图区域切换十字线；左键拖拽仅限K线图 ────────────
@@ -283,6 +394,16 @@ async function loadData(tsCode) {
   data.candles.forEach(c => candleMap.set(c.time, c.close));
   volumeMap.clear();
   data.volume.forEach(v => volumeMap.set(v.time, v.value));
+
+  // 构建浮窗详情 Map，附带 prevClose（前一日收盘价，用于颜色判断和振幅计算）
+  detailMap.clear();
+  data.candles.forEach((c, i) => {
+    detailMap.set(c.time, { ...c, prevClose: i > 0 ? data.candles[i - 1].close : null });
+  });
+
+  currentIsIndex = data.is_index || false;
+  const turnoverRow = document.getElementById('kd-turnover-row');
+  if (turnoverRow) turnoverRow.style.display = currentIsIndex ? 'none' : '';
 
   allCandleCount = data.candles.length;
   applyVisibleRange();
