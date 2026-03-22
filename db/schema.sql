@@ -542,3 +542,82 @@ CREATE TABLE IF NOT EXISTS sw_industry_daily (
 CREATE INDEX IF NOT EXISTS idx_sw_ind_daily_date ON sw_industry_daily(trade_date);
 -- 按代码查历史走势（通常 PK 已覆盖，显式索引供排序优化）
 CREATE INDEX IF NOT EXISTS idx_sw_ind_daily_code ON sw_industry_daily(ts_code, trade_date);
+
+
+-- -------------------------------------------------------------
+-- 15. 中信行业成分构成
+--    来源: pro.ci_index_member()
+--    描述: 记录每只股票归属哪个中信三级行业，含历史变更记录
+--    建议更新频率: 月度（每月初更新，行业调整不频繁）
+--
+--    与申万行业成分的关键差异：
+--      ① 中信无独立行业分类 API，l1_name/l2_name/l3_name 反范式存储于本表
+--      ② 全量拉取无需先建行业分类表，直接分页获取（约 2~5 次 API）
+--
+--    主键设计：(l3_code, ts_code, in_date)
+--      同一股票历史上可多次进出同一 L3 行业
+--
+--    关联关系（概念上）：
+--      ci_industry_daily.ts_code ∈ {l1_code ∪ l2_code ∪ l3_code}
+--      ts_code → stock_basic.ts_code
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ci_industry_member (
+    l3_code    VARCHAR(12)  NOT NULL,          -- 三级行业指数代码，如 CI005835.CI
+    l2_code    VARCHAR(12),                     -- 二级行业指数代码（冗余，方便查询）
+    l1_code    VARCHAR(12),                     -- 一级行业指数代码（冗余，方便查询）
+    l3_name    VARCHAR(40),                     -- 三级行业名称（反范式，无独立分类表）
+    l2_name    VARCHAR(40),                     -- 二级行业名称
+    l1_name    VARCHAR(40),                     -- 一级行业名称
+    ts_code    VARCHAR(12)  NOT NULL,           -- 成分股票代码，如 000001.SZ
+    name       VARCHAR(20),                     -- 成分股票名称
+    in_date    DATE         NOT NULL,           -- 纳入日期（NULL 数据填充 1900-01-01）
+    out_date   DATE,                            -- 剔除日期（NULL = 仍在成分中）
+    is_new     VARCHAR(2)   NOT NULL DEFAULT 'Y', -- 是否最新成分 Y/N
+    updated_at TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (l3_code, ts_code, in_date)
+);
+-- 按股票查询其行业归属（最常用）
+CREATE INDEX IF NOT EXISTS idx_ci_ind_member_ts     ON ci_industry_member(ts_code);
+-- 按一级 / 二级行业筛选
+CREATE INDEX IF NOT EXISTS idx_ci_ind_member_l1     ON ci_industry_member(l1_code);
+CREATE INDEX IF NOT EXISTS idx_ci_ind_member_l2     ON ci_industry_member(l2_code);
+-- 快速取当前成分（is_new='Y'）
+CREATE INDEX IF NOT EXISTS idx_ci_ind_member_is_new ON ci_industry_member(is_new, l3_code);
+
+
+-- -------------------------------------------------------------
+-- 16. 中信行业指数日线行情
+--    来源: pro.ci_daily()
+--    描述: 中信行业指数每日行情（无 pe/pb/mv/weight，有 pre_close）
+--    建议更新频率: 每个交易日收盘后（--date 模式，1次API=全行业约440条）
+--
+--    与申万行业日线（sw_industry_daily）的差异：
+--      ① 有 pre_close（昨日收盘点位）
+--      ② 无 pe / pb / float_mv / total_mv / weight
+--
+--    关联关系：
+--      ts_code ∈ {ci_industry_member.l1_code ∪ l2_code ∪ l3_code}
+--
+--    两种拉取策略：
+--      日常更新: ci_daily(trade_date=...) → 1次API = 当日全行业（约440条）
+--      历史回填: ci_daily(ts_code=..., start_date=...) → 按代码分页，推荐首次导入
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ci_industry_daily (
+    ts_code      VARCHAR(12)  NOT NULL,            -- 中信行业指数代码，如 CI005001.CI
+    trade_date   DATE         NOT NULL,            -- 交易日期
+    open         NUMERIC(12, 4),                   -- 开盘点位
+    high         NUMERIC(12, 4),                   -- 最高点位
+    low          NUMERIC(12, 4),                   -- 最低点位
+    close        NUMERIC(12, 4),                   -- 收盘点位
+    pre_close    NUMERIC(12, 4),                   -- 昨日收盘点位
+    change       NUMERIC(12, 4),                   -- 涨跌点位
+    pct_change   NUMERIC(8, 4),                    -- 涨跌幅（%）
+    vol          NUMERIC(20, 4),                   -- 成交量（万股）
+    amount       NUMERIC(20, 4),                   -- 成交额（万元）
+    updated_at   TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (ts_code, trade_date)
+);
+-- 按日期查所有行业（日报/行业对比最常用）
+CREATE INDEX IF NOT EXISTS idx_ci_ind_daily_date ON ci_industry_daily(trade_date);
+-- 按代码查历史走势
+CREATE INDEX IF NOT EXISTS idx_ci_ind_daily_code ON ci_industry_daily(ts_code, trade_date);

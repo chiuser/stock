@@ -20,6 +20,15 @@ from .sw_industry_daily import (
     fetch_sw_daily_by_code,
     fetch_sw_daily_all_codes,
 )
+from .ci_industry_member import (
+    fetch_ci_industry_member_all,
+    fetch_ci_industry_member_by_ts,
+)
+from .ci_industry_daily import (
+    fetch_ci_daily_by_date,
+    fetch_ci_daily_by_code,
+    fetch_ci_daily_all_codes,
+)
 
 __all__ = [
     "fetch_index_basic",
@@ -43,4 +52,9 @@ __all__ = [
     "fetch_sw_daily_by_date",
     "fetch_sw_daily_by_code",
     "fetch_sw_daily_all_codes",
+    "fetch_ci_industry_member_all",
+    "fetch_ci_industry_member_by_ts",
+    "fetch_ci_daily_by_date",
+    "fetch_ci_daily_by_code",
+    "fetch_ci_daily_all_codes",
 ]

@@ -21,6 +21,11 @@ from .sw_industry_member   import load_by_ts_code as load_sw_industry_member_by_
 from .sw_industry_daily    import load_date as load_sw_industry_daily_date
 from .sw_industry_daily    import load_date_range as load_sw_industry_daily_range
 from .sw_industry_daily    import load_backfill as load_sw_industry_daily_backfill
+from .ci_industry_member   import load as load_ci_industry_member
+from .ci_industry_member   import load_by_ts_code as load_ci_industry_member_by_ts
+from .ci_industry_daily    import load_date as load_ci_industry_daily_date
+from .ci_industry_daily    import load_date_range as load_ci_industry_daily_range
+from .ci_industry_daily    import load_backfill as load_ci_industry_daily_backfill
 
 __all__ = [
     "load_stock_basic",
@@ -46,4 +51,9 @@ __all__ = [
     "load_sw_industry_daily_date",
     "load_sw_industry_daily_range",
     "load_sw_industry_daily_backfill",
+    "load_ci_industry_member",
+    "load_ci_industry_member_by_ts",
+    "load_ci_industry_daily_date",
+    "load_ci_industry_daily_range",
+    "load_ci_industry_daily_backfill",
 ]

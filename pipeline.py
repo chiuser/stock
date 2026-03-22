@@ -99,6 +99,11 @@ from load import (
     load_sw_industry_daily_date,
     load_sw_industry_daily_range,
     load_sw_industry_daily_backfill,
+    load_ci_industry_member,
+    load_ci_industry_member_by_ts,
+    load_ci_industry_daily_date,
+    load_ci_industry_daily_range,
+    load_ci_industry_daily_backfill,
 )
 
 TABLES = [
@@ -108,6 +113,7 @@ TABLES = [
     "broker_recommend",
     "moneyflow_dc", "moneyflow_ind_dc", "moneyflow_mkt_dc",
     "sw_industry", "sw_industry_member", "sw_industry_daily",
+    "ci_industry_member", "ci_industry_daily",
 ]
 
 
@@ -138,7 +144,9 @@ def main():
     parser.add_argument("--sw-l3", metavar="L3_CODE",
                         help="只拉取指定 L3 行业成分（用于 sw_industry_member），如 850531.SI")
     parser.add_argument("--backfill", action="store_true",
-                        help="历史回填模式（用于 sw_industry_daily），按代码逐个拉取，API调用最少")
+                        help="历史回填模式（用于 sw/ci_industry_daily），按代码逐个拉取，API调用最少")
+    parser.add_argument("--ci-history", action="store_true",
+                        help="拉取中信行业成分时包含历史变更记录（默认只拉当前成分）")
     args = parser.parse_args()
 
     tables = TABLES if "all" in args.table else args.table
@@ -264,6 +272,32 @@ def main():
                 load_sw_industry_member_by_l3(args.sw_l3)
             else:
                 load_sw_industry_member(src=args.sw_src, sleep_sec=args.sleep)
+
+        elif table == "ci_industry_member":
+            if codes:
+                for code in codes:
+                    load_ci_industry_member_by_ts(code)
+            else:
+                load_ci_industry_member(
+                    include_history=getattr(args, "ci_history", False)
+                )
+
+        elif table == "ci_industry_daily":
+            if args.date:
+                load_ci_industry_daily_date(args.date)
+            elif getattr(args, "backfill", False) or codes:
+                load_ci_industry_daily_backfill(
+                    codes=codes or None,
+                    start_date=args.start,
+                    end_date=args.end,
+                    sleep_sec=args.sleep,
+                )
+            elif args.start:
+                load_ci_industry_daily_range(args.start, args.end)
+            else:
+                print("[pipeline] ci_industry_daily 请指定 --date（单日）、"
+                      "--start（日期区间）或 --backfill（历史回填）。")
+                sys.exit(1)
 
         elif table == "sw_industry_daily":
             if args.date:
