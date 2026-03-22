@@ -98,21 +98,40 @@ function initChart() {
   const candleEl = document.getElementById('candle-chart');
   const volumeEl = document.getElementById('volume-chart');
 
+  const CROSSHAIR_STYLE = {
+    mode: LightweightCharts.CrosshairMode.Normal,
+    vertLine: {
+      color: '#787b86', width: 1,
+      style: LightweightCharts.LineStyle.Dotted,
+      labelBackgroundColor: '#2a2e39',
+    },
+    horzLine: {
+      color: '#787b86', width: 1,
+      style: LightweightCharts.LineStyle.Dotted,
+      labelBackgroundColor: '#2a2e39',
+    },
+  };
+
   chart = LightweightCharts.createChart(candleEl, {
     ...BASE_OPTS,
-    crosshair:    { mode: LightweightCharts.CrosshairMode.Normal },
+    crosshair:    CROSSHAIR_STYLE,
     localization: { timeFormatter: fmtDate },
     timeScale:    { ...BASE_TIMESCALE, visible: false },
     width:  candleEl.clientWidth,
     height: candleEl.clientHeight,
   });
 
+  // 阳线（红）空心：只有外框，无填充；阴线（绿）实心
+  const UP_COLOR   = '#E04040';
+  const DOWN_COLOR = '#45AA55';
   candleSeries = chart.addCandlestickSeries({
-    upColor:       '#ef5350',
-    downColor:     '#26a69a',
-    borderVisible: false,
-    wickUpColor:   '#ef5350',
-    wickDownColor: '#26a69a',
+    upColor:         'rgba(0,0,0,0)',  // 透明填充 → 空心
+    downColor:        DOWN_COLOR,
+    borderVisible:    true,
+    borderUpColor:    UP_COLOR,
+    borderDownColor:  DOWN_COLOR,
+    wickUpColor:      UP_COLOR,
+    wickDownColor:    DOWN_COLOR,
   });
 
   MA_WINDOWS.forEach(w => {
@@ -128,6 +147,7 @@ function initChart() {
 
   volChart = LightweightCharts.createChart(volumeEl, {
     ...BASE_OPTS,
+    crosshair:    CROSSHAIR_STYLE,
     localization: { timeFormatter: fmtDate },
     rightPriceScale: {
       borderColor:  '#2a2e39',

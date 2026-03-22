@@ -200,7 +200,7 @@ def get_stock_daily(
         volume.append({
             "time":  d,
             "value": float(row.vol) if row.vol and not pd.isna(row.vol) else 0,
-            "color": "#ef5350" if row.close >= row.open else "#26a69a",
+            "color": "#E04040" if row.close >= row.open else "#45AA55",
         })
 
     ma_out = {}
