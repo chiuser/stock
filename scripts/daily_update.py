@@ -131,20 +131,26 @@ def _run_task(
     log_file = log_dir / f"{task_name}_{datetime.date.today():%Y%m%d}.log"
 
     try:
-        result = subprocess.run(
-            full_cmd,
-            cwd=str(project_root),
-            capture_output=True,
-            text=True,
-            timeout=7200,   # 单任务最多等 2 小时
-        )
-        output = result.stdout + result.stderr
-        log_file.write_text(output, encoding="utf-8")
+        # 流式写入：子进程输出实时落盘，执行中即可通过日志查看进度
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"   # 禁用 Python 子进程输出缓冲
+        with open(log_file, "w", encoding="utf-8", buffering=1) as lf:
+            result = subprocess.run(
+                full_cmd,
+                cwd=str(project_root),
+                stdout=lf,
+                stderr=subprocess.STDOUT,
+                timeout=7200,   # 单任务最多等 2 小时
+                env=env,
+            )
 
         success = result.returncode == 0
-        # 截取最后几行作为摘要
-        lines = [l for l in output.splitlines() if l.strip()]
-        summary = "\n".join(lines[-5:]) if lines else "(无输出)"
+        # 从日志文件读取末尾作为摘要
+        try:
+            all_lines = [l for l in log_file.read_text(encoding="utf-8").splitlines() if l.strip()]
+            summary = "\n".join(all_lines[-5:]) if all_lines else "(无输出)"
+        except Exception:
+            summary = "(读取日志失败)"
 
         if success:
             logger.info("[%s] 完成 ✓\n%s", task_name, summary)

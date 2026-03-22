@@ -118,17 +118,30 @@ function getCurrentMonthStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-// ── 任务状态渲染 ──────────────────────────────────────────────────
+// ── 任务状态渲染（局部更新，避免整页闪烁） ──────────────────────
 
 // 存储 stage 数据供弹层使用
 const _stageDataMap = new Map();
 
+// 将阶段/任务名转为合法 DOM ID 片段
+function _sid(name) { return name.replace(/[^\w\u4e00-\u9fff]/g, "_"); }
+
+function _triggerBadgeHtml(stage) {
+  if (!stage.enabled)
+    return `<span class="trigger-badge tb-disabled">已禁用</span>`;
+  if (!stage.should_run_today)
+    return `<span class="trigger-badge tb-skip" title="${stage.condition_reason}">今日跳过</span>`;
+  if (stage.triggered_today === true)
+    return `<span class="trigger-badge tb-ok">已触发</span>`;
+  if (stage.triggered_today === false)
+    return `<span class="trigger-badge tb-skip">已跳过</span>`;
+  return `<span class="trigger-badge tb-pending" title="${stage.condition_reason}">等待触发</span>`;
+}
+
 function renderStages(data) {
   const container = document.getElementById("stages-container");
-  container.innerHTML = "";
   _stageDataMap.clear();
 
-  // 更新日期标签
   document.getElementById("admin-date").textContent =
     `${data.date}  ${data.weekday}`;
 
@@ -137,85 +150,112 @@ function renderStages(data) {
     return;
   }
 
+  // 清除"无阶段"占位文字（如果有）
+  const emptyEl = container.querySelector(".admin-empty");
+  if (emptyEl) emptyEl.remove();
+
+  const activeCardIds = new Set();
+
   data.stages.forEach(stage => {
     _stageDataMap.set(stage.name, stage);
-    const card = document.createElement("div");
-    card.className = "stage-card" + (stage.enabled === false ? " stage-disabled" : "");
 
-    // 阶段触发状态徽章
-    let triggerBadge = "";
-    if (!stage.enabled) {
-      triggerBadge = `<span class="trigger-badge tb-disabled">已禁用</span>`;
-    } else if (!stage.should_run_today) {
-      triggerBadge = `<span class="trigger-badge tb-skip" title="${stage.condition_reason}">今日跳过</span>`;
-    } else if (stage.triggered_today === true) {
-      triggerBadge = `<span class="trigger-badge tb-ok">已触发</span>`;
-    } else if (stage.triggered_today === false) {
-      triggerBadge = `<span class="trigger-badge tb-skip">已跳过</span>`;
+    const ssid   = _sid(stage.name);
+    const cardId = `sc-${ssid}`;
+    activeCardIds.add(cardId);
+
+    const allSuccess  = stage.tasks.every(t => t.status === "success");
+    const anyFailed   = stage.tasks.some(t  => t.status === "failed");
+    const anyRunning  = stage.tasks.some(t  => t.status === "running");
+    const stageStatus = anyFailed ? "failed" : anyRunning ? "running"
+                      : allSuccess ? "success" : "pending";
+    const trigHtml    = _triggerBadgeHtml(stage);
+
+    let card = document.getElementById(cardId);
+
+    if (!card) {
+      // ── 首次渲染：构建完整卡片结构 ────────────────────────────
+      card = document.createElement("div");
+      card.id        = cardId;
+      card.className = "stage-card" + (stage.enabled === false ? " stage-disabled" : "");
+
+      const taskRowsHtml = stage.tasks.map(task => {
+        const tid    = `${ssid}_${_sid(task.name)}`;
+        const hasLog = task.log_tail && task.log_tail.length > 0;
+        return `
+          <div class="task-row task-${task.status}" id="tr-${tid}">
+            <span class="task-dot task-dot-${task.status}" id="td-${tid}"></span>
+            <span class="task-name">${task.name}</span>
+            <span class="task-status-badge" id="tb-${tid}">${statusBadge(task.status)}</span>
+            <span class="task-time" id="tt-${tid}">${timeRange(task.started_at, task.finished_at)}</span>
+            <button class="task-log-btn" id="tlb-${tid}" data-task="${task.name}"
+                    style="${hasLog ? "" : "visibility:hidden"}">查看日志</button>
+          </div>`;
+      }).join("");
+
+      card.innerHTML = `
+        <div class="stage-header">
+          <div class="stage-header-left">
+            <span class="stage-name">${stage.name}</span>
+            <span id="strig-${ssid}">${trigHtml}</span>
+            <span id="sstat-${ssid}">${statusBadge(stageStatus)}</span>
+          </div>
+          <div class="stage-header-right">
+            <span class="stage-cron" title="${stage.cron}">${humanizeCron(stage.cron)}</span>
+            <button class="admin-btn admin-btn-sm admin-btn-trigger"
+                    data-stage="${stage.name}"
+                    ${stage.enabled === false ? 'disabled title="阶段已禁用"' : ''}>
+              手动执行
+            </button>
+          </div>
+        </div>
+        <div class="stage-condition">触发条件：${stage.condition_reason}</div>
+        <div class="task-list">${taskRowsHtml}</div>`;
+
+      container.appendChild(card);
+
     } else {
-      triggerBadge = `<span class="trigger-badge tb-pending" title="${stage.condition_reason}">等待触发</span>`;
+      // ── 局部更新：只改动态内容，不重建 DOM ─────────────────────
+      const trigEl = document.getElementById(`strig-${ssid}`);
+      if (trigEl) trigEl.innerHTML = trigHtml;
+      const statEl = document.getElementById(`sstat-${ssid}`);
+      if (statEl) statEl.innerHTML = statusBadge(stageStatus);
+
+      stage.tasks.forEach(task => {
+        const tid     = `${ssid}_${_sid(task.name)}`;
+        const hasLog  = task.log_tail && task.log_tail.length > 0;
+        const rowEl   = document.getElementById(`tr-${tid}`);
+        const dotEl   = document.getElementById(`td-${tid}`);
+        const badgeEl = document.getElementById(`tb-${tid}`);
+        const timeEl  = document.getElementById(`tt-${tid}`);
+        const logBtn  = document.getElementById(`tlb-${tid}`);
+
+        if (rowEl)   rowEl.className           = `task-row task-${task.status}`;
+        if (dotEl)   dotEl.className           = `task-dot task-dot-${task.status}`;
+        if (badgeEl) badgeEl.innerHTML         = statusBadge(task.status);
+        if (timeEl)  timeEl.textContent        = timeRange(task.started_at, task.finished_at);
+        if (logBtn)  logBtn.style.visibility   = hasLog ? "" : "hidden";
+      });
     }
-
-    // 整体阶段状态（所有任务都成功则成功，有失败则失败，有运行中则运行中）
-    const allSuccess = stage.tasks.every(t => t.status === "success");
-    const anyFailed  = stage.tasks.some(t => t.status === "failed");
-    const anyRunning = stage.tasks.some(t => t.status === "running");
-    const stageStatus = anyFailed ? "failed" : anyRunning ? "running" : allSuccess ? "success" : "pending";
-
-    // 任务行
-    const taskRows = stage.tasks.map(task => {
-      const hasLog = task.log_tail && task.log_tail.length > 0;
-      return `
-        <div class="task-row task-${task.status}">
-          <span class="task-dot task-dot-${task.status}"></span>
-          <span class="task-name">${task.name}</span>
-          <span class="task-status-badge">${statusBadge(task.status)}</span>
-          <span class="task-time">${timeRange(task.started_at, task.finished_at)}</span>
-          ${hasLog
-            ? `<button class="task-log-btn" data-task="${task.name}">查看日志</button>`
-            : `<span class="task-log-btn-placeholder"></span>`}
-        </div>`;
-    }).join("");
-
-    card.innerHTML = `
-      <div class="stage-header">
-        <div class="stage-header-left">
-          <span class="stage-name">${stage.name}</span>
-          ${triggerBadge}
-          <span class="stage-overall-status">${statusBadge(stageStatus)}</span>
-        </div>
-        <div class="stage-header-right">
-          <span class="stage-cron" title="${stage.cron}">
-            ${humanizeCron(stage.cron)}
-          </span>
-          <button class="admin-btn admin-btn-sm admin-btn-trigger"
-                  data-stage="${stage.name}"
-                  ${stage.enabled === false ? 'disabled title="阶段已禁用"' : ''}>
-            手动执行
-          </button>
-        </div>
-      </div>
-      <div class="stage-condition">
-        触发条件：${stage.condition_reason}
-      </div>
-      <div class="task-list">
-        ${taskRows}
-      </div>`;
-
-    container.appendChild(card);
   });
 
-  // 绑定手动执行按钮
-  container.querySelectorAll(".admin-btn-trigger").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const stage = _stageDataMap.get(btn.dataset.stage);
-      openTriggerModal(stage);
-    });
+  // 移除已不存在的 stage 卡片
+  Array.from(container.children).forEach(el => {
+    if (el.id?.startsWith("sc-") && !activeCardIds.has(el.id)) el.remove();
   });
+}
 
-  // 绑定日志查看按钮
-  container.querySelectorAll(".task-log-btn").forEach(btn => {
-    btn.addEventListener("click", () => openLogModal(btn.dataset.task));
+// ── 事件委托（替代每次 renderStages 后的重新绑定） ───────────────
+function setupStageListeners() {
+  const container = document.getElementById("stages-container");
+  container.addEventListener("click", e => {
+    const trigBtn = e.target.closest(".admin-btn-trigger");
+    if (trigBtn && !trigBtn.disabled) {
+      const stage = _stageDataMap.get(trigBtn.dataset.stage);
+      if (stage) openTriggerModal(stage);
+      return;
+    }
+    const logBtn = e.target.closest(".task-log-btn");
+    if (logBtn) openLogModal(logBtn.dataset.task);
   });
 }
 
@@ -325,22 +365,47 @@ function closeTriggerModal() {
   _currentTriggerStage = null;
 }
 
-async function openLogModal(taskName) {
-  const modal = document.getElementById("log-modal");
-  const content = document.getElementById("log-modal-content");
-  const title = document.getElementById("log-modal-title");
+let _logModalTimer = null;
 
+function _isTaskRunning(taskName) {
+  for (const stage of _stageDataMap.values()) {
+    const t = stage.tasks.find(t => t.name === taskName);
+    if (t && t.status === "running") return true;
+  }
+  return false;
+}
+
+async function openLogModal(taskName) {
+  const modal   = document.getElementById("log-modal");
+  const content = document.getElementById("log-modal-content");
+  const title   = document.getElementById("log-modal-title");
+
+  clearInterval(_logModalTimer);
   title.textContent = `${taskName} — 今日日志`;
   content.textContent = "加载中…";
   modal.classList.add("open");
 
-  try {
-    const res = await apiFetch(`/api/admin/log/${taskName}`);
-    content.textContent = res.lines.length ? res.lines.join("\n") : "（暂无日志）";
-    // 滚动到底部
-    content.scrollTop = content.scrollHeight;
-  } catch (e) {
-    content.textContent = `加载失败：${e.message}`;
+  const fetchLog = async () => {
+    try {
+      const res = await apiFetch(`/api/admin/log/${taskName}`);
+      const text = res.lines.length ? res.lines.join("\n") : "（暂无日志）";
+      const atBottom = content.scrollTop + content.clientHeight >= content.scrollHeight - 20;
+      content.textContent = text;
+      if (atBottom) content.scrollTop = content.scrollHeight;
+    } catch (e) {
+      content.textContent = `加载失败：${e.message}`;
+    }
+  };
+
+  await fetchLog();
+
+  // 任务运行中：每 3s 自动刷新日志
+  if (_isTaskRunning(taskName)) {
+    _logModalTimer = setInterval(async () => {
+      if (!modal.classList.contains("open")) { clearInterval(_logModalTimer); return; }
+      await fetchLog();
+      if (!_isTaskRunning(taskName)) clearInterval(_logModalTimer);
+    }, 3000);
   }
 }
 
@@ -631,13 +696,17 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // 日志弹层关闭
-  document.getElementById("log-modal-close").addEventListener("click", () => {
+  const closeLogModal = () => {
     document.getElementById("log-modal").classList.remove("open");
-  });
+    clearInterval(_logModalTimer);
+  };
+  document.getElementById("log-modal-close").addEventListener("click", closeLogModal);
   document.getElementById("log-modal").addEventListener("click", e => {
-    if (e.target === e.currentTarget)
-      document.getElementById("log-modal").classList.remove("open");
+    if (e.target === e.currentTarget) closeLogModal();
   });
+
+  // 事件委托（只注册一次，不随 renderStages 重建）
+  setupStageListeners();
 
   // 首次加载任务状态
   loadStatus();
