@@ -40,12 +40,14 @@ def _build_placeholders() -> dict[str, str]:
     today = datetime.date.today()
     week_monday = today - datetime.timedelta(days=today.weekday())
     month_start = today.replace(day=1)
+    today_str = today.strftime("%Y%m%d")
     return {
-        "{today}":         today.strftime("%Y%m%d"),
+        "{today}":         today_str,
         "{yesterday}":     (today - datetime.timedelta(days=1)).strftime("%Y%m%d"),
         "{week_monday}":   week_monday.strftime("%Y%m%d"),
         "{month_start}":   month_start.strftime("%Y%m%d"),
         "{current_month}": today.strftime("%Y%m"),
+        "{date_start}":    today_str,   # 默认=today，可被 --start 单独覆盖
     }
 
 
@@ -322,6 +324,7 @@ def main() -> None:
         placeholders["{week_monday}"]   = args.start
         placeholders["{month_start}"]   = args.start
         placeholders["{current_month}"] = args.start[:6]
+        placeholders["{date_start}"]    = args.start   # 覆盖单日任务的起始日期
     if args.end:
         placeholders["{today}"] = args.end
 

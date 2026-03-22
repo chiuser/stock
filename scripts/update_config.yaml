@@ -81,14 +81,14 @@ stages:
     only_on: [weekday]
     tasks:
       - name: index_daily
-        cmd: ["--table", "index_daily", "--start", "{today}", "--end", "{today}"]
+        cmd: ["--table", "index_daily", "--start", "{date_start}", "--end", "{today}"]
 
       - name: stock_daily_basic
         cmd: ["--table", "stock_daily_basic", "--date", "{today}"]
 
       # ↓ 全市场日线，较慢；如只跟踪自选股请修改 cmd 添加 --code 参数
       - name: stock_daily
-        cmd: ["--table", "stock_daily", "--start", "{today}", "--end", "{today}"]
+        cmd: ["--table", "stock_daily", "--start", "{date_start}", "--end", "{today}"]
 
       - name: moneyflow_dc
         cmd: ["--table", "moneyflow_dc", "--date", "{today}"]

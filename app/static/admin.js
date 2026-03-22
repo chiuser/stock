@@ -165,7 +165,7 @@ function renderStages(data) {
 
     const allSuccess  = stage.tasks.every(t => t.status === "success");
     const anyFailed   = stage.tasks.some(t  => t.status === "failed");
-    const anyRunning  = stage.tasks.some(t  => t.status === "running");
+    const anyRunning  = stage.tasks.some(t  => t.status === "running") || stage.is_manual_running;
     const stageStatus = anyFailed ? "failed" : anyRunning ? "running"
                       : allSuccess ? "success" : "pending";
     const trigHtml    = _triggerBadgeHtml(stage);
@@ -208,9 +208,11 @@ function renderStages(data) {
           <div class="stage-header-right">
             <span class="stage-cron" title="${stage.cron}">${humanizeCron(stage.cron)}</span>
             <button class="admin-btn admin-btn-sm admin-btn-trigger"
+                    id="tbtn-${ssid}"
                     data-stage="${stage.name}"
-                    ${stage.enabled === false ? 'disabled title="阶段已禁用"' : ''}>
-              手动执行
+                    ${stage.enabled === false ? 'disabled title="阶段已禁用"' :
+                      anyRunning ? 'disabled title="执行中，请等待完成"' : ''}>
+              ${anyRunning ? "执行中…" : "手动执行"}
             </button>
           </div>
         </div>
@@ -227,6 +229,13 @@ function renderStages(data) {
       if (trigEl) trigEl.innerHTML = trigHtml;
       const statEl = document.getElementById(`sstat-${ssid}`);
       if (statEl) statEl.innerHTML = statusBadge(stageStatus);
+      // 运行中时禁用手动执行按钮
+      const trigBtnEl = document.getElementById(`tbtn-${ssid}`);
+      if (trigBtnEl && stage.enabled !== false) {
+        trigBtnEl.disabled = anyRunning;
+        trigBtnEl.title    = anyRunning ? "执行中，请等待完成" : "";
+        trigBtnEl.textContent = anyRunning ? "执行中…" : "手动执行";
+      }
 
       stage.tasks.forEach(task => {
         const tid     = `${ssid}_${_sid(task.name)}`;
@@ -701,6 +710,29 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("trigger-progress-close").addEventListener("click", () => {
     document.getElementById("trigger-progress").classList.add("hidden");
     stopTriggerPoll();
+  });
+
+  // 进度面板 — 停止执行
+  document.getElementById("trigger-stop-btn").addEventListener("click", async () => {
+    if (!_triggerStageName) return;
+    const btn = document.getElementById("trigger-stop-btn");
+    btn.disabled = true;
+    btn.textContent = "停止中…";
+    try {
+      const res = await apiFetch("/api/admin/stop", {
+        method: "POST",
+        body: JSON.stringify({ stage: _triggerStageName }),
+      });
+      showToast(res.message, "success");
+      stopTriggerPoll();
+      document.getElementById("trigger-progress").classList.add("hidden");
+      loadStatus();
+      scheduleRefresh();
+    } catch (e) {
+      showToast(`停止失败：${e.message}`, "error");
+      btn.disabled = false;
+      btn.textContent = "停止执行";
+    }
   });
 
   // 日志弹层关闭

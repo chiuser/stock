@@ -8,6 +8,7 @@
 import os
 import re
 import sys
+import signal
 import time as _time
 import subprocess
 import datetime
@@ -214,12 +215,14 @@ def _build_placeholders_adm() -> dict[str, str]:
     today = datetime.date.today()
     week_monday = today - datetime.timedelta(days=today.weekday())
     month_start = today.replace(day=1)
+    today_str = today.strftime("%Y%m%d")
     return {
-        "{today}":         today.strftime("%Y%m%d"),
+        "{today}":         today_str,
         "{yesterday}":     (today - datetime.timedelta(days=1)).strftime("%Y%m%d"),
         "{week_monday}":   week_monday.strftime("%Y%m%d"),
         "{month_start}":   month_start.strftime("%Y%m%d"),
         "{current_month}": today.strftime("%Y%m"),
+        "{date_start}":    today_str,
     }
 
 
@@ -327,13 +330,21 @@ class TriggerRequest(BaseModel):
     end_date:   Optional[str] = None   # YYYYMMDD，覆盖结束日期占位符
 
 
+class StopRequest(BaseModel):
+    stage: str
+
+
+# 手动触发进程跟踪（stage_name → Popen），用于防重复执行和停止
+_running_procs: dict[str, subprocess.Popen] = {}
+
+
 def _stage_date_type(stage: dict) -> str:
     """检测阶段的日期参数类型：'none' | 'range' | 'month'"""
     for task in stage.get("tasks", []):
         cmd_str = " ".join(task.get("cmd", []))
         if "{current_month}" in cmd_str:
             return "month"
-        if any(p in cmd_str for p in ("{today}", "{yesterday}", "{week_monday}", "{month_start}")):
+        if any(p in cmd_str for p in ("{today}", "{yesterday}", "{week_monday}", "{month_start}", "{date_start}")):
             return "range"
     return "none"
 
@@ -362,6 +373,13 @@ def get_status(user: dict = Depends(_get_current_user)):
         should_run_today, condition_reason = _check_today_condition(only_on)
         trigger_info = _stage_trigger_status(name, events)
 
+        # 检查是否有手动触发进程正在运行
+        manual_proc = _running_procs.get(name)
+        if manual_proc and manual_proc.poll() is not None:
+            _running_procs.pop(name, None)   # 进程已结束，清理
+            manual_proc = None
+        is_manual_running = manual_proc is not None
+
         tasks_status = []
         for task in stage.get("tasks", []):
             tname = task["name"]
@@ -387,6 +405,7 @@ def get_status(user: dict = Depends(_get_current_user)):
             "trigger_reason": trigger_info["reason"],
             "date_type": _stage_date_type(stage),
             "latest_date": _stage_latest_date(stage, latest_dates),
+            "is_manual_running": is_manual_running,
             "tasks": tasks_status,
         })
 
@@ -484,6 +503,14 @@ def trigger_stage(body: TriggerRequest, user: dict = Depends(_get_current_user))
     if body.stage not in valid_stages:
         raise HTTPException(status_code=400, detail=f"未知阶段: {body.stage}")
 
+    # 防止重复执行
+    existing = _running_procs.get(body.stage)
+    if existing and existing.poll() is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"阶段 [{body.stage}] 正在运行中（PID={existing.pid}），请等待完成或先停止",
+        )
+
     # 验证日期格式
     _date_re = re.compile(r"^\d{8}$")
     if body.start_date and not _date_re.match(body.start_date):
@@ -514,7 +541,9 @@ def trigger_stage(body: TriggerRequest, user: dict = Depends(_get_current_user))
             cwd=str(project_root),
             stdout=open(trigger_log, "w", encoding="utf-8"),
             stderr=subprocess.STDOUT,
+            start_new_session=True,   # 新进程组，方便 killpg 整体终止
         )
+        _running_procs[body.stage] = proc
         return {
             "ok": True,
             "pid": proc.pid,
@@ -524,6 +553,29 @@ def trigger_stage(body: TriggerRequest, user: dict = Depends(_get_current_user))
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"启动失败: {e}")
+
+
+# ------------------------------------------------------------------ #
+# POST /api/admin/stop
+# ------------------------------------------------------------------ #
+
+@router.post("/admin/stop")
+def stop_stage(body: StopRequest, user: dict = Depends(_get_current_user)):
+    """终止指定阶段的手动触发进程（发送 SIGTERM 给整个进程组）。"""
+    proc = _running_procs.get(body.stage)
+    if not proc or proc.poll() is not None:
+        _running_procs.pop(body.stage, None)
+        raise HTTPException(status_code=404, detail=f"阶段 [{body.stage}] 没有正在运行的手动任务")
+    try:
+        pid = proc.pid
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+        _running_procs.pop(body.stage, None)
+        return {"ok": True, "message": f"已终止阶段 [{body.stage}]（PID={pid}）"}
+    except ProcessLookupError:
+        _running_procs.pop(body.stage, None)
+        return {"ok": True, "message": "进程已结束"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"停止失败: {e}")
 
 
 # ------------------------------------------------------------------ #

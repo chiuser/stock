@@ -51,7 +51,10 @@
     <div id="trigger-progress" class="trigger-progress hidden">
       <div class="trigger-progress-header">
         <span id="trigger-progress-title">执行进度</span>
-        <button class="modal-close" id="trigger-progress-close">×</button>
+        <div class="trigger-progress-actions">
+          <button class="admin-btn admin-btn-sm admin-btn-danger" id="trigger-stop-btn">停止执行</button>
+          <button class="modal-close" id="trigger-progress-close">×</button>
+        </div>
       </div>
       <pre id="trigger-log-content" class="trigger-log-content">等待日志…</pre>
     </div>

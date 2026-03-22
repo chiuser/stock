@@ -602,6 +602,14 @@ body.admin-body {
 }
 .admin-btn-ghost:hover { border-color: #787b86; color: #d1d4dc; }
 
+.admin-btn-danger {
+  background: #7f1d1d22;
+  border: 1px solid #dc262655;
+  color: #f87171;
+}
+.admin-btn-danger:hover { background: #7f1d1d44; border-color: #dc2626aa; }
+.admin-btn-danger:disabled { opacity: .5; cursor: not-allowed; }
+
 .admin-btn-sm { padding: 3px 10px; font-size: 11px; }
 .admin-btn-trigger {
   background: #2962ff11;
@@ -927,6 +935,11 @@ body.admin-body {
   font-size: 12px;
   font-weight: 600;
   color: #d1d4dc;
+}
+.trigger-progress-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .trigger-log-content {
