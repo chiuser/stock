@@ -36,6 +36,24 @@ python pipeline.py --table broker_recommend --month 202506
 # 拉取历史所有月份的券商金股（首次全量导入）
 python pipeline.py --table broker_recommend --month-start 202001 --month-end 202506
 
+# 拉取单日全市场个股资金流向
+python pipeline.py --table moneyflow_dc --date 20241011
+
+# 拉取个股资金流向历史区间（逐日全市场）
+python pipeline.py --table moneyflow_dc --start 20230911 --end 20241231
+
+# 拉取单只股票的个股资金流向
+python pipeline.py --table moneyflow_dc --code 000001.SZ --start 20230911
+
+# 拉取单日板块资金流向（行业+概念+地域全部）
+python pipeline.py --table moneyflow_ind_dc --date 20240927
+
+# 拉取板块资金流向历史区间
+python pipeline.py --table moneyflow_ind_dc --start 20240901 --end 20240930
+
+# 拉取大盘资金流向历史区间
+python pipeline.py --table moneyflow_mkt_dc --start 20230911 --end 20241231
+
 环境变量
 --------
 DB_HOST      远程服务器 IP / 域名
@@ -67,6 +85,13 @@ from load import (
     load_stk_weekly_monthly,
     load_broker_recommend_month,
     load_broker_recommend_range,
+    load_moneyflow_dc_date,
+    load_moneyflow_dc_range,
+    load_moneyflow_dc_code,
+    load_moneyflow_ind_dc_date,
+    load_moneyflow_ind_dc_range,
+    load_moneyflow_mkt_dc_date,
+    load_moneyflow_mkt_dc_range,
 )
 
 TABLES = [
@@ -74,6 +99,7 @@ TABLES = [
     "stock_daily", "stock_daily_basic",
     "stock_weekly", "stock_monthly",
     "broker_recommend",
+    "moneyflow_dc", "moneyflow_ind_dc", "moneyflow_mkt_dc",
 ]
 
 
@@ -179,6 +205,36 @@ def main():
                 load_broker_recommend_range(month_start, month_end)
             else:
                 print("[pipeline] broker_recommend 请指定 --month（单月）或 --month-start（月份区间）。")
+                sys.exit(1)
+
+        elif table == "moneyflow_dc":
+            if args.date:
+                load_moneyflow_dc_date(args.date)
+            elif codes and args.start:
+                for code in codes:
+                    load_moneyflow_dc_code(code, args.start, args.end)
+            elif args.start:
+                load_moneyflow_dc_range(args.start, args.end)
+            else:
+                print("[pipeline] moneyflow_dc 请指定 --date（单日）、--start（区间）或 --code + --start（单股）。")
+                sys.exit(1)
+
+        elif table == "moneyflow_ind_dc":
+            if args.date:
+                load_moneyflow_ind_dc_date(args.date)
+            elif args.start:
+                load_moneyflow_ind_dc_range(args.start, args.end)
+            else:
+                print("[pipeline] moneyflow_ind_dc 请指定 --date（单日）或 --start（区间）。")
+                sys.exit(1)
+
+        elif table == "moneyflow_mkt_dc":
+            if args.date:
+                load_moneyflow_mkt_dc_date(args.date)
+            elif args.start:
+                load_moneyflow_mkt_dc_range(args.start, args.end)
+            else:
+                print("[pipeline] moneyflow_mkt_dc 请指定 --date（单日）或 --start（区间）。")
                 sys.exit(1)
 
     print(f"\n{'='*60}")

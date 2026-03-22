@@ -326,7 +326,102 @@ CREATE INDEX IF NOT EXISTS idx_broker_recommend_ts_code
 
 
 -- -------------------------------------------------------------
--- 11. 用户账号
+-- 11. 个股资金流向（东财 DC）
+--     来源: pro.moneyflow_dc()
+--     限量: 单次最大 6000 行，可按日期或股票代码循环提取
+--     数据起始: 20230911，每日盘后更新
+--     所需积分: 5000
+--     建议更新频率: 每交易日收盘后
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS moneyflow_dc (
+    trade_date         DATE         NOT NULL,           -- 交易日期
+    ts_code            VARCHAR(12)  NOT NULL,           -- 股票代码
+    name               VARCHAR(20),                     -- 股票名称
+    pct_change         NUMERIC(10, 4),                  -- 涨跌幅（%）
+    close              NUMERIC(12, 4),                  -- 最新价（元）
+    net_amount         NUMERIC(20, 4),                  -- 主力净流入额（万元）
+    net_amount_rate    NUMERIC(10, 4),                  -- 主力净流入占比（%）
+    buy_elg_amount     NUMERIC(20, 4),                  -- 超大单净流入额（万元）
+    buy_elg_amount_rate NUMERIC(10, 4),                 -- 超大单净流入占比（%）
+    buy_lg_amount      NUMERIC(20, 4),                  -- 大单净流入额（万元）
+    buy_lg_amount_rate NUMERIC(10, 4),                  -- 大单净流入占比（%）
+    buy_md_amount      NUMERIC(20, 4),                  -- 中单净流入额（万元）
+    buy_md_amount_rate NUMERIC(10, 4),                  -- 中单净流入占比（%）
+    buy_sm_amount      NUMERIC(20, 4),                  -- 小单净流入额（万元）
+    buy_sm_amount_rate NUMERIC(10, 4),                  -- 小单净流入占比（%）
+    created_at         TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (trade_date, ts_code)
+);
+CREATE INDEX IF NOT EXISTS idx_moneyflow_dc_date    ON moneyflow_dc (trade_date);
+CREATE INDEX IF NOT EXISTS idx_moneyflow_dc_ts_code ON moneyflow_dc (ts_code);
+
+
+-- -------------------------------------------------------------
+-- 12. 东财概念及行业板块资金流向（DC）
+--     来源: pro.moneyflow_ind_dc()
+--     限量: 单次最大 5000 行，可按日期和代码循环提取
+--     每日盘后更新，所需积分: 6000
+--     content_type: 行业 / 概念 / 地域
+--     注意: 金额单位为元（非万元）
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS moneyflow_ind_dc (
+    trade_date              DATE         NOT NULL,       -- 交易日期
+    ts_code                 VARCHAR(20)  NOT NULL,       -- DC板块代码
+    content_type            VARCHAR(10),                 -- 数据类型（行业/概念/地域）
+    name                    VARCHAR(40),                 -- 板块名称
+    pct_change              NUMERIC(10, 4),              -- 板块涨跌幅（%）
+    close                   NUMERIC(20, 4),              -- 板块最新指数
+    net_amount              NUMERIC(24, 4),              -- 主力净流入额（元）
+    net_amount_rate         NUMERIC(10, 4),              -- 主力净流入占比（%）
+    buy_elg_amount          NUMERIC(24, 4),              -- 超大单净流入额（元）
+    buy_elg_amount_rate     NUMERIC(10, 4),              -- 超大单净流入占比（%）
+    buy_lg_amount           NUMERIC(24, 4),              -- 大单净流入额（元）
+    buy_lg_amount_rate      NUMERIC(10, 4),              -- 大单净流入占比（%）
+    buy_md_amount           NUMERIC(24, 4),              -- 中单净流入额（元）
+    buy_md_amount_rate      NUMERIC(10, 4),              -- 中单净流入占比（%）
+    buy_sm_amount           NUMERIC(24, 4),              -- 小单净流入额（元）
+    buy_sm_amount_rate      NUMERIC(10, 4),              -- 小单净流入占比（%）
+    buy_sm_amount_stock     VARCHAR(20),                 -- 主力净流入最大股
+    rank                    INT,                         -- 序号
+    created_at              TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (trade_date, ts_code)
+);
+CREATE INDEX IF NOT EXISTS idx_moneyflow_ind_dc_date         ON moneyflow_ind_dc (trade_date);
+CREATE INDEX IF NOT EXISTS idx_moneyflow_ind_dc_ts_code      ON moneyflow_ind_dc (ts_code);
+CREATE INDEX IF NOT EXISTS idx_moneyflow_ind_dc_content_type ON moneyflow_ind_dc (content_type);
+
+
+-- -------------------------------------------------------------
+-- 13. 大盘资金流向（东财 DC）
+--     来源: pro.moneyflow_mkt_dc()
+--     限量: 单次最大 3000 行，可按日期区间循环提取
+--     每日盘后更新，所需积分: 6000（120积分可试用）
+--     注意: 金额单位为元
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS moneyflow_mkt_dc (
+    trade_date              DATE         NOT NULL,       -- 交易日期（主键）
+    close_sh                NUMERIC(12, 4),              -- 上证收盘价（点）
+    pct_change_sh           NUMERIC(10, 4),              -- 上证涨跌幅（%）
+    close_sz                NUMERIC(12, 4),              -- 深证收盘价（点）
+    pct_change_sz           NUMERIC(10, 4),              -- 深证涨跌幅（%）
+    net_amount              NUMERIC(24, 4),              -- 主力净流入额（元）
+    net_amount_rate         NUMERIC(10, 4),              -- 主力净流入占比（%）
+    buy_elg_amount          NUMERIC(24, 4),              -- 超大单净流入额（元）
+    buy_elg_amount_rate     NUMERIC(10, 4),              -- 超大单净流入占比（%）
+    buy_lg_amount           NUMERIC(24, 4),              -- 大单净流入额（元）
+    buy_lg_amount_rate      NUMERIC(10, 4),              -- 大单净流入占比（%）
+    buy_md_amount           NUMERIC(24, 4),              -- 中单净流入额（元）
+    buy_md_amount_rate      NUMERIC(10, 4),              -- 中单净流入占比（%）
+    buy_sm_amount           NUMERIC(24, 4),              -- 小单净流入额（元）
+    buy_sm_amount_rate      NUMERIC(10, 4),              -- 小单净流入占比（%）
+    created_at              TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (trade_date)
+);
+CREATE INDEX IF NOT EXISTS idx_moneyflow_mkt_dc_date ON moneyflow_mkt_dc (trade_date);
+
+
+-- -------------------------------------------------------------
+-- 14. 用户账号
 --    无注册功能，由管理员通过 scripts/create_user.py 添加
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS users (
