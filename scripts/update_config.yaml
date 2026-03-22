@@ -91,13 +91,13 @@ stages:
         cmd: ["--table", "stock_daily", "--start", "{date_start}", "--end", "{today}"]
 
       - name: moneyflow_dc
-        cmd: ["--table", "moneyflow_dc", "--date", "{today}"]
+        cmd: ["--table", "moneyflow_dc", "--start", "{date_start}", "--end", "{today}"]
 
       - name: moneyflow_ind_dc
-        cmd: ["--table", "moneyflow_ind_dc", "--date", "{today}"]
+        cmd: ["--table", "moneyflow_ind_dc", "--start", "{date_start}", "--end", "{today}"]
 
       - name: moneyflow_mkt_dc
-        cmd: ["--table", "moneyflow_mkt_dc", "--date", "{today}"]
+        cmd: ["--table", "moneyflow_mkt_dc", "--start", "{date_start}", "--end", "{today}"]
 
 
   # ----------------------------------------------------------
