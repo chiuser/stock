@@ -96,6 +96,9 @@ from load import (
     load_sw_industry_member,
     load_sw_industry_member_by_l3,
     load_sw_industry_member_by_ts,
+    load_sw_industry_daily_date,
+    load_sw_industry_daily_range,
+    load_sw_industry_daily_backfill,
 )
 
 TABLES = [
@@ -104,7 +107,7 @@ TABLES = [
     "stock_weekly", "stock_monthly",
     "broker_recommend",
     "moneyflow_dc", "moneyflow_ind_dc", "moneyflow_mkt_dc",
-    "sw_industry", "sw_industry_member",
+    "sw_industry", "sw_industry_member", "sw_industry_daily",
 ]
 
 
@@ -134,6 +137,8 @@ def main():
                         help="申万行业版本（默认 SW2021，用于 sw_industry / sw_industry_member）")
     parser.add_argument("--sw-l3", metavar="L3_CODE",
                         help="只拉取指定 L3 行业成分（用于 sw_industry_member），如 850531.SI")
+    parser.add_argument("--backfill", action="store_true",
+                        help="历史回填模式（用于 sw_industry_daily），按代码逐个拉取，API调用最少")
     args = parser.parse_args()
 
     tables = TABLES if "all" in args.table else args.table
@@ -259,6 +264,26 @@ def main():
                 load_sw_industry_member_by_l3(args.sw_l3)
             else:
                 load_sw_industry_member(src=args.sw_src, sleep_sec=args.sleep)
+
+        elif table == "sw_industry_daily":
+            if args.date:
+                # 日常更新：单日，1次API
+                load_sw_industry_daily_date(args.date)
+            elif getattr(args, "backfill", False) or codes:
+                # 历史回填：按代码逐个拉取（API调用少）
+                load_sw_industry_daily_backfill(
+                    codes=codes or None,
+                    start_date=args.start,
+                    end_date=args.end,
+                    sleep_sec=args.sleep,
+                )
+            elif args.start:
+                # 短期区间：按日期逐日拉取
+                load_sw_industry_daily_range(args.start, args.end)
+            else:
+                print("[pipeline] sw_industry_daily 请指定 --date（单日）、"
+                      "--start（日期区间）或 --backfill（历史回填）。")
+                sys.exit(1)
 
     print(f"\n{'='*60}")
     print("  所有任务完成。")

@@ -502,3 +502,43 @@ CREATE INDEX IF NOT EXISTS idx_sw_ind_member_l1     ON sw_industry_member(l1_cod
 CREATE INDEX IF NOT EXISTS idx_sw_ind_member_l2     ON sw_industry_member(l2_code);
 -- 快速取当前成分（is_new='Y'）
 CREATE INDEX IF NOT EXISTS idx_sw_ind_member_is_new ON sw_industry_member(is_new, l3_code);
+
+
+-- -------------------------------------------------------------
+-- 14. 申万行业日线行情
+--    来源: pro.sw_daily()
+--    描述: 申万行业（L1/L2/L3）每日行情 + 估值 + 权重
+--    默认为申万2021版，ts_code 与 sw_industry_class.index_code 对应
+--    建议更新频率: 每个交易日收盘后（--date 模式，1次API=全行业）
+--
+--    关联关系：
+--      ts_code → sw_industry_class.index_code
+--
+--    两种拉取策略：
+--      日常更新: sw_daily(trade_date=...) → 1次API = 当日全行业（约439条）
+--      历史回填: sw_daily(ts_code=..., start_date=...) → 按代码分页，推荐首次导入
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS sw_industry_daily (
+    ts_code      VARCHAR(12)  NOT NULL,            -- 申万行业指数代码，如 801010.SI
+    trade_date   DATE         NOT NULL,            -- 交易日期
+    name         VARCHAR(40),                      -- 指数名称（冗余，方便展示）
+    open         NUMERIC(12, 4),                   -- 开盘点位
+    high         NUMERIC(12, 4),                   -- 最高点位
+    low          NUMERIC(12, 4),                   -- 最低点位
+    close        NUMERIC(12, 4),                   -- 收盘点位
+    change       NUMERIC(12, 4),                   -- 涨跌点位
+    pct_change   NUMERIC(8, 4),                    -- 涨跌幅（%）
+    vol          NUMERIC(20, 4),                   -- 成交量（万股）
+    amount       NUMERIC(20, 4),                   -- 成交额（万元）
+    pe           NUMERIC(12, 4),                   -- 市盈率
+    pb           NUMERIC(10, 4),                   -- 市净率
+    float_mv     NUMERIC(20, 4),                   -- 流通市值（万元）
+    total_mv     NUMERIC(20, 4),                   -- 总市值（万元）
+    weight       NUMERIC(10, 6),                   -- 权重
+    updated_at   TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (ts_code, trade_date)
+);
+-- 按日期查所有行业（日报/行业对比最常用）
+CREATE INDEX IF NOT EXISTS idx_sw_ind_daily_date ON sw_industry_daily(trade_date);
+-- 按代码查历史走势（通常 PK 已覆盖，显式索引供排序优化）
+CREATE INDEX IF NOT EXISTS idx_sw_ind_daily_code ON sw_industry_daily(ts_code, trade_date);
