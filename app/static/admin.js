@@ -185,6 +185,7 @@ function renderStages(data) {
           <div class="task-row task-${task.status}" id="tr-${tid}">
             <span class="task-dot task-dot-${task.status}" id="td-${tid}"></span>
             <span class="task-name">${task.name}</span>
+            ${task.date_range ? `<span class="task-date-range">${task.date_range}</span>` : ""}
             <span class="task-status-badge" id="tb-${tid}">${statusBadge(task.status)}</span>
             <span class="task-time" id="tt-${tid}">${timeRange(task.started_at, task.finished_at)}</span>
             <button class="task-log-btn" id="tlb-${tid}" data-task="${task.name}"
@@ -192,10 +193,15 @@ function renderStages(data) {
           </div>`;
       }).join("");
 
+      const latestHtml = stage.latest_date
+        ? `<span class="stage-latest-date" id="slatd-${ssid}">最新&nbsp;${stage.latest_date}</span>`
+        : `<span class="stage-latest-date" id="slatd-${ssid}"></span>`;
+
       card.innerHTML = `
         <div class="stage-header">
           <div class="stage-header-left">
             <span class="stage-name">${stage.name}</span>
+            ${latestHtml}
             <span id="strig-${ssid}">${trigHtml}</span>
             <span id="sstat-${ssid}">${statusBadge(stageStatus)}</span>
           </div>
@@ -215,6 +221,8 @@ function renderStages(data) {
 
     } else {
       // ── 局部更新：只改动态内容，不重建 DOM ─────────────────────
+      const latdEl = document.getElementById(`slatd-${ssid}`);
+      if (latdEl) latdEl.textContent = stage.latest_date ? `最新\u00a0${stage.latest_date}` : "";
       const trigEl = document.getElementById(`strig-${ssid}`);
       if (trigEl) trigEl.innerHTML = trigHtml;
       const statEl = document.getElementById(`sstat-${ssid}`);

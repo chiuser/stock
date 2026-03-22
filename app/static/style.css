@@ -643,6 +643,20 @@ body.admin-body {
 
 .stage-name { font-size: 13px; font-weight: 600; color: #d1d4dc; }
 
+/* 阶段标题：最新数据日期 */
+.stage-latest-date {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 3px;
+  background: rgba(38, 166, 154, 0.12);
+  color: #26a69a;
+  border: 1px solid rgba(38, 166, 154, 0.25);
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+}
+.stage-latest-date:empty { display: none; }
+
 .stage-cron {
   font-size: 11px;
   color: #787b86;
@@ -710,6 +724,19 @@ body.admin-body {
 .task-name  { min-width: 160px; color: #d1d4dc; font-family: monospace; }
 .task-status-badge { flex-shrink: 0; }
 .task-time  { color: #787b86; font-family: monospace; flex: 1; font-size: 11px; }
+
+/* 任务行：本次更新的日期范围 */
+.task-date-range {
+  font-size: 10px;
+  color: #787b86;
+  font-family: monospace;
+  background: #1e222d;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid #2a2e39;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
 
 .task-log-btn {
   padding: 2px 8px;

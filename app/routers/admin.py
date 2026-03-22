@@ -8,6 +8,7 @@
 import os
 import re
 import sys
+import time as _time
 import subprocess
 import datetime
 from pathlib import Path
@@ -148,6 +149,118 @@ def _read_log_tail(log_path: Path, n: int = 30) -> list[str]:
         return []
 
 
+# ------------------------------------------------------------------ #
+# 最新数据日期（带缓存）
+# ------------------------------------------------------------------ #
+
+# 需要查询的 (缓存 key, 数据库表名, 日期列名)
+_DATE_QUERIES: list[tuple[str, str, str]] = [
+    ("index_daily",       "index_daily",       "trade_date"),
+    ("stock_daily",       "stock_daily",        "trade_date"),
+    ("stock_daily_basic", "stock_daily_basic",  "trade_date"),
+    ("moneyflow_dc",      "moneyflow_dc",       "trade_date"),
+    ("stock_weekly",      "stock_weekly",       "trade_date"),
+    ("stock_monthly",     "stock_monthly",      "trade_date"),
+    ("broker_recommend",  "broker_recommend",   "month"),
+]
+
+# 任务名 → 缓存 key（用于在 stage 内寻找代表性日期）
+_TASK_DATE_KEY: dict[str, str] = {t[0]: t[0] for t in _DATE_QUERIES}
+
+_date_cache: dict = {"ts": 0.0, "data": {}}
+_DATE_CACHE_TTL = 60   # 秒
+
+
+def _get_latest_dates() -> dict[str, str | None]:
+    """查询各表 MAX(date_col)，60 秒缓存。DB 不可用时静默返回空 dict。"""
+    now = _time.monotonic()
+    if now - _date_cache["ts"] < _DATE_CACHE_TTL and _date_cache["data"]:
+        return _date_cache["data"]
+
+    result: dict[str, str | None] = {}
+    try:
+        from db.connection import get_conn
+        conn = get_conn()
+        try:
+            cur = conn.cursor()
+            for key, table, col in _DATE_QUERIES:
+                try:
+                    cur.execute(f"SELECT MAX({col})::text FROM {table}")
+                    row = cur.fetchone()
+                    result[key] = row[0] if row and row[0] else None
+                except Exception:
+                    conn.rollback()
+                    result[key] = None
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+    _date_cache["ts"] = now
+    _date_cache["data"] = result
+    return result
+
+
+def _fmt_date_str(s: str) -> str:
+    """YYYYMMDD → YYYY-MM-DD, YYYYMM → YYYY-MM, ISO 日期原样返回。"""
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:]}"
+    if len(s) == 6 and s.isdigit():
+        return f"{s[:4]}-{s[4:]}"
+    return s
+
+
+def _build_placeholders_adm() -> dict[str, str]:
+    today = datetime.date.today()
+    week_monday = today - datetime.timedelta(days=today.weekday())
+    month_start = today.replace(day=1)
+    return {
+        "{today}":         today.strftime("%Y%m%d"),
+        "{yesterday}":     (today - datetime.timedelta(days=1)).strftime("%Y%m%d"),
+        "{week_monday}":   week_monday.strftime("%Y%m%d"),
+        "{month_start}":   month_start.strftime("%Y%m%d"),
+        "{current_month}": today.strftime("%Y%m"),
+    }
+
+
+def _resolve_task_date_range(cmd: list, placeholders: dict) -> str | None:
+    """从 task cmd 解析日期范围，返回可读字符串（如 '2026-03-16 ~ 2026-03-22'）。"""
+    resolved = [placeholders.get(a, a) for a in cmd]
+    params: dict[str, str] = {}
+    for i, arg in enumerate(resolved):
+        if arg in ("--start", "--end", "--date", "--month") and i + 1 < len(resolved):
+            params[arg.lstrip("-")] = resolved[i + 1]
+    if not params:
+        return None
+    if "date" in params:
+        return _fmt_date_str(params["date"])
+    if "month" in params:
+        return _fmt_date_str(params["month"])
+    start = params.get("start")
+    end   = params.get("end")
+    if start and end:
+        return _fmt_date_str(start) if start == end else f"{_fmt_date_str(start)} ~ {_fmt_date_str(end)}"
+    if start:
+        return f"{_fmt_date_str(start)} ~"
+    return None
+
+
+def _stage_latest_date(stage: dict, latest_dates: dict) -> str | None:
+    """返回阶段内第一个有 DB 记录的任务的最新数据日期（ISO 格式）。"""
+    for task in stage.get("tasks", []):
+        key = _TASK_DATE_KEY.get(task["name"])
+        if not key:
+            continue
+        val = latest_dates.get(key)
+        if not val:
+            continue
+        # DATE 列返回 YYYY-MM-DD（psycopg2 已转为 ISO），CHAR(6) 返回 YYYYMM
+        if len(val) == 6:
+            return f"{val[:4]}-{val[4:]}"
+        return val   # 已是 YYYY-MM-DD
+    return None
+
+
 def _check_today_condition(only_on: Optional[list]) -> tuple[bool, str]:
     """与 daily_update.py 中相同的触发条件检查。"""
     if not only_on:
@@ -238,6 +351,9 @@ def get_status(user: dict = Depends(_get_current_user)):
     log_file = log_dir / f"scheduler_{today:%Y%m%d}.log"
     events = _parse_scheduler_log(log_file)
 
+    latest_dates  = _get_latest_dates()
+    placeholders  = _build_placeholders_adm()
+
     stages_status = []
     for stage in config.get("stages", []):
         name = stage["name"]
@@ -256,6 +372,8 @@ def get_status(user: dict = Depends(_get_current_user)):
             task_log = log_dir / f"{tname}_{today:%Y%m%d}.log"
             st["log_tail"] = _read_log_tail(task_log, 20)
             st["name"] = tname
+            # 此次更新的日期范围（从 cmd 占位符解析）
+            st["date_range"] = _resolve_task_date_range(task.get("cmd", []), placeholders)
             tasks_status.append(st)
 
         stages_status.append({
@@ -268,6 +386,7 @@ def get_status(user: dict = Depends(_get_current_user)):
             "triggered_today": trigger_info["triggered"],
             "trigger_reason": trigger_info["reason"],
             "date_type": _stage_date_type(stage),
+            "latest_date": _stage_latest_date(stage, latest_dates),
             "tasks": tasks_status,
         })
 
