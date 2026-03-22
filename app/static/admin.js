@@ -543,10 +543,12 @@ function startTriggerPoll(stageName) {
   _triggerPollCount  = 0;
   _triggerDonePosted = false;
 
-  // 显示进度面板
-  const prog = document.getElementById("trigger-progress");
+  // 显示进度面板，恢复停止按钮
+  const prog    = document.getElementById("trigger-progress");
+  const stopBtn = document.getElementById("trigger-stop-btn");
   document.getElementById("trigger-progress-title").textContent = `执行进度 — ${stageName}`;
   document.getElementById("trigger-log-content").textContent = "等待日志…";
+  if (stopBtn) { stopBtn.style.display = ""; stopBtn.disabled = false; stopBtn.textContent = "停止执行"; }
   prog.classList.remove("hidden");
 
   _triggerPollTimer = setInterval(_triggerPollTick, TRIGGER_POLL_INTERVAL);
@@ -576,6 +578,9 @@ async function _triggerPollTick() {
       );
       if (allDone && _triggerPollCount > 1) {
         _triggerDonePosted = true;
+        // 隐藏停止执行按钮（任务已结束，无需再停止）
+        const stopBtn = document.getElementById("trigger-stop-btn");
+        if (stopBtn) stopBtn.style.display = "none";
         // 再最终刷新一次，然后切回普通刷新
         setTimeout(() => { stopTriggerPoll(); loadStatus(); scheduleRefresh(); }, 2000);
       }
