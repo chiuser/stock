@@ -142,8 +142,9 @@ function renderStages(data) {
   const container = document.getElementById("stages-container");
   _stageDataMap.clear();
 
-  document.getElementById("admin-date").textContent =
-    `${data.date}  ${data.weekday}`;
+  const _dateEl = document.getElementById("admin-date");
+  const _dateStr = `${data.date}  ${data.weekday}`;
+  if (_dateEl.textContent !== _dateStr) _dateEl.textContent = _dateStr;
 
   if (!data.stages || data.stages.length === 0) {
     container.innerHTML = '<p class="admin-empty">暂无阶段配置</p>';
@@ -223,18 +224,27 @@ function renderStages(data) {
 
     } else {
       // ── 局部更新：只改动态内容，不重建 DOM ─────────────────────
+      // 脏检查工具：仅值变化时才写 DOM，避免不必要的重排
+      const _setTxt = (el, v) => { if (el && el.textContent !== v) el.textContent = v; };
+      const _setHtml = (el, v) => { if (el && el.innerHTML !== v) el.innerHTML = v; };
+
       const latdEl = document.getElementById(`slatd-${ssid}`);
-      if (latdEl) latdEl.textContent = stage.latest_date ? `最新\u00a0${stage.latest_date}` : "";
+      _setTxt(latdEl, stage.latest_date ? `最新\u00a0${stage.latest_date}` : "");
+
       const trigEl = document.getElementById(`strig-${ssid}`);
-      if (trigEl) trigEl.innerHTML = trigHtml;
+      _setHtml(trigEl, trigHtml);
+
       const statEl = document.getElementById(`sstat-${ssid}`);
-      if (statEl) statEl.innerHTML = statusBadge(stageStatus);
+      _setHtml(statEl, statusBadge(stageStatus));
+
       // 运行中时禁用手动执行按钮
       const trigBtnEl = document.getElementById(`tbtn-${ssid}`);
       if (trigBtnEl && stage.enabled !== false) {
-        trigBtnEl.disabled = anyRunning;
-        trigBtnEl.title    = anyRunning ? "执行中，请等待完成" : "";
-        trigBtnEl.textContent = anyRunning ? "执行中…" : "手动执行";
+        const newTitle = anyRunning ? "执行中，请等待完成" : "";
+        const newText  = anyRunning ? "执行中…" : "手动执行";
+        if (trigBtnEl.disabled !== anyRunning)  trigBtnEl.disabled = anyRunning;
+        if (trigBtnEl.title !== newTitle)        trigBtnEl.title = newTitle;
+        if (trigBtnEl.textContent !== newText)   trigBtnEl.textContent = newText;
       }
 
       stage.tasks.forEach(task => {
@@ -246,11 +256,17 @@ function renderStages(data) {
         const timeEl  = document.getElementById(`tt-${tid}`);
         const logBtn  = document.getElementById(`tlb-${tid}`);
 
-        if (rowEl)   rowEl.className           = `task-row task-${task.status}`;
-        if (dotEl)   dotEl.className           = `task-dot task-dot-${task.status}`;
-        if (badgeEl) badgeEl.innerHTML         = statusBadge(task.status);
-        if (timeEl)  timeEl.textContent        = timeRange(task.started_at, task.finished_at);
-        if (logBtn)  logBtn.style.visibility   = hasLog ? "" : "hidden";
+        const newRowCls = `task-row task-${task.status}`;
+        const newDotCls = `task-dot task-dot-${task.status}`;
+        const newBadge  = statusBadge(task.status);
+        const newTime   = timeRange(task.started_at, task.finished_at);
+        const newVis    = hasLog ? "" : "hidden";
+
+        if (rowEl   && rowEl.className           !== newRowCls) rowEl.className = newRowCls;
+        if (dotEl   && dotEl.className           !== newDotCls) dotEl.className = newDotCls;
+        if (badgeEl && badgeEl.innerHTML         !== newBadge)  badgeEl.innerHTML = newBadge;
+        if (timeEl  && timeEl.textContent        !== newTime)   timeEl.textContent = newTime;
+        if (logBtn  && logBtn.style.visibility   !== newVis)    logBtn.style.visibility = newVis;
       });
     }
   });
@@ -586,9 +602,9 @@ async function _fetchTriggerLog(stageName) {
 
 // ── 数据加载 ──────────────────────────────────────────────────────
 
-async function loadStatus() {
+async function loadStatus(showSpinner = false) {
   const loadingEl = document.getElementById("status-loading");
-  if (loadingEl) loadingEl.style.display = "flex";
+  if (loadingEl && showSpinner) loadingEl.style.display = "flex";
   try {
     const data = await apiFetch("/api/admin/status");
     if (loadingEl) loadingEl.style.display = "none";
@@ -682,9 +698,9 @@ document.addEventListener("DOMContentLoaded", () => {
     btn.addEventListener("click", () => switchTab(btn.dataset.tab));
   });
 
-  // 刷新按钮
+  // 刷新按钮（手动刷新才显示 spinner）
   document.getElementById("btn-refresh").addEventListener("click", () => {
-    if (activeTab() === "status") loadStatus();
+    if (activeTab() === "status") loadStatus(true);
     else loadConfig();
   });
 
@@ -748,7 +764,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // 事件委托（只注册一次，不随 renderStages 重建）
   setupStageListeners();
 
-  // 首次加载任务状态
-  loadStatus();
+  // 首次加载任务状态（首次显示 spinner）
+  loadStatus(true);
   scheduleRefresh();
 });
