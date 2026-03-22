@@ -621,3 +621,112 @@ CREATE TABLE IF NOT EXISTS ci_industry_daily (
 CREATE INDEX IF NOT EXISTS idx_ci_ind_daily_date ON ci_industry_daily(trade_date);
 -- 按代码查历史走势
 CREATE INDEX IF NOT EXISTS idx_ci_ind_daily_code ON ci_industry_daily(ts_code, trade_date);
+
+
+-- -------------------------------------------------------------
+-- 17. 同花顺行业/概念板块基础信息
+--    来源: pro.ths_index()
+--    描述: 同花顺行业板块、概念板块、大盘指数基础信息
+--    建议更新频率: 月度（每月初更新，与成分股联动）
+--
+--    板块类型（type 字段）：
+--      N = 行业板块（同花顺行业分类）
+--      I = 概念板块
+--      S = 同花顺特色
+--      W = 概念等其他板块
+--      B = 大盘指数
+--
+--    关联关系：
+--      ths_member.ts_code → ths_index.ts_code
+--      ths_daily.ts_code  → ths_index.ts_code
+--
+--    主键：ts_code（板块代码唯一）
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ths_index (
+    ts_code    VARCHAR(16)  NOT NULL,          -- 板块代码，如 885650.TI
+    name       VARCHAR(40),                    -- 板块名称
+    count      INT,                            -- 成分股数量
+    exchange   VARCHAR(8),                     -- 交易所，如 A（A股）
+    list_date  DATE,                           -- 上市日期
+    type       VARCHAR(4),                     -- 板块类型 N/I/S/W/B
+    updated_at TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (ts_code)
+);
+-- 按类型过滤（行业/概念/大盘）
+CREATE INDEX IF NOT EXISTS idx_ths_index_type ON ths_index(type);
+
+
+-- -------------------------------------------------------------
+-- 18. 同花顺板块成分股
+--    来源: pro.ths_member()
+--    描述: 同花顺行业/概念板块的成分股列表
+--    建议更新频率: 月度（每月初更新）
+--
+--    主键设计：(ts_code, code, in_date)
+--      同一股票历史上可多次进出同一板块
+--      in_date NULL 时填充哨兵日期 1900-01-01
+--
+--    关联关系：
+--      ts_code → ths_index.ts_code（板块）
+--      code    → stock_basic.ts_code（成分股）
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ths_member (
+    ts_code    VARCHAR(16)  NOT NULL,          -- 板块代码，如 885650.TI
+    code       VARCHAR(12)  NOT NULL,          -- 成分股代码，如 000001.SZ
+    name       VARCHAR(20),                    -- 成分股名称
+    weight     NUMERIC(10, 4),                 -- 权重（%）
+    in_date    DATE         NOT NULL,          -- 纳入日期（NULL 填充 1900-01-01）
+    out_date   DATE,                           -- 移出日期（NULL = 仍在成分中）
+    updated_at TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (ts_code, code, in_date)
+);
+-- 按股票查其所属板块（最常用）
+CREATE INDEX IF NOT EXISTS idx_ths_member_code    ON ths_member(code);
+-- 按板块查其成分股
+CREATE INDEX IF NOT EXISTS idx_ths_member_ts_code ON ths_member(ts_code);
+
+
+-- -------------------------------------------------------------
+-- 19. 同花顺板块指数日线行情
+--    来源: pro.ths_daily()
+--    描述: 同花顺行业/概念板块每日行情及涨跌家数
+--    建议更新频率: 每个交易日收盘后（--date 模式，1次API=当日全板块）
+--
+--    与申万/中信行业日线的差异：
+--      ① 有 avg_price（均价）、turnover_rate（换手率）
+--      ② 有 total_mv / float_mv（总市值/流通市值，万元）
+--      ③ 有 up_count / down_count（上涨/下跌家数）
+--      ④ 无 pe / pb / weight
+--
+--    两种拉取策略：
+--      日常更新: ths_daily(trade_date=...) → 1次API = 当日全板块
+--      历史回填: ths_daily(ts_code=..., start_date=...) → 按代码分页
+--
+--    关联关系：
+--      ts_code → ths_index.ts_code
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ths_daily (
+    ts_code        VARCHAR(16)  NOT NULL,          -- 板块代码，如 885650.TI
+    trade_date     DATE         NOT NULL,           -- 交易日期
+    open           NUMERIC(12, 4),                 -- 开盘点位
+    high           NUMERIC(12, 4),                 -- 最高点位
+    low            NUMERIC(12, 4),                 -- 最低点位
+    close          NUMERIC(12, 4),                 -- 收盘点位
+    pre_close      NUMERIC(12, 4),                 -- 昨日收盘点位
+    change         NUMERIC(12, 4),                 -- 涨跌点位
+    pct_chg        NUMERIC(8, 4),                  -- 涨跌幅（%）
+    avg_price      NUMERIC(12, 4),                 -- 均价
+    turnover_rate  NUMERIC(10, 4),                 -- 换手率（%）
+    total_mv       NUMERIC(20, 4),                 -- 总市值（万元）
+    float_mv       NUMERIC(20, 4),                 -- 流通市值（万元）
+    vol            NUMERIC(20, 4),                 -- 成交量（万股）
+    amount         NUMERIC(20, 4),                 -- 成交额（万元）
+    up_count       INT,                            -- 上涨家数
+    down_count     INT,                            -- 下跌家数
+    updated_at     TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (ts_code, trade_date)
+);
+-- 按日期查所有板块（日报/板块对比最常用）
+CREATE INDEX IF NOT EXISTS idx_ths_daily_date ON ths_daily(trade_date);
+-- 按代码查历史走势
+CREATE INDEX IF NOT EXISTS idx_ths_daily_code ON ths_daily(ts_code, trade_date);

@@ -104,6 +104,12 @@ from load import (
     load_ci_industry_daily_date,
     load_ci_industry_daily_range,
     load_ci_industry_daily_backfill,
+    load_ths_index,
+    load_ths_member,
+    load_ths_member_by_code,
+    load_ths_daily_date,
+    load_ths_daily_range,
+    load_ths_daily_backfill,
 )
 
 TABLES = [
@@ -114,6 +120,7 @@ TABLES = [
     "moneyflow_dc", "moneyflow_ind_dc", "moneyflow_mkt_dc",
     "sw_industry", "sw_industry_member", "sw_industry_daily",
     "ci_industry_member", "ci_industry_daily",
+    "ths_index", "ths_member", "ths_daily",
 ]
 
 
@@ -147,6 +154,9 @@ def main():
                         help="历史回填模式（用于 sw/ci_industry_daily），按代码逐个拉取，API调用最少")
     parser.add_argument("--ci-history", action="store_true",
                         help="拉取中信行业成分时包含历史变更记录（默认只拉当前成分）")
+    parser.add_argument("--ths-type", nargs="+",
+                        choices=["N", "I", "S", "W", "B"],
+                        help="同花顺板块类型 N=行业 I=概念 S=特色 W=其他 B=大盘（默认全部）")
     args = parser.parse_args()
 
     tables = TABLES if "all" in args.table else args.table
@@ -296,6 +306,36 @@ def main():
                 load_ci_industry_daily_range(args.start, args.end)
             else:
                 print("[pipeline] ci_industry_daily 请指定 --date（单日）、"
+                      "--start（日期区间）或 --backfill（历史回填）。")
+                sys.exit(1)
+
+        elif table == "ths_index":
+            load_ths_index(type_=getattr(args, "ths_type", None))
+
+        elif table == "ths_member":
+            if codes:
+                for code in codes:
+                    load_ths_member_by_code(code)
+            else:
+                load_ths_member(
+                    type_filter=getattr(args, "ths_type", None),
+                    sleep_sec=args.sleep,
+                )
+
+        elif table == "ths_daily":
+            if args.date:
+                load_ths_daily_date(args.date)
+            elif getattr(args, "backfill", False) or codes:
+                load_ths_daily_backfill(
+                    codes=codes or None,
+                    start_date=args.start,
+                    end_date=args.end,
+                    sleep_sec=args.sleep,
+                )
+            elif args.start:
+                load_ths_daily_range(args.start, args.end)
+            else:
+                print("[pipeline] ths_daily 请指定 --date（单日）、"
                       "--start（日期区间）或 --backfill（历史回填）。")
                 sys.exit(1)
 

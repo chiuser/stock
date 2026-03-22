@@ -26,6 +26,12 @@ from .ci_industry_member   import load_by_ts_code as load_ci_industry_member_by_
 from .ci_industry_daily    import load_date as load_ci_industry_daily_date
 from .ci_industry_daily    import load_date_range as load_ci_industry_daily_range
 from .ci_industry_daily    import load_backfill as load_ci_industry_daily_backfill
+from .ths_index            import load as load_ths_index
+from .ths_member           import load as load_ths_member
+from .ths_member           import load_by_code as load_ths_member_by_code
+from .ths_daily            import load_date as load_ths_daily_date
+from .ths_daily            import load_date_range as load_ths_daily_range
+from .ths_daily            import load_backfill as load_ths_daily_backfill
 
 __all__ = [
     "load_stock_basic",
@@ -56,4 +62,10 @@ __all__ = [
     "load_ci_industry_daily_date",
     "load_ci_industry_daily_range",
     "load_ci_industry_daily_backfill",
+    "load_ths_index",
+    "load_ths_member",
+    "load_ths_member_by_code",
+    "load_ths_daily_date",
+    "load_ths_daily_range",
+    "load_ths_daily_backfill",
 ]

@@ -29,6 +29,19 @@ from .ci_industry_daily import (
     fetch_ci_daily_by_code,
     fetch_ci_daily_all_codes,
 )
+from .ths_index import (
+    fetch_ths_index,
+    fetch_ths_index_by_type,
+)
+from .ths_member import (
+    fetch_ths_member,
+    fetch_ths_members_all,
+)
+from .ths_daily import (
+    fetch_ths_daily_by_date,
+    fetch_ths_daily_by_code,
+    fetch_ths_daily_all_codes,
+)
 
 __all__ = [
     "fetch_index_basic",
@@ -57,4 +70,11 @@ __all__ = [
     "fetch_ci_daily_by_date",
     "fetch_ci_daily_by_code",
     "fetch_ci_daily_all_codes",
+    "fetch_ths_index",
+    "fetch_ths_index_by_type",
+    "fetch_ths_member",
+    "fetch_ths_members_all",
+    "fetch_ths_daily_by_date",
+    "fetch_ths_daily_by_code",
+    "fetch_ths_daily_all_codes",
 ]

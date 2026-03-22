@@ -165,6 +165,7 @@ _DATE_QUERIES: list[tuple[str, str, str]] = [
     ("broker_recommend",   "broker_recommend",    "month"),
     ("sw_industry_daily",  "sw_industry_daily",   "trade_date"),
     ("ci_industry_daily",  "ci_industry_daily",   "trade_date"),
+    ("ths_daily",          "ths_daily",           "trade_date"),
 ]
 
 # 任务名 → 缓存 key（用于在 stage 内寻找代表性日期）
