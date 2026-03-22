@@ -57,6 +57,13 @@ def _clean(df: pd.DataFrame) -> pd.DataFrame:
     # in_date 作为 PK 列不能为 NULL，用哨兵日期填充
     if "in_date" in df.columns:
         df["in_date"] = df["in_date"].fillna(pd.Timestamp(_SENTINEL_DATE))
+    # code 是 PK 列，接口偶尔返回 null，直接丢弃这类行
+    if "code" in df.columns:
+        before = len(df)
+        df = df.dropna(subset=["code"])
+        dropped = before - len(df)
+        if dropped:
+            print(f"[ths_member] 丢弃 {dropped} 行 code=null 的数据")
     return df
 
 
