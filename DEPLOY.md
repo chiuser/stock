@@ -183,3 +183,26 @@ psql -h $DB_HOST -U $DB_USER -d $DB_NAME
 - 确认 `TUSHARE_TOKEN` 已正确设置
 - 确认账号积分是否充足（部分接口有积分要求）
 - 访问 [tushare.pro](https://tushare.pro) 查看账号状态
+
+### 配置了 Nginx 反向代理后页面无法访问
+
+**症状：** 配置好 Nginx 后仍然无法访问页面。
+
+**原因：** 混淆了访问端口——配置 Nginx 反代后，应访问 **80 端口**（`http://服务器IP`），而非直接访问 FastAPI 的 `8000` 端口。
+
+**排查步骤：**
+```bash
+# 1. 确认 sites-enabled 中有配置文件
+ls /etc/nginx/sites-enabled/
+
+# 2. 语法检查
+sudo nginx -t
+
+# 3. 确认 nginx 正在运行
+sudo systemctl status nginx
+
+# 4. 确认 stock 服务监听在 127.0.0.1:8000
+sudo systemctl status stock
+```
+
+**正确访问方式：** `http://服务器IP`（不带端口号，走 80 → nginx → 8000）

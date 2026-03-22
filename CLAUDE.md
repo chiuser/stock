@@ -90,6 +90,10 @@ kill -9 <pid>
   .venv/bin/python scripts/create_user.py --username xxx --password xxx
   ```
 
+**Nginx 反代配置后页面无法访问**
+原因：配置好 Nginx 后应访问 80 端口（`http://服务器IP`），不要直接访问 `:8000`。
+排查：`ls /etc/nginx/sites-enabled/` → `sudo nginx -t` → `sudo systemctl status nginx`
+
 **DataGrip 连不上数据库（连接超时）**
 1. 云服务器安全组放行 TCP 5432
 2. `sudo ufw allow 5432`
