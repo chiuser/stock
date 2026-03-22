@@ -1,0 +1,19 @@
+[Unit]
+Description=Stock Charts Web Service
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=stock
+Group=stock
+WorkingDirectory=/home/stock/stock
+EnvironmentFile=/etc/stock/stock.env
+ExecStart=/home/stock/stock/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
