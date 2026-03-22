@@ -1148,6 +1148,8 @@ body.admin-body {
   right: auto;
   width: 155px;
   background: transparent;
+  border: 1px solid #ffffff;
+  padding: 4px 6px;
   pointer-events: none;
   z-index: 100;
   font-size: 12px;

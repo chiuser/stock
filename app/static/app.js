@@ -321,11 +321,13 @@ function updateDetailPanel(timeStr, point) {
   panel.style.display = '';
 
   // 位置：十字线 x < 面板宽+边距 时切换到右上角，否则默认左上角
+  // 右侧时，right 偏移量 = 纵坐标轴宽度，确保面板右边缘对齐 K 线绘图区右边缘
   if (point) {
-    const panelW = panel.offsetWidth + 15;
+    const panelW       = panel.offsetWidth + 15;
+    const priceScaleW  = chart.priceScale('right').width();
     if (point.x < panelW) {
       panel.style.left  = 'auto';
-      panel.style.right = '10px';
+      panel.style.right = priceScaleW + 'px';
     } else {
       panel.style.left  = '10px';
       panel.style.right = 'auto';
