@@ -400,10 +400,10 @@ function closeTriggerModal() {
 
 let _logModalTimer = null;
 
-function _isTaskDone(taskName) {
+function _isTaskRunning(taskName) {
   for (const stage of _stageDataMap.values()) {
     const t = stage.tasks.find(t => t.name === taskName);
-    if (t && ["success", "failed", "skipped"].includes(t.status)) return true;
+    if (t && t.status === "running") return true;
   }
   return false;
 }
@@ -432,13 +432,14 @@ async function openLogModal(taskName) {
 
   await fetchLog();
 
-  // 始终启动刷新 timer，任务进入终态（success/failed/skipped）后停止。
-  // 这样无论任务跑得多快，打开弹窗后都能持续拿到最新日志。
-  _logModalTimer = setInterval(async () => {
-    if (!modal.classList.contains("open")) { clearInterval(_logModalTimer); return; }
-    await fetchLog();
-    if (_isTaskDone(taskName)) clearInterval(_logModalTimer);
-  }, 3000);
+  // 任务运行中：每 3s 自动刷新日志
+  if (_isTaskRunning(taskName)) {
+    _logModalTimer = setInterval(async () => {
+      if (!modal.classList.contains("open")) { clearInterval(_logModalTimer); return; }
+      await fetchLog();
+      if (!_isTaskRunning(taskName)) clearInterval(_logModalTimer);
+    }, 3000);
+  }
 }
 
 // ── 配置渲染 ──────────────────────────────────────────────────────
