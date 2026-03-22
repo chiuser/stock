@@ -6,6 +6,7 @@ from .stock_daily import fetch_stock_daily
 from .stock_daily_basic import fetch_stock_daily_basic
 from .stk_mins import fetch_stk_mins
 from .stk_weekly_monthly import fetch_stk_weekly_monthly
+from .broker_recommend import fetch_broker_recommend, fetch_broker_recommend_range
 
 __all__ = [
     "fetch_index_basic",
@@ -16,4 +17,6 @@ __all__ = [
     "fetch_stock_daily_basic",
     "fetch_stk_mins",
     "fetch_stk_weekly_monthly",
+    "fetch_broker_recommend",
+    "fetch_broker_recommend_range",
 ]

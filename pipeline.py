@@ -30,6 +30,12 @@ python pipeline.py --table stock_weekly --start 20200101
 # 同时更新周线和月线，只拉指定股票
 python pipeline.py --table stock_weekly stock_monthly --code 000001.SZ 600519.SH
 
+# 拉取单月券商金股
+python pipeline.py --table broker_recommend --month 202506
+
+# 拉取历史所有月份的券商金股（首次全量导入）
+python pipeline.py --table broker_recommend --month-start 202001 --month-end 202506
+
 环境变量
 --------
 DB_HOST      远程服务器 IP / 域名
@@ -59,12 +65,15 @@ from load import (
     load_stock_daily_basic,
     load_stock_daily_basic_date_range,
     load_stk_weekly_monthly,
+    load_broker_recommend_month,
+    load_broker_recommend_range,
 )
 
 TABLES = [
     "stock_basic", "index_basic", "index_daily",
     "stock_daily", "stock_daily_basic",
     "stock_weekly", "stock_monthly",
+    "broker_recommend",
 ]
 
 
@@ -84,6 +93,9 @@ def main():
     parser.add_argument("--start", help="开始日期 YYYYMMDD")
     parser.add_argument("--end",   help="结束日期 YYYYMMDD")
     parser.add_argument("--date",  help="单日 YYYYMMDD（用于 stock_daily_basic 全市场模式）")
+    parser.add_argument("--month",       help="单月 YYYYMM（用于 broker_recommend）")
+    parser.add_argument("--month-start", help="起始月份 YYYYMM（用于 broker_recommend 月份区间）")
+    parser.add_argument("--month-end",   help="结束月份 YYYYMM（用于 broker_recommend 月份区间，不填则当前月）")
     parser.add_argument("--sleep", type=float, default=0.3,
                         help="个股批量拉取时每只间隔秒数（默认 0.3）")
     args = parser.parse_args()
@@ -156,6 +168,18 @@ def main():
                 end_date=args.end,
                 sleep_sec=args.sleep,
             )
+
+        elif table == "broker_recommend":
+            month_start = args.month_start
+            month_end   = args.month_end
+            month_single = args.month
+            if month_single:
+                load_broker_recommend_month(month_single)
+            elif month_start:
+                load_broker_recommend_range(month_start, month_end)
+            else:
+                print("[pipeline] broker_recommend 请指定 --month（单月）或 --month-start（月份区间）。")
+                sys.exit(1)
 
     print(f"\n{'='*60}")
     print("  所有任务完成。")

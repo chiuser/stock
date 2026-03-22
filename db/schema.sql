@@ -305,7 +305,28 @@ CREATE INDEX IF NOT EXISTS idx_stock_monthly_date
 
 
 -- -------------------------------------------------------------
--- 10. 用户账号
+-- 10. 券商每月金股（荐股）
+--     来源: pro.broker_recommend(month='YYYYMM')
+--     限量: 单次最大 1000 行（单月数据通常 200~400 行），可按月循环
+--     建议更新频率: 每月月初（数据一般于 1日~3日 更新）
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS broker_recommend (
+    month      CHAR(6)      NOT NULL,            -- 月度，格式 YYYYMM
+    broker     VARCHAR(30)  NOT NULL,            -- 券商名称
+    ts_code    VARCHAR(12)  NOT NULL,            -- 股票代码
+    name       VARCHAR(20),                      -- 股票简称
+    created_at TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (month, broker, ts_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_broker_recommend_month
+    ON broker_recommend (month);
+CREATE INDEX IF NOT EXISTS idx_broker_recommend_ts_code
+    ON broker_recommend (ts_code);
+
+
+-- -------------------------------------------------------------
+-- 11. 用户账号
 --    无注册功能，由管理员通过 scripts/create_user.py 添加
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS users (
