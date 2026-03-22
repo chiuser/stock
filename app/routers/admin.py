@@ -408,6 +408,30 @@ def trigger_stage(body: TriggerRequest, user: dict = Depends(_get_current_user))
 
 
 # ------------------------------------------------------------------ #
+# GET /api/admin/trigger-log/{stage_name}
+# ------------------------------------------------------------------ #
+
+@router.get("/admin/trigger-log/{stage_name}")
+def get_trigger_log(stage_name: str, user: dict = Depends(_get_current_user)):
+    """返回今日最新手动触发日志（trigger_*.log）的最后 80 行。"""
+    if not re.match(r"^[\w\s\u4e00-\u9fff\-]+$", stage_name):
+        raise HTTPException(status_code=400, detail="非法阶段名")
+
+    config = _load_config()
+    log_dir = _get_log_dir(config)
+    today = datetime.date.today()
+
+    safe = re.sub(r"\s+", "_", stage_name.strip())
+    logs = sorted(log_dir.glob(f"trigger_{safe}_{today:%Y%m%d}_*.log"))
+    if not logs:
+        return {"lines": [], "found": False, "file": ""}
+
+    latest = logs[-1]
+    lines = _read_log_tail(latest, 80)
+    return {"lines": lines, "found": True, "file": latest.name}
+
+
+# ------------------------------------------------------------------ #
 # GET /api/admin/log/{task_name}
 # ------------------------------------------------------------------ #
 

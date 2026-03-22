@@ -41,12 +41,19 @@
 
   <!-- ======================== 任务状态 Tab ======================== -->
   <div class="admin-panel" id="panel-status">
-    <div id="stages-container">
-      <!-- 动态渲染 -->
-      <div class="admin-loading" id="status-loading">
-        <div class="spinner"></div>
-        <span>加载中…</span>
+    <!-- loading 指示器在 stages-container 之外，renderStages 不会清除它 -->
+    <div class="admin-loading" id="status-loading" style="display:none">
+      <div class="spinner"></div>
+      <span>加载中…</span>
+    </div>
+    <div id="stages-container"></div>
+    <!-- 手动触发实时进度日志（独立容器，不受 renderStages 影响） -->
+    <div id="trigger-progress" class="trigger-progress hidden">
+      <div class="trigger-progress-header">
+        <span id="trigger-progress-title">执行进度</span>
+        <button class="modal-close" id="trigger-progress-close">×</button>
       </div>
+      <pre id="trigger-log-content" class="trigger-log-content">等待日志…</pre>
     </div>
   </div>
 

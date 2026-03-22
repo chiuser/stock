@@ -310,7 +310,9 @@ async function confirmTrigger() {
     });
     showToast(res.message, "success");
     document.getElementById("trigger-modal").classList.remove("open");
-    setTimeout(() => loadStatus(), 3000);
+    // 清除普通刷新倒计时，改为快速轮询（2s）同时展示实时进度
+    clearInterval(_refreshTimer);
+    startTriggerPoll(stage.name);
   } catch (e) {
     showToast(`触发失败：${e.message}`, "error");
     btn.disabled = false;
@@ -428,19 +430,92 @@ async function saveConfig() {
   }
 }
 
+// ── 触发轮询（手动执行后快速更新状态 + 进度日志） ────────────────
+
+let _triggerPollTimer  = null;
+let _triggerPollCount  = 0;
+let _triggerStageName  = null;
+let _triggerDonePosted = false;
+const TRIGGER_POLL_INTERVAL = 2000;   // 2s
+const TRIGGER_POLL_MAX      = 120;    // 最多 4 分钟
+
+function startTriggerPoll(stageName) {
+  stopTriggerPoll();
+  _triggerStageName  = stageName;
+  _triggerPollCount  = 0;
+  _triggerDonePosted = false;
+
+  // 显示进度面板
+  const prog = document.getElementById("trigger-progress");
+  document.getElementById("trigger-progress-title").textContent = `执行进度 — ${stageName}`;
+  document.getElementById("trigger-log-content").textContent = "等待日志…";
+  prog.classList.remove("hidden");
+
+  _triggerPollTimer = setInterval(_triggerPollTick, TRIGGER_POLL_INTERVAL);
+  _triggerPollTick();   // 立即执行一次
+}
+
+function stopTriggerPoll() {
+  if (_triggerPollTimer) { clearInterval(_triggerPollTimer); _triggerPollTimer = null; }
+}
+
+async function _triggerPollTick() {
+  if (activeTab() !== "status") { stopTriggerPoll(); return; }
+
+  _triggerPollCount++;
+  if (_triggerPollCount > TRIGGER_POLL_MAX) { stopTriggerPoll(); scheduleRefresh(); return; }
+
+  // 刷新任务状态
+  try {
+    const data = await apiFetch("/api/admin/status");
+    renderStages(data);
+
+    // 检查触发阶段是否全部结束
+    const stageData = data.stages.find(s => s.name === _triggerStageName);
+    if (stageData && !_triggerDonePosted) {
+      const allDone = stageData.tasks.every(
+        t => ["success", "failed", "skipped"].includes(t.status)
+      );
+      if (allDone && _triggerPollCount > 1) {
+        _triggerDonePosted = true;
+        // 再最终刷新一次，然后切回普通刷新
+        setTimeout(() => { stopTriggerPoll(); loadStatus(); scheduleRefresh(); }, 2000);
+      }
+    }
+  } catch { /* 忽略，继续下次 */ }
+
+  // 更新进度日志
+  _fetchTriggerLog(_triggerStageName);
+}
+
+async function _fetchTriggerLog(stageName) {
+  const el = document.getElementById("trigger-log-content");
+  if (!el || document.getElementById("trigger-progress").classList.contains("hidden")) return;
+  try {
+    const data = await apiFetch(`/api/admin/trigger-log/${encodeURIComponent(stageName)}`);
+    if (!data.found || !data.lines.length) return;
+    const text = data.lines.join("\n");
+    // 保持在底部：只有已在底部时才自动滚动
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
+    el.textContent = text;
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  } catch { /* 忽略 */ }
+}
+
 // ── 数据加载 ──────────────────────────────────────────────────────
 
 async function loadStatus() {
-  document.getElementById("status-loading").style.display = "flex";
+  const loadingEl = document.getElementById("status-loading");
+  if (loadingEl) loadingEl.style.display = "flex";
   try {
     const data = await apiFetch("/api/admin/status");
-    document.getElementById("status-loading").style.display = "none";
+    if (loadingEl) loadingEl.style.display = "none";
     renderStages(data);
-    // 如有任务正在运行，5秒后自动刷新
+    // 如有任务正在运行且未处于触发轮询中，5秒后自动刷新
     const anyRunning = data.stages.some(s => s.tasks.some(t => t.status === "running"));
-    if (anyRunning) scheduleRefresh(5);
+    if (anyRunning && !_triggerPollTimer) scheduleRefresh(5);
   } catch (e) {
-    document.getElementById("status-loading").style.display = "none";
+    if (loadingEl) loadingEl.style.display = "none";
     showToast(`加载状态失败：${e.message}`, "error");
   }
 }
@@ -547,6 +622,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const e = document.getElementById("trigger-end");
     if (s && e.value && e.value < s) e.value = s;
     e.min = s || "";
+  });
+
+  // 进度面板关闭
+  document.getElementById("trigger-progress-close").addEventListener("click", () => {
+    document.getElementById("trigger-progress").classList.add("hidden");
+    stopTriggerPoll();
   });
 
   // 日志弹层关闭
