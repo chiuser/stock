@@ -337,6 +337,9 @@ class StopRequest(BaseModel):
 # 手动触发进程跟踪（stage_name → Popen），用于防重复执行和停止
 _running_procs: dict[str, subprocess.Popen] = {}
 
+# 被手动停止的阶段集合：进程被 SIGTERM 后日志没有完成事件，需要前端覆盖显示
+_killed_stages: set[str] = set()
+
 
 def _stage_date_type(stage: dict) -> str:
     """检测阶段的日期参数类型：'none' | 'range' | 'month'"""
@@ -393,6 +396,14 @@ def get_status(user: dict = Depends(_get_current_user)):
             # 此次更新的日期范围（从 cmd 占位符解析）
             st["date_range"] = _resolve_task_date_range(task.get("cmd", []), placeholders)
             tasks_status.append(st)
+
+        # 如果该阶段曾被手动停止（日志里可能有残留 running 事件）
+        # 将未结束的任务标记为 failed，避免状态永远卡在 running
+        if name in _killed_stages and not is_manual_running:
+            for ts in tasks_status:
+                if ts["status"] == "running":
+                    ts["status"] = "failed"
+                    ts["error"] = "已手动停止"
 
         stages_status.append({
             "name": name,
@@ -544,6 +555,7 @@ def trigger_stage(body: TriggerRequest, user: dict = Depends(_get_current_user))
             start_new_session=True,   # 新进程组，方便 killpg 整体终止
         )
         _running_procs[body.stage] = proc
+        _killed_stages.discard(body.stage)   # 重新触发，清除停止记录
         return {
             "ok": True,
             "pid": proc.pid,
@@ -570,9 +582,11 @@ def stop_stage(body: StopRequest, user: dict = Depends(_get_current_user)):
         pid = proc.pid
         os.killpg(os.getpgid(pid), signal.SIGTERM)
         _running_procs.pop(body.stage, None)
+        _killed_stages.add(body.stage)
         return {"ok": True, "message": f"已终止阶段 [{body.stage}]（PID={pid}）"}
     except ProcessLookupError:
         _running_procs.pop(body.stage, None)
+        _killed_stages.add(body.stage)
         return {"ok": True, "message": "进程已结束"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"停止失败: {e}")
