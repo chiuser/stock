@@ -92,6 +92,7 @@ from load import (
     load_moneyflow_ind_dc_range,
     load_moneyflow_mkt_dc_date,
     load_moneyflow_mkt_dc_range,
+    load_sw_industry,
 )
 
 TABLES = [
@@ -100,6 +101,7 @@ TABLES = [
     "stock_weekly", "stock_monthly",
     "broker_recommend",
     "moneyflow_dc", "moneyflow_ind_dc", "moneyflow_mkt_dc",
+    "sw_industry",
 ]
 
 
@@ -124,6 +126,9 @@ def main():
     parser.add_argument("--month-end",   help="结束月份 YYYYMM（用于 broker_recommend 月份区间，不填则当前月）")
     parser.add_argument("--sleep", type=float, default=0.3,
                         help="个股批量拉取时每只间隔秒数（默认 0.3）")
+    parser.add_argument("--sw-src", default="SW2021",
+                        choices=["SW2021", "SW2014", "all"],
+                        help="申万行业分类版本（默认 SW2021，用于 sw_industry）")
     args = parser.parse_args()
 
     tables = TABLES if "all" in args.table else args.table
@@ -236,6 +241,9 @@ def main():
             else:
                 print("[pipeline] moneyflow_mkt_dc 请指定 --date（单日）或 --start（区间）。")
                 sys.exit(1)
+
+        elif table == "sw_industry":
+            load_sw_industry(src=args.sw_src)
 
     print(f"\n{'='*60}")
     print("  所有任务完成。")

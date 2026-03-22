@@ -444,3 +444,24 @@ CREATE TABLE IF NOT EXISTS user_portfolio (
     UNIQUE (user_id, ts_code)
 );
 CREATE INDEX IF NOT EXISTS idx_user_portfolio_user ON user_portfolio(user_id);
+
+
+-- -------------------------------------------------------------
+-- 12. 申万行业分类
+--    来源: pro.index_classify()
+--    支持 SW2014 / SW2021 两个版本，L1/L2/L3 三级
+--    建议更新频率: 不常变化，手动维护即可
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS sw_industry_class (
+    index_code    VARCHAR(12)  NOT NULL,          -- 指数代码，如 801010.SI
+    industry_name VARCHAR(50)  NOT NULL,           -- 行业名称
+    parent_code   VARCHAR(12)  NOT NULL DEFAULT '0', -- 父级代码（一级行业为 '0'）
+    level         VARCHAR(4)   NOT NULL,           -- 行业层级：L1 / L2 / L3
+    industry_code VARCHAR(10)  NOT NULL,           -- 行业代码，如 110000
+    is_pub        VARCHAR(2)   NOT NULL DEFAULT '1', -- 是否发布了指数（'1'/'0'）
+    src           VARCHAR(10)  NOT NULL,           -- 版本：SW2014 / SW2021
+    updated_at    TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (index_code, src)
+);
+CREATE INDEX IF NOT EXISTS idx_sw_industry_class_level  ON sw_industry_class(level, src);
+CREATE INDEX IF NOT EXISTS idx_sw_industry_class_parent ON sw_industry_class(parent_code, src);

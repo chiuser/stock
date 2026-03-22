@@ -10,6 +10,7 @@ from .broker_recommend import fetch_broker_recommend, fetch_broker_recommend_ran
 from .moneyflow_dc import fetch_moneyflow_dc, fetch_moneyflow_dc_date_range
 from .moneyflow_ind_dc import fetch_moneyflow_ind_dc, fetch_moneyflow_ind_dc_date_range
 from .moneyflow_mkt_dc import fetch_moneyflow_mkt_dc
+from .sw_industry import fetch_sw_industry
 
 __all__ = [
     "fetch_index_basic",
@@ -27,4 +28,5 @@ __all__ = [
     "fetch_moneyflow_ind_dc",
     "fetch_moneyflow_ind_dc_date_range",
     "fetch_moneyflow_mkt_dc",
+    "fetch_sw_industry",
 ]

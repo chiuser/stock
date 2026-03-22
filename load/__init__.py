@@ -14,6 +14,7 @@ from .moneyflow_ind_dc     import load_date as load_moneyflow_ind_dc_date
 from .moneyflow_ind_dc     import load_date_range as load_moneyflow_ind_dc_range
 from .moneyflow_mkt_dc     import load_date as load_moneyflow_mkt_dc_date
 from .moneyflow_mkt_dc     import load_date_range as load_moneyflow_mkt_dc_range
+from .sw_industry          import load as load_sw_industry
 
 __all__ = [
     "load_stock_basic",
@@ -32,4 +33,5 @@ __all__ = [
     "load_moneyflow_ind_dc_range",
     "load_moneyflow_mkt_dc_date",
     "load_moneyflow_mkt_dc_range",
+    "load_sw_industry",
 ]
