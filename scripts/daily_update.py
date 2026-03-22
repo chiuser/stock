@@ -310,11 +310,13 @@ def main() -> None:
         print(f"  今日日期: {placeholders['{today}']} ({datetime.date.today().strftime('%A')})")
         print(f"{'─'*60}")
         for stage in stages:
+            enabled = stage.get("enabled", True)
             ok, reason = _check_condition(stage.get("only_on"))
-            marker = "✓" if ok else "✗"
+            marker = "✓" if (ok and enabled) else "✗"
             tasks = [t["name"] for t in stage.get("tasks", [])]
             print(f"\n  [{marker}] {stage['name']}")
             print(f"      cron   : {stage.get('cron', '—')}")
+            print(f"      启用   : {'是' if enabled else '否（已禁用）'}")
             print(f"      触发   : {reason}")
             print(f"      任务   : {', '.join(tasks)}")
         print(f"\n{'─'*60}\n")
@@ -346,6 +348,12 @@ def main() -> None:
 
     for stage in run_stages:
         name = stage["name"]
+
+        # 检查是否启用
+        if not stage.get("enabled", True):
+            logger.info("[%s] 跳过 — 阶段已在配置中禁用（enabled: false）", name)
+            skipped_stages.append(name)
+            continue
 
         # 检查触发条件
         if check_conditions:
