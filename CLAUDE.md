@@ -23,7 +23,11 @@ A 股行情监控 Web 系统，数据来源 Tushare Pro，后端 FastAPI + Postg
 | `scripts/update_config.yaml` | 定时任务配置（阶段/cron/任务） |
 | `scripts/install_cron.sh` | 安装/移除 crontab |
 | `scripts/create_user.py` | 管理员创建用户（无注册功能） |
+| `app/main.py` | FastAPI 入口，路由挂载，静态文件，禁缓存中间件 |
 | `app/routers/auth.py` | 登录接口，bcrypt 验密 + JWT 签发 |
+| `app/routers/stocks.py` | 行情 API（搜索、基本信息、日线+均线） |
+| `app/routers/portfolio.py` | 持仓股 CRUD API |
+| `app/routers/admin.py` | 监控页全部 API（状态/配置/执行/日志） |
 
 ## 环境变量文件
 
@@ -104,6 +108,112 @@ kill -9 <pid>
 ## 开发分支
 
 `claude/tushare-index-data-06Kfi`
+
+---
+
+## 三个前端页面速查（2026-03-22）
+
+### 页面路由
+
+| URL | HTML | JS | 后端 Router |
+|-----|------|----|-------------|
+| `/login` | `login.html` | `login.js` | `auth.py` |
+| `/portfolio` | `portfolio.html` | `portfolio.js` | `portfolio.py` |
+| `/chart?code=…` | `chart.html` | `app.js` | `stocks.py` |
+| `/admin` | `admin.html` | `admin.js` | `admin.py` |
+
+所有页面共用 `style.css`（深色主题，红涨绿跌）。
+
+---
+
+### 持仓股页（portfolio）
+
+**功能**：展示用户自选/持仓股列表，支持添加/删除，点击行跳行情页。
+
+**前端关键点**
+- `loadPortfolio()` → `GET /api/portfolio` → `renderPortfolio(items)` 渲染表格
+- 添加：搜索弹层（`GET /api/stocks/search?q=…`）→ 选中 → `POST /api/portfolio`
+- 删除：`DELETE /api/portfolio/{ts_code}`
+- 表格列：代码 / 名称 / 现价 / 涨跌幅 / 成交量 / 换手率 / PE / 股息率 / 市值
+
+**后端关键点**
+- `GET /api/portfolio`：JOIN `stock_basic` + LATERAL 取 `stock_daily` / `stock_daily_basic` 最新一行
+- 用户隔离：所有操作过滤 `user_id`（JWT payload）
+
+---
+
+### 行情页（chart）
+
+**功能**：K 线图 + 成交量图，支持复权切换、8 条均线开关、6 档时间范围。
+
+**前端关键点**
+- 图表库：`lightweight-charts`（CandlestickSeries + HistogramSeries）
+- 初始化：`initChart()` → `loadData(tsCode)`（一次性拉全量历史）
+- 时间范围：前端 `applyVisibleRange()` 滑窗，不重新请求
+- 复权切换：改 `currentAdj` → 重新 `loadData()`
+- 均线开关：维护 `activeMA` Set → 切换 series 可见性
+- 两图同步：`subscribeVisibleLogicalRangeChange` + `syncPriceScaleWidth()`
+- 详情浮窗：crosshair move 事件，自适应左/右显示 OHLC、涨幅、成交量
+- 阳线：红色 `#E04040`（空心）；阴线：绿色 `#45AA55`（实心）
+
+**后端关键点（`stocks.py`）**
+- `GET /api/stock/{ts_code}/daily?adj=qfq|hfq|`
+  - 多取 ~400 日保证 MA250 计算完整
+  - pandas 计算 MA5/10/15/20/30/60/120/250
+  - 回退：无 stock_daily 数据时查 index_daily
+  - 返回：`{candles, volume, ma, is_index}`
+- `GET /api/stocks/search?q=…`
+  - 指数：内存缓存 `_index_cache`，支持拼音缩写
+  - 个股：DB ILIKE 查询 ts_code / name / cnspell
+  - 返回前 20 项，指数优先
+
+---
+
+### 数据监控页（admin）
+
+**功能**：查看定时任务执行状态、手动触发阶段、实时日志、编辑 cron 配置。
+
+**前端关键点（`admin.js`）**
+- 两个 Tab：「任务状态」/ 「系统配置」
+- `renderStages(data)`：首次构建完整 DOM，后续轮询脏检查局部更新
+  - 稳定 ID：`sc-{ssid}`（卡片）、`tr/td/tb/tt/tlb-{tid}`（任务行各元素）
+  - 脏检查：`textContent`/`innerHTML`/`className` 值无变化则跳过写入
+- `setupStageListeners()`：事件委托，单次注册，不随轮询重绑
+- 自动刷新：30s 轮询；有任务运行中改 5s；`loadStatus(showSpinner)` 只有首次/手动刷新才显示 spinner
+- 手动执行流程：
+  1. 点「手动执行」→ `openTriggerModal`（按 date_type 显示日期/月份/无日期）
+  2. 确认 → `POST /api/admin/run` → 启动后台进程
+  3. `_triggerPollTimer` 每 2s 拉 `/api/admin/trigger-log/{stage}` 显示实时日志
+  4. 完成后自动停止轮询
+- 日志弹窗：`_logModalTimer` 运行中每 3s 刷新，atBottom 检查后自动滚底
+
+**后端关键点（`admin.py`）**
+- `GET /api/admin/status`：解析 `scheduler_YYYYMMDD.log` 提取事件 → 推断任务状态；`_get_latest_dates()` 查各表 MAX(trade_date)（60s 缓存）；`_resolve_task_date_range()` 解析 cmd 占位符展示日期范围
+- `POST /api/admin/run`：`_running_procs` 防重复；后台 Popen 写 `trigger_*.log`
+- `GET /api/admin/trigger-log/{stage}`：读最新 trigger log 末 80 行
+- `GET /api/admin/log/{task}`：读任务日志末 50 行
+- `PUT /api/admin/config`：更新 yaml，备份为 `.yaml.bak`
+
+---
+
+### 共用 API 端点速查
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/auth/login` | 登录，返回 JWT token |
+| GET | `/api/stocks/search?q=` | 搜索股票/指数（最多20条） |
+| GET | `/api/stock/{code}/info` | 基本信息（stock_basic / index_basic） |
+| GET | `/api/stock/{code}/daily?adj=` | 日线+均线（全量历史） |
+| GET | `/api/portfolio` | 用户持仓列表（含最新行情） |
+| POST | `/api/portfolio` | 添加持仓 |
+| DELETE | `/api/portfolio/{code}` | 删除持仓 |
+| GET | `/api/admin/status` | 今日任务状态树 |
+| GET | `/api/admin/config` | 配置文件内容 |
+| PUT | `/api/admin/config` | 更新配置 |
+| POST | `/api/admin/run` | 手动触发阶段 |
+| POST | `/api/admin/stop` | 停止执行中阶段 |
+| GET | `/api/admin/trigger-log/{stage}` | 手动触发实时日志（末80行） |
+| GET | `/api/admin/log/{task}` | 任务日志（末50行） |
 
 ---
 
