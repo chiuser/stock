@@ -104,3 +104,61 @@ kill -9 <pid>
 ## 开发分支
 
 `claude/tushare-index-data-06Kfi`
+
+---
+
+## 已完成功能记录（2026-03-22）
+
+### 数据更新监控页面（admin 页）
+
+#### 关键文件
+| 文件 | 说明 |
+|------|------|
+| `app/routers/admin.py` | 监控页所有 API（`/api/admin/*`） |
+| `app/static/admin.js` | 监控页前端逻辑 |
+| `app/static/style.css` | 监控页样式 |
+| `scripts/daily_update.py` | 定时调度器，执行 pipeline.py 子进程 |
+
+#### 功能列表
+
+**1. 日志实时写入（`daily_update.py`）**
+- 改 `subprocess.run(capture_output=True)` → `stdout=log_file, stderr=STDOUT`
+- 设 `PYTHONUNBUFFERED=1`，子进程输出实时落盘
+- 任务执行中点「查看日志」即可看到 pipeline.py 实时输出
+
+**2. 消除页面刷新跳动（`admin.js` `renderStages`）**
+- 不再 `innerHTML = ""`，改为局部 DOM 更新
+- 每个阶段卡片稳定 ID 方案：`sc-{ssid}`
+- 任务行稳定 ID：`tr-`, `td-`, `tb-`, `tt-`, `tlb-`（行/点/徽章/时间/日志按钮）
+- 阶段徽章稳定 ID：`strig-`, `sstat-`, `slatd-`
+- 首次渲染建完整 DOM，后续轮询只 `innerHTML` 更新动态字段
+
+**3. 事件委托（`admin.js` `setupStageListeners`）**
+- 不再在 `renderStages` 里每次重新绑定按钮事件
+- 单次在容器上注册 click 委托，匹配 `.admin-btn-trigger` 和 `.task-log-btn`
+
+**4. 日志弹窗自动刷新（`admin.js` `openLogModal`）**
+- 任务运行中：每 3s 自动 fetch 日志、更新内容、保持滚动到底部
+- 关闭弹窗时 `clearInterval` 停止刷新
+- `_logModalTimer` 全局变量管理 timer
+
+**5. 阶段最新数据日期（`admin.py` + `admin.js`）**
+- `_get_latest_dates()`：一次性查 7 张表的 `MAX(date_col)`，60s 缓存
+  - 涵盖 `index_daily`, `stock_daily`, `stock_daily_basic`, `moneyflow_dc`, `stock_weekly`, `stock_monthly`, `broker_recommend`
+- `_stage_latest_date(stage, latest_dates)`：从阶段的代表性任务取最新日期
+- status API 响应新增 `latest_date` 字段（阶段级）
+- 前端：阶段标题栏绿色 badge 显示「最新 YYYY-MM-DD」，空时自动隐藏（`:empty`）
+
+**6. 任务更新时间范围（`admin.py` + `admin.js`）**
+- `_build_placeholders_adm()`：解析 `{today}`, `{week_monday}`, `{month_start}`, `{current_month}` 为实际日期
+- `_resolve_task_date_range(cmd, placeholders)`：从 cmd 提取 `--start/--end/--date/--month`，返回可读字符串
+  - 单日 → `2026-03-22`
+  - 区间 → `2026-03-16 ~ 2026-03-22`
+  - 月份 → `2026-03`
+- status API 响应新增 `date_range` 字段（任务级）
+- 前端：任务行名字旁灰色小 badge 展示本次更新范围
+
+#### 注意事项
+- `_get_latest_dates` 有 60s 缓存（`_date_cache`），DB 不可用时静默返回空 dict
+- `renderStages` 的 `_sid(name)` 将中文/特殊字符替换为 `_`，确保合法 DOM ID
+- 日志弹窗"滚动到底部"仅在用户未上翻时触发（检查 `atBottom`）
