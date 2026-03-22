@@ -399,7 +399,10 @@ def get_status(user: dict = Depends(_get_current_user)):
 
         # 如果该阶段曾被手动停止（日志里可能有残留 running 事件）
         # 将未结束的任务标记为 failed，避免状态永远卡在 running
-        if name in _killed_stages and not is_manual_running:
+        # 用磁盘 marker 文件判断（内存集合重启后会丢失）
+        killed_marker = log_dir / f"killed_{name.replace(' ', '_')}_{today:%Y%m%d}.marker"
+        was_killed = name in _killed_stages or killed_marker.exists()
+        if was_killed and not is_manual_running:
             for ts in tasks_status:
                 if ts["status"] == "running":
                     ts["status"] = "failed"
@@ -555,7 +558,10 @@ def trigger_stage(body: TriggerRequest, user: dict = Depends(_get_current_user))
             start_new_session=True,   # 新进程组，方便 killpg 整体终止
         )
         _running_procs[body.stage] = proc
-        _killed_stages.discard(body.stage)   # 重新触发，清除停止记录
+        _killed_stages.discard(body.stage)   # 重新触发，清除内存停止记录
+        # 同时删除磁盘 marker，重启后也能正确识别为新的一次执行
+        killed_marker = log_dir / f"killed_{body.stage.replace(' ', '_')}_{today:%Y%m%d}.marker"
+        killed_marker.unlink(missing_ok=True)
         return {
             "ok": True,
             "pid": proc.pid,
@@ -578,15 +584,22 @@ def stop_stage(body: StopRequest, user: dict = Depends(_get_current_user)):
     if not proc or proc.poll() is not None:
         _running_procs.pop(body.stage, None)
         raise HTTPException(status_code=404, detail=f"阶段 [{body.stage}] 没有正在运行的手动任务")
+    config = _load_config()
+    log_dir = _get_log_dir(config)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    today = datetime.date.today()
+    killed_marker = log_dir / f"killed_{body.stage.replace(' ', '_')}_{today:%Y%m%d}.marker"
     try:
         pid = proc.pid
         os.killpg(os.getpgid(pid), signal.SIGTERM)
         _running_procs.pop(body.stage, None)
         _killed_stages.add(body.stage)
+        killed_marker.touch()
         return {"ok": True, "message": f"已终止阶段 [{body.stage}]（PID={pid}）"}
     except ProcessLookupError:
         _running_procs.pop(body.stage, None)
         _killed_stages.add(body.stage)
+        killed_marker.touch()
         return {"ok": True, "message": "进程已结束"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"停止失败: {e}")
