@@ -42,6 +42,22 @@ from .ths_daily import (
     fetch_ths_daily_by_code,
     fetch_ths_daily_all_codes,
 )
+from .dc_index import (
+    fetch_dc_index,
+    fetch_dc_index_date_range,
+)
+from .dc_member import (
+    fetch_dc_member,
+    fetch_dc_member_by_board,
+    fetch_dc_member_date_range,
+)
+from .dc_daily import (
+    fetch_dc_daily,
+    fetch_dc_daily_by_date,
+    fetch_dc_daily_by_code,
+    fetch_dc_daily_date_range,
+    fetch_dc_daily_all_codes,
+)
 
 __all__ = [
     "fetch_index_basic",
@@ -77,4 +93,14 @@ __all__ = [
     "fetch_ths_daily_by_date",
     "fetch_ths_daily_by_code",
     "fetch_ths_daily_all_codes",
+    "fetch_dc_index",
+    "fetch_dc_index_date_range",
+    "fetch_dc_member",
+    "fetch_dc_member_by_board",
+    "fetch_dc_member_date_range",
+    "fetch_dc_daily",
+    "fetch_dc_daily_by_date",
+    "fetch_dc_daily_by_code",
+    "fetch_dc_daily_date_range",
+    "fetch_dc_daily_all_codes",
 ]

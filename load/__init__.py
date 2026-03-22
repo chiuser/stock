@@ -32,6 +32,13 @@ from .ths_member           import load_by_code as load_ths_member_by_code
 from .ths_daily            import load_date as load_ths_daily_date
 from .ths_daily            import load_date_range as load_ths_daily_range
 from .ths_daily            import load_backfill as load_ths_daily_backfill
+from .dc_index             import load_date as load_dc_index_date
+from .dc_index             import load_date_range as load_dc_index_range
+from .dc_member            import load_date as load_dc_member_date
+from .dc_member            import load_date_range as load_dc_member_range
+from .dc_daily             import load_date as load_dc_daily_date
+from .dc_daily             import load_date_range as load_dc_daily_range
+from .dc_daily             import load_backfill as load_dc_daily_backfill
 
 __all__ = [
     "load_stock_basic",
@@ -68,4 +75,11 @@ __all__ = [
     "load_ths_daily_date",
     "load_ths_daily_range",
     "load_ths_daily_backfill",
+    "load_dc_index_date",
+    "load_dc_index_range",
+    "load_dc_member_date",
+    "load_dc_member_range",
+    "load_dc_daily_date",
+    "load_dc_daily_range",
+    "load_dc_daily_backfill",
 ]

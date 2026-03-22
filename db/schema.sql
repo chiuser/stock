@@ -730,3 +730,91 @@ CREATE TABLE IF NOT EXISTS ths_daily (
 CREATE INDEX IF NOT EXISTS idx_ths_daily_date ON ths_daily(trade_date);
 -- 按代码查历史走势
 CREATE INDEX IF NOT EXISTS idx_ths_daily_code ON ths_daily(ts_code, trade_date);
+
+
+-- -------------------------------------------------------------
+-- 20. 东方财富概念板块每日快照（dc_index）
+--     来源: pro.dc_index()
+--     描述: 获取东方财富每个交易日的概念板块数据，支持按日期查询
+--     限量: 单次最大 5000 条，历史数据可根据日期循环获取
+--     所需积分: 6000
+--     idx_type: 行业板块 / 概念板块 / 地域板块（查询时必填）
+--     建议更新频率: 每个交易日收盘后（1次API=当日全量板块）
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS dc_index (
+    ts_code        VARCHAR(20)  NOT NULL,       -- 概念代码，如 BK1186.DC
+    trade_date     DATE         NOT NULL,        -- 交易日期
+    name           VARCHAR(40),                  -- 概念名称
+    leading        VARCHAR(20),                  -- 领涨股票名称
+    leading_code   VARCHAR(12),                  -- 领涨股票代码
+    pct_change     NUMERIC(10, 4),               -- 涨跌幅（%）
+    leading_pct    NUMERIC(10, 4),               -- 领涨股票涨跌幅（%）
+    total_mv       NUMERIC(24, 4),               -- 总市值（万元）
+    turnover_rate  NUMERIC(10, 4),               -- 换手率（%）
+    up_num         INT,                          -- 上涨家数
+    down_num       INT,                          -- 下降家数
+    idx_type       VARCHAR(10),                  -- 板块类型（行业板块/概念板块/地域板块）
+    level          VARCHAR(10),                  -- 行业层级
+    updated_at     TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (ts_code, trade_date)
+);
+-- 按日期查全量板块（最常用）
+CREATE INDEX IF NOT EXISTS idx_dc_index_date     ON dc_index (trade_date);
+-- 按代码查板块历史走势
+CREATE INDEX IF NOT EXISTS idx_dc_index_ts_code  ON dc_index (ts_code, trade_date);
+-- 按板块类型过滤
+CREATE INDEX IF NOT EXISTS idx_dc_index_idx_type ON dc_index (idx_type, trade_date);
+
+
+-- -------------------------------------------------------------
+-- 21. 东方财富板块成分股（dc_member）
+--     来源: pro.dc_member()
+--     描述: 获取东方财富板块每日成分数据，可根据概念板块代码和交易日期查询
+--     限量: 单次最大 5000 条，可通过日期和代码循环获取
+--     所需积分: 6000
+--     说明: 成分可每日变动，以 (ts_code, con_code, trade_date) 为主键记录历史
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS dc_member (
+    trade_date     DATE         NOT NULL,        -- 交易日期
+    ts_code        VARCHAR(20)  NOT NULL,        -- 板块代码，如 BK1184.DC
+    con_code       VARCHAR(12)  NOT NULL,        -- 成分股代码，如 002117.SZ
+    name           VARCHAR(20),                  -- 成分股名称
+    updated_at     TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (trade_date, ts_code, con_code)
+);
+-- 按板块代码查全部成分（最常用）
+CREATE INDEX IF NOT EXISTS idx_dc_member_ts_code  ON dc_member (ts_code, trade_date);
+-- 按成分股查其所属板块
+CREATE INDEX IF NOT EXISTS idx_dc_member_con_code ON dc_member (con_code, trade_date);
+-- 按日期查全量成分快照
+CREATE INDEX IF NOT EXISTS idx_dc_member_date     ON dc_member (trade_date);
+
+
+-- -------------------------------------------------------------
+-- 22. 东方财富板块行情（dc_daily）
+--     来源: pro.dc_daily()
+--     描述: 获取东方财富概念板块/行业指数板块/地域板块行情数据，历史数据起始于2020年
+--     限量: 单次最大 2000 条，可根据日期参数循环获取
+--     所需积分: 6000
+--     建议更新频率: 每个交易日收盘后（1次API=当日全量板块）
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS dc_daily (
+    ts_code        VARCHAR(20)  NOT NULL,        -- 板块代码，如 BK1063.DC
+    trade_date     DATE         NOT NULL,         -- 交易日期
+    open           NUMERIC(12, 4),                -- 开盘点位
+    high           NUMERIC(12, 4),                -- 最高点位
+    low            NUMERIC(12, 4),                -- 最低点位
+    close          NUMERIC(12, 4),                -- 收盘点位
+    change         NUMERIC(12, 4),                -- 涨跌点位
+    pct_change     NUMERIC(10, 4),                -- 涨跌幅（%）
+    vol            NUMERIC(24, 4),                -- 成交量（股）
+    amount         NUMERIC(24, 4),                -- 成交额（元）
+    swing          NUMERIC(10, 4),                -- 振幅（%）
+    turnover_rate  NUMERIC(10, 4),                -- 换手率（%）
+    updated_at     TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (ts_code, trade_date)
+);
+-- 按日期查全量板块行情（日报/板块轮动最常用）
+CREATE INDEX IF NOT EXISTS idx_dc_daily_date    ON dc_daily (trade_date);
+-- 按代码查板块历史K线
+CREATE INDEX IF NOT EXISTS idx_dc_daily_ts_code ON dc_daily (ts_code, trade_date);

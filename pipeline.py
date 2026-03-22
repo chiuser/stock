@@ -110,6 +110,13 @@ from load import (
     load_ths_daily_date,
     load_ths_daily_range,
     load_ths_daily_backfill,
+    load_dc_index_date,
+    load_dc_index_range,
+    load_dc_member_date,
+    load_dc_member_range,
+    load_dc_daily_date,
+    load_dc_daily_range,
+    load_dc_daily_backfill,
 )
 
 TABLES = [
@@ -121,6 +128,7 @@ TABLES = [
     "sw_industry", "sw_industry_member", "sw_industry_daily",
     "ci_industry_member", "ci_industry_daily",
     "ths_index", "ths_member", "ths_daily",
+    "dc_index", "dc_member", "dc_daily",
 ]
 
 
@@ -356,6 +364,43 @@ def main():
                 load_sw_industry_daily_range(args.start, args.end)
             else:
                 print("[pipeline] sw_industry_daily 请指定 --date（单日）、"
+                      "--start（日期区间）或 --backfill（历史回填）。")
+                sys.exit(1)
+
+        elif table == "dc_index":
+            if args.date:
+                load_dc_index_date(args.date)
+            elif args.start:
+                load_dc_index_range(args.start, args.end)
+            else:
+                print("[pipeline] dc_index 请指定 --date（单日）或 --start（日期区间）。")
+                sys.exit(1)
+
+        elif table == "dc_member":
+            if args.date:
+                ts_code = codes[0] if len(codes) == 1 else None
+                load_dc_member_date(args.date, ts_code=ts_code)
+            elif args.start:
+                ts_code = codes[0] if len(codes) == 1 else None
+                load_dc_member_range(args.start, args.end, ts_code=ts_code, sleep_sec=args.sleep)
+            else:
+                print("[pipeline] dc_member 请指定 --date（单日）或 --start（日期区间）。")
+                sys.exit(1)
+
+        elif table == "dc_daily":
+            if args.date:
+                load_dc_daily_date(args.date)
+            elif getattr(args, "backfill", False) or codes:
+                load_dc_daily_backfill(
+                    codes=codes or None,
+                    start_date=args.start,
+                    end_date=args.end,
+                    sleep_sec=args.sleep,
+                )
+            elif args.start:
+                load_dc_daily_range(args.start, args.end)
+            else:
+                print("[pipeline] dc_daily 请指定 --date（单日）、"
                       "--start（日期区间）或 --backfill（历史回填）。")
                 sys.exit(1)
 

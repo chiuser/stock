@@ -99,6 +99,15 @@ stages:
       - name: moneyflow_mkt_dc
         cmd: ["--table", "moneyflow_mkt_dc", "--start", "{date_start}", "--end", "{today}"]
 
+      - name: dc_index
+        cmd: ["--table", "dc_index", "--start", "{date_start}", "--end", "{today}"]
+
+      - name: dc_member
+        cmd: ["--table", "dc_member", "--date", "{today}"]
+
+      - name: dc_daily
+        cmd: ["--table", "dc_daily", "--start", "{date_start}", "--end", "{today}"]
+
 
   # ----------------------------------------------------------
   # 阶段 3：周线行情（仅周五执行）
