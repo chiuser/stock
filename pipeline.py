@@ -24,6 +24,12 @@ python pipeline.py --table index_basic
 # 更新所有表（stock_basic + index_basic + 全部指数日线，不含个股——个股数量太大需分批）
 python pipeline.py --table all --start 20240101
 
+# 更新个股周线（所有股票）
+python pipeline.py --table stock_weekly --start 20200101
+
+# 同时更新周线和月线，只拉指定股票
+python pipeline.py --table stock_weekly stock_monthly --code 000001.SZ 600519.SH
+
 环境变量
 --------
 DB_HOST      远程服务器 IP / 域名
@@ -52,9 +58,14 @@ from load import (
     load_stock_daily,
     load_stock_daily_basic,
     load_stock_daily_basic_date_range,
+    load_stk_weekly_monthly,
 )
 
-TABLES = ["stock_basic", "index_basic", "index_daily", "stock_daily", "stock_daily_basic"]
+TABLES = [
+    "stock_basic", "index_basic", "index_daily",
+    "stock_daily", "stock_daily_basic",
+    "stock_weekly", "stock_monthly",
+]
 
 
 def main():
@@ -135,6 +146,16 @@ def main():
                 print("[pipeline] stock_daily_basic 请指定 --start（全市场区间）"
                       "、--date（全市场单日）或 --code + --start/--end（单股区间）。")
                 sys.exit(1)
+
+        elif table in ("stock_weekly", "stock_monthly"):
+            freq = "week" if table == "stock_weekly" else "month"
+            load_stk_weekly_monthly(
+                freq=freq,
+                ts_codes=codes or None,
+                start_date=args.start,
+                end_date=args.end,
+                sleep_sec=args.sleep,
+            )
 
     print(f"\n{'='*60}")
     print("  所有任务完成。")

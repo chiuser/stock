@@ -252,7 +252,60 @@ CREATE INDEX IF NOT EXISTS idx_stock_news_datetime ON stock_news (datetime);
 
 
 -- -------------------------------------------------------------
--- 8. 用户账号
+-- 8. 个股周线行情
+--    来源: pro.stk_weekly_monthly(freq='week')
+--    字段: ts_code, trade_date, end_date, open, high, low, close,
+--          pre_close, change, pct_chg, vol, amount
+--    建议更新频率: 每周收盘后（周五）
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS stock_weekly (
+    ts_code    VARCHAR(12)  NOT NULL,            -- 股票代码
+    trade_date DATE         NOT NULL,            -- 本周最后一个交易日
+    end_date   DATE,                             -- 计算截至日期
+    open       NUMERIC(12, 4),                   -- 周开盘价（元）
+    high       NUMERIC(12, 4),                   -- 周最高价（元）
+    low        NUMERIC(12, 4),                   -- 周最低价（元）
+    close      NUMERIC(12, 4),                   -- 周收盘价（元）
+    pre_close  NUMERIC(12, 4),                   -- 上周收盘价（元）
+    change     NUMERIC(12, 4),                   -- 周涨跌额（元）
+    pct_chg    NUMERIC(12, 4),                   -- 周涨跌幅（%，未复权）
+    vol        NUMERIC(20, 2),                   -- 周成交量（手）
+    amount     NUMERIC(20, 4),                   -- 周成交额（千元）
+    PRIMARY KEY (ts_code, trade_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_weekly_date
+    ON stock_weekly (trade_date);
+
+
+-- -------------------------------------------------------------
+-- 9. 个股月线行情
+--    来源: pro.stk_weekly_monthly(freq='month')
+--    字段同上
+--    建议更新频率: 每月收盘后
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS stock_monthly (
+    ts_code    VARCHAR(12)  NOT NULL,            -- 股票代码
+    trade_date DATE         NOT NULL,            -- 本月最后一个交易日
+    end_date   DATE,                             -- 计算截至日期
+    open       NUMERIC(12, 4),                   -- 月开盘价（元）
+    high       NUMERIC(12, 4),                   -- 月最高价（元）
+    low        NUMERIC(12, 4),                   -- 月最低价（元）
+    close      NUMERIC(12, 4),                   -- 月收盘价（元）
+    pre_close  NUMERIC(12, 4),                   -- 上月收盘价（元）
+    change     NUMERIC(12, 4),                   -- 月涨跌额（元）
+    pct_chg    NUMERIC(12, 4),                   -- 月涨跌幅（%，未复权）
+    vol        NUMERIC(20, 2),                   -- 月成交量（手）
+    amount     NUMERIC(20, 4),                   -- 月成交额（千元）
+    PRIMARY KEY (ts_code, trade_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_monthly_date
+    ON stock_monthly (trade_date);
+
+
+-- -------------------------------------------------------------
+-- 10. 用户账号
 --    无注册功能，由管理员通过 scripts/create_user.py 添加
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS users (
@@ -264,7 +317,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 
 -- -------------------------------------------------------------
--- 9. 用户持仓股
+-- 11. 用户持仓股
 --    每个用户独立维护，关联 stock_basic
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS user_portfolio (
