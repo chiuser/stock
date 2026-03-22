@@ -134,6 +134,7 @@ def fetch_ths_members_all(
         return pd.DataFrame()
 
     result = pd.concat(frames, ignore_index=True)
-    return result.drop_duplicates(
-        subset=["ts_code", "code", "in_date"]
-    ).reset_index(drop=True)
+    dedup_cols = [c for c in ["ts_code", "code", "in_date"] if c in result.columns]
+    if dedup_cols:
+        result = result.drop_duplicates(subset=dedup_cols)
+    return result.reset_index(drop=True)
