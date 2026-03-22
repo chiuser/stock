@@ -156,13 +156,14 @@ def _read_log_tail(log_path: Path, n: int = 30) -> list[str]:
 
 # 需要查询的 (缓存 key, 数据库表名, 日期列名)
 _DATE_QUERIES: list[tuple[str, str, str]] = [
-    ("index_daily",       "index_daily",       "trade_date"),
-    ("stock_daily",       "stock_daily",        "trade_date"),
-    ("stock_daily_basic", "stock_daily_basic",  "trade_date"),
-    ("moneyflow_dc",      "moneyflow_dc",       "trade_date"),
-    ("stock_weekly",      "stock_weekly",       "trade_date"),
-    ("stock_monthly",     "stock_monthly",      "trade_date"),
-    ("broker_recommend",  "broker_recommend",   "month"),
+    ("index_daily",        "index_daily",        "trade_date"),
+    ("stock_daily",        "stock_daily",         "trade_date"),
+    ("stock_daily_basic",  "stock_daily_basic",   "trade_date"),
+    ("moneyflow_dc",       "moneyflow_dc",        "trade_date"),
+    ("stock_weekly",       "stock_weekly",        "trade_date"),
+    ("stock_monthly",      "stock_monthly",       "trade_date"),
+    ("broker_recommend",   "broker_recommend",    "month"),
+    ("sw_industry_daily",  "sw_industry_daily",   "trade_date"),
 ]
 
 # 任务名 → 缓存 key（用于在 stage 内寻找代表性日期）
