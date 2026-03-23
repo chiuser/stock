@@ -300,7 +300,7 @@ stages:
     only_on: [weekday]
     tasks:
       - name: dc_member
-        cmd: ["--table", "dc_member", "--date", "{today}"]
+        cmd: ["--table", "dc_member", "--start", "{date_start}", "--end", "{today}"]
 
 
   # ----------------------------------------------------------
