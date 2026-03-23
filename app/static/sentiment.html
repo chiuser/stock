@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>情绪与资金 - Stock Charts</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="sentiment-body">
+  <nav class="nav-bar">
+    <div class="nav-left">
+      <a class="nav-link" href="/portfolio">持仓股</a>
+      <a class="nav-link nav-active" href="/sentiment">情绪与资金</a>
+      <a class="nav-link" href="/chart">行情</a>
+      <a class="nav-link" href="/admin">数据监控</a>
+    </div>
+    <div class="nav-right">
+      <span class="nav-username" id="nav-username"></span>
+      <button class="nav-logout" id="nav-logout">退出登录</button>
+    </div>
+  </nav>
+
+  <div class="sentiment-container">
+
+    <!-- 核心指数表 -->
+    <section class="sentiment-section">
+      <h3 class="sentiment-section-title">核心指数</h3>
+      <div class="index-table-wrap" id="index-table-wrap">
+        <div class="index-table-loading" id="index-loading">加载中…</div>
+        <table class="index-table" id="index-table" style="display:none">
+          <thead>
+            <tr>
+              <th class="date-cell" rowspan="6" id="index-date-cell"></th>
+              <th>核心指数</th>
+              <th class="num-col">今日收盘</th>
+              <th class="num-col">昨日收盘</th>
+              <th class="num-col">涨跌幅</th>
+              <th class="sep-col"></th>
+              <th>核心指数</th>
+              <th class="num-col">今日收盘</th>
+              <th class="num-col">昨日收盘</th>
+              <th class="num-col">涨跌幅</th>
+            </tr>
+          </thead>
+          <tbody id="index-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+  </div>
+
+  <script src="/static/sentiment.js"></script>
+</body>
+</html>

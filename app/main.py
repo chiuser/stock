@@ -10,6 +10,7 @@ from app.routers import stocks
 from app.routers import auth
 from app.routers import portfolio
 from app.routers import admin
+from app.routers import sentiment
 
 app = FastAPI(title="Stock Charts", docs_url="/api/docs")
 
@@ -17,6 +18,7 @@ app.include_router(stocks.router,    prefix="/api")
 app.include_router(auth.router,      prefix="/api")
 app.include_router(portfolio.router, prefix="/api")
 app.include_router(admin.router,     prefix="/api")
+app.include_router(sentiment.router, prefix="/api")
 
 _static = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=_static), name="static")
@@ -53,3 +55,8 @@ def chart_page():
 @app.get("/admin")
 def admin_page():
     return FileResponse(os.path.join(_static, "admin.html"))
+
+
+@app.get("/sentiment")
+def sentiment_page():
+    return FileResponse(os.path.join(_static, "sentiment.html"))

@@ -1229,3 +1229,104 @@ body.admin-body {
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Sentiment page ──────────────────────────────────────── */
+body.sentiment-body {
+  overflow: auto;
+}
+
+.sentiment-container {
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.sentiment-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #d1d4dc;
+  margin-bottom: 12px;
+  padding-left: 8px;
+  border-left: 3px solid #2962ff;
+}
+
+.index-table-loading {
+  color: #787b86;
+  padding: 20px;
+  font-size: 13px;
+}
+
+.index-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  width: auto;
+}
+
+.index-table th,
+.index-table td {
+  border: 1px solid #2a2e39;
+  padding: 10px 16px;
+  white-space: nowrap;
+}
+
+.index-table thead th {
+  background: #1e222d;
+  color: #787b86;
+  font-weight: 500;
+  text-align: center;
+}
+
+.index-table .date-cell {
+  background: #1a2035;
+  color: #93b4e8;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  vertical-align: middle;
+  min-width: 88px;
+  line-height: 1.8;
+  white-space: pre-line;
+}
+
+.index-table .idx-name {
+  color: #d1d4dc;
+  font-weight: 500;
+  min-width: 80px;
+}
+
+.index-table .num-col {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  min-width: 72px;
+}
+
+.index-table .bold {
+  font-weight: 700;
+  color: #e0e3eb;
+}
+
+.index-table .muted {
+  color: #787b86;
+}
+
+.index-table .pct {
+  font-weight: 700;
+  min-width: 72px;
+}
+
+.index-table .pct.up  { color: #e04040; background: rgba(224,64,64,.08); }
+.index-table .pct.dn  { color: #26a69a; background: rgba(38,166,154,.10); }
+
+/* 中间分隔列 */
+.index-table .sep-col {
+  width: 12px;
+  background: #131722;
+  border-left-color: #3a3f52;
+  border-right-color: #3a3f52;
+  padding: 0;
+}
+
+.index-table tbody tr:hover td:not(.sep-col) {
+  background: #1e2230;
+}
+
