@@ -34,8 +34,6 @@ _COLS = [
     "ts_code", "con_code", "con_name", "weight", "in_date", "out_date",
 ]
 
-_SENTINEL_DATE = "19000101"
-
 
 def _get_pro_api():
     if not TUSHARE_TOKEN:
@@ -55,9 +53,6 @@ def _clean(df: pd.DataFrame) -> pd.DataFrame:
     for col in ("in_date", "out_date"):
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], format="%Y%m%d", errors="coerce")
-    # in_date 作为 PK 列不能为 NULL，用哨兵日期填充
-    if "in_date" in df.columns:
-        df["in_date"] = df["in_date"].fillna(pd.Timestamp(_SENTINEL_DATE))
     # con_code 是 PK 列，接口偶尔返回 null，直接丢弃这类行
     if "con_code" in df.columns:
         before = len(df)
