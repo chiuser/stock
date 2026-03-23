@@ -89,10 +89,11 @@ function timeDiff(start, end) {
 }
 
 function timeRange(start, end) {
-  const fmt = t => t ? t.slice(11, 19) : "—";
+  const fmtDate = t => t ? t.slice(5, 10) : "—";   // MM-DD
+  const fmtTime = t => t ? t.slice(11, 19) : "—";  // HH:MM:SS
   if (!start) return "";
-  if (!end) return `${fmt(start)} →`;
-  return `${fmt(start)} → ${fmt(end)}  (${timeDiff(start, end)})`;
+  if (!end) return `${fmtDate(start)} ${fmtTime(start)} →`;
+  return `${fmtDate(start)} ${fmtTime(start)} → ${fmtTime(end)}  (${timeDiff(start, end)})`;
 }
 
 // ── 日期工具 ──────────────────────────────────────────────────────
