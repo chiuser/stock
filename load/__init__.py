@@ -41,6 +41,8 @@ from .dc_daily             import load_date_range as load_dc_daily_range
 from .dc_daily             import load_backfill as load_dc_daily_backfill
 from .limit_list_ths       import load_date as load_limit_list_ths_date
 from .limit_list_ths       import load_date_range as load_limit_list_ths_range
+from .kpl_list             import load_date as load_kpl_list_date
+from .kpl_list             import load_date_range as load_kpl_list_range
 
 __all__ = [
     "load_stock_basic",
@@ -86,4 +88,6 @@ __all__ = [
     "load_dc_daily_backfill",
     "load_limit_list_ths_date",
     "load_limit_list_ths_range",
+    "load_kpl_list_date",
+    "load_kpl_list_range",
 ]

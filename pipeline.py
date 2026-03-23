@@ -119,6 +119,8 @@ from load import (
     load_dc_daily_backfill,
     load_limit_list_ths_date,
     load_limit_list_ths_range,
+    load_kpl_list_date,
+    load_kpl_list_range,
 )
 
 TABLES = [
@@ -132,10 +134,14 @@ TABLES = [
     "ths_index", "ths_member", "ths_daily",
     "dc_index", "dc_member", "dc_daily",
     "limit_list_ths",
+    "kpl_list",
 ]
 
 # 同花顺涨跌停榜单 limit_type 可选值
 _LIMIT_LIST_TYPES = ["涨停池", "连板池", "冲刺涨停", "炸板池", "跌停池"]
+
+# 开盘啦涨跌停榜单 tag 可选值
+_KPL_TAGS = ["涨停", "炸板", "跌停", "自然涨停", "竞价"]
 
 
 def main():
@@ -176,6 +182,11 @@ def main():
                         metavar="TYPE",
                         help=f"涨跌停榜单类型（可多选），默认全部。"
                              f"可选：{' | '.join(_LIMIT_LIST_TYPES)}")
+    parser.add_argument("--tag", nargs="+", dest="kpl_tag",
+                        choices=_KPL_TAGS,
+                        metavar="TAG",
+                        help=f"开盘啦榜单类型（可多选），默认全部。"
+                             f"可选：{' | '.join(_KPL_TAGS)}")
     args = parser.parse_args()
 
     tables = TABLES if "all" in args.table else args.table
@@ -426,6 +437,19 @@ def main():
             else:
                 print("[pipeline] limit_list_ths 请指定 --date（单日）或 --start（日期区间）。"
                       "\n           可选 --limit-type 指定板单类型，默认拉全部 5 种。")
+                sys.exit(1)
+
+        elif table == "kpl_list":
+            kpl_tags = getattr(args, "kpl_tag", None) or None
+            if args.date:
+                load_kpl_list_date(args.date, tags=kpl_tags)
+            elif args.start:
+                load_kpl_list_range(
+                    args.start, end_date=args.end, tags=kpl_tags
+                )
+            else:
+                print("[pipeline] kpl_list 请指定 --date（单日）或 --start（日期区间）。"
+                      "\n           可选 --tag 指定板单类型，默认拉全部 5 种。")
                 sys.exit(1)
 
     print(f"\n{'='*60}")

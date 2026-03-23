@@ -70,8 +70,17 @@ def upsert_df(df: pd.DataFrame, table: str, conflict_cols: list[str]) -> int:
     )
 
     # 逐值将 NaN/NaT 转为 None，避免 datetime64 列 dtype 把 None 还原成 NaT
+    # list/dict 类型（如 PostgreSQL 数组列）跳过 isnull 检查，直接透传
+    def _coerce(v):
+        if isinstance(v, (list, dict)):
+            return v
+        try:
+            return None if pd.isnull(v) else v
+        except (TypeError, ValueError):
+            return v
+
     rows = [
-        tuple(None if pd.isnull(v) else v for v in row)
+        tuple(_coerce(v) for v in row)
         for row in df.itertuples(index=False, name=None)
     ]
 

@@ -861,3 +861,56 @@ CREATE INDEX IF NOT EXISTS idx_limit_list_ths_date      ON limit_list_ths (trade
 CREATE INDEX IF NOT EXISTS idx_limit_list_ths_ts_code   ON limit_list_ths (ts_code, trade_date);
 -- 按板单类别查询
 CREATE INDEX IF NOT EXISTS idx_limit_list_ths_type_date ON limit_list_ths (limit_type, trade_date);
+
+
+-- -------------------------------------------------------------
+-- 26. 开盘啦涨跌停榜单
+--    来源: pro.kpl_list()
+--    描述: 获取开盘啦涨停、炸板、跌停等榜单数据
+--    tag 可选值: 涨停 / 炸板 / 跌停 / 自然涨停 / 竞价（默认涨停）
+--    限量: 单次最大 8000 条，可按日期区间循环提取
+--    所需积分: 8000
+--    注意: 数据更新时间为次日 8:30，晚间 pipeline 拉取的是昨日及之前数据
+--
+--    主键设计: (ts_code, trade_date, tag)
+--      同一股票同一天可出现在多个榜单（如先涨停后炸板）
+--      同一 tag 视为同一条记录，upsert 覆盖
+--
+--    拉取策略:
+--      涨停/跌停: 按 15 天分批（极端行情 ~500只/天 × 15 = 7500 < 8000）
+--      炸板/自然涨停/竞价: 按 30 天分批（数据量较少）
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS kpl_list (
+    ts_code        VARCHAR(12)   NOT NULL,   -- 股票代码
+    trade_date     DATE          NOT NULL,   -- 交易日期
+    tag            VARCHAR(20)   NOT NULL,   -- 板单类型（涨停/炸板/跌停/自然涨停/竞价）
+    name           VARCHAR(20),              -- 股票名称
+    lu_time        VARCHAR(8),               -- 涨停时间（HH:MM 或 HH:MM:SS）
+    ld_time        VARCHAR(8),               -- 跌停时间
+    open_time      VARCHAR(8),               -- 开板时间
+    last_time      VARCHAR(8),               -- 最后涨幅时间
+    lu_desc        TEXT,                     -- 涨停原因
+    theme          TEXT[],                   -- 板块（数组，支持 GIN 精确过滤）
+    net_change     NUMERIC(20, 4),           -- 主力净额（元）
+    bid_amount     NUMERIC(20, 4),           -- 竞价成交额（元）
+    status         VARCHAR(30),              -- 状态（首板/2连板/N连板）
+    bid_change     NUMERIC(20, 4),           -- 竞价净额
+    bid_turnover   NUMERIC(12, 4),           -- 竞价换手%
+    lu_bid_vol     NUMERIC(20, 4),           -- 涨停委买额
+    pct_chg        NUMERIC(12, 4),           -- 涨跌幅%
+    bid_pct_chg    NUMERIC(12, 4),           -- 竞价涨幅%
+    rt_pct_chg     NUMERIC(12, 4),           -- 实时涨幅%
+    limit_order    NUMERIC(20, 4),           -- 封单
+    amount         NUMERIC(20, 4),           -- 成交额
+    turnover_rate  NUMERIC(12, 4),           -- 换手率%
+    free_float     NUMERIC(20, 4),           -- 实际流通
+    lu_limit_order NUMERIC(20, 4),           -- 最大封单
+    updated_at     TIMESTAMP     NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (ts_code, trade_date, tag)
+);
+-- 按日期查当日全部榜单（最常用）
+CREATE INDEX IF NOT EXISTS idx_kpl_list_date     ON kpl_list (trade_date);
+-- 按日期+类型过滤
+CREATE INDEX IF NOT EXISTS idx_kpl_list_date_tag ON kpl_list (trade_date, tag);
+-- 按板块精确过滤（GIN，支持 '某板块' = ANY(theme)）
+CREATE INDEX IF NOT EXISTS idx_kpl_list_theme    ON kpl_list USING GIN (theme);
