@@ -662,28 +662,28 @@ CREATE INDEX IF NOT EXISTS idx_ths_index_type ON ths_index(type);
 --    描述: 同花顺行业/概念板块的成分股列表
 --    建议更新频率: 月度（每月初更新）
 --
---    主键设计：(ts_code, code, in_date)
+--    主键设计：(ts_code, con_code, in_date)
 --      同一股票历史上可多次进出同一板块
 --      in_date NULL 时填充哨兵日期 1900-01-01
 --
 --    关联关系：
---      ts_code → ths_index.ts_code（板块）
---      code    → stock_basic.ts_code（成分股）
+--      ts_code  → ths_index.ts_code（板块）
+--      con_code → stock_basic.ts_code（成分股）
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS ths_member (
     ts_code    VARCHAR(16)  NOT NULL,          -- 板块代码，如 885650.TI
-    code       VARCHAR(12)  NOT NULL,          -- 成分股代码，如 000001.SZ
-    name       VARCHAR(20),                    -- 成分股名称
+    con_code   VARCHAR(12)  NOT NULL,          -- 成分股代码，如 000001.SZ
+    con_name   VARCHAR(20),                    -- 成分股名称
     weight     NUMERIC(10, 4),                 -- 权重（%）
     in_date    DATE         NOT NULL,          -- 纳入日期（NULL 填充 1900-01-01）
-    out_date   DATE,                           -- 移出日期（NULL = 仍在成分中）
+    out_date   DATE,                           -- 剔除日期（NULL = 仍在成分中）
     updated_at TIMESTAMP    NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (ts_code, code, in_date)
+    PRIMARY KEY (ts_code, con_code, in_date)
 );
 -- 按股票查其所属板块（最常用）
-CREATE INDEX IF NOT EXISTS idx_ths_member_code    ON ths_member(code);
+CREATE INDEX IF NOT EXISTS idx_ths_member_con_code ON ths_member(con_code);
 -- 按板块查其成分股
-CREATE INDEX IF NOT EXISTS idx_ths_member_ts_code ON ths_member(ts_code);
+CREATE INDEX IF NOT EXISTS idx_ths_member_ts_code  ON ths_member(ts_code);
 
 
 -- -------------------------------------------------------------

@@ -13,7 +13,7 @@
 
 注意：
     - 需先运行 ths_index 入库（本模块从 ths_index 读取板块代码）
-    - upsert 主键 (ts_code, code, in_date)，安全可重跑
+    - upsert 主键 (ts_code, con_code, in_date)，安全可重跑
     - 约需较长时间（板块数量 × API 调用）
 """
 
@@ -29,10 +29,10 @@ from load.ths_index import get_ths_codes
 from db import upsert_df
 
 TABLE = "ths_member"
-CONFLICT_COLS = ["ts_code", "code", "in_date"]
+CONFLICT_COLS = ["ts_code", "con_code", "in_date"]
 
 KEEP_COLS = [
-    "ts_code", "code", "name", "weight", "in_date", "out_date",
+    "ts_code", "con_code", "con_name", "weight", "in_date", "out_date",
 ]
 
 

@@ -30,14 +30,8 @@ from config import TUSHARE_TOKEN
 
 _PAGE_SIZE = 900   # 保守低于接口上限 1000
 
-# API 返回 con_code / con_name，入库改为 code / name
-_RENAME = {
-    "con_code": "code",
-    "con_name": "name",
-}
-
 _COLS = [
-    "ts_code", "code", "name", "weight", "in_date", "out_date",
+    "ts_code", "con_code", "con_name", "weight", "in_date", "out_date",
 ]
 
 _SENTINEL_DATE = "19000101"
@@ -56,8 +50,6 @@ def _get_pro_api():
 def _clean(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
-    # API 返回 con_code/con_name，重命名为入库字段名
-    df = df.rename(columns=_RENAME)
     cols = [c for c in _COLS if c in df.columns]
     df = df[cols].copy()
     for col in ("in_date", "out_date"):
@@ -66,13 +58,13 @@ def _clean(df: pd.DataFrame) -> pd.DataFrame:
     # in_date 作为 PK 列不能为 NULL，用哨兵日期填充
     if "in_date" in df.columns:
         df["in_date"] = df["in_date"].fillna(pd.Timestamp(_SENTINEL_DATE))
-    # code 是 PK 列，接口偶尔返回 null，直接丢弃这类行
-    if "code" in df.columns:
+    # con_code 是 PK 列，接口偶尔返回 null，直接丢弃这类行
+    if "con_code" in df.columns:
         before = len(df)
-        df = df.dropna(subset=["code"])
+        df = df.dropna(subset=["con_code"])
         dropped = before - len(df)
         if dropped:
-            print(f"[ths_member] 丢弃 {dropped} 行 code=null 的数据")
+            print(f"[ths_member] 丢弃 {dropped} 行 con_code=null 的数据")
     return df
 
 
@@ -150,7 +142,7 @@ def fetch_ths_members_all(
         return pd.DataFrame()
 
     result = pd.concat(frames, ignore_index=True)
-    dedup_cols = [c for c in ["ts_code", "code", "in_date"] if c in result.columns]
+    dedup_cols = [c for c in ["ts_code", "con_code", "in_date"] if c in result.columns]
     if dedup_cols:
         result = result.drop_duplicates(subset=dedup_cols)
     return result.reset_index(drop=True)
