@@ -343,6 +343,24 @@ function openTriggerModal(stage) {
     noneNote.classList.remove("hidden");
   }
 
+  // 涨跌停类型复选框
+  const limitTypeSection = document.getElementById("trigger-limit-type-section");
+  const limitTypesContainer = document.getElementById("trigger-limit-types");
+  const limitTypeOptions = stage.limit_type_options || [];
+
+  if (limitTypeOptions.length > 0) {
+    limitTypesContainer.innerHTML = limitTypeOptions.map(t =>
+      `<label class="trigger-limit-type-label">
+        <input type="checkbox" class="trigger-limit-type-cb" value="${t}" checked>
+        <span>${t}</span>
+      </label>`
+    ).join("");
+    limitTypeSection.classList.remove("hidden");
+  } else {
+    limitTypesContainer.innerHTML = "";
+    limitTypeSection.classList.add("hidden");
+  }
+
   // 重置确认按钮状态
   const confirmBtn = document.getElementById("trigger-modal-confirm");
   confirmBtn.disabled = false;
@@ -370,6 +388,17 @@ async function confirmTrigger() {
   } else if (dateType === "month") {
     const month = document.getElementById("trigger-month").value; // YYYY-MM
     if (month) payload.start_date = month.replace("-", "") + "01";
+  }
+
+  // 涨跌停类型
+  const limitTypeCbs = document.querySelectorAll(".trigger-limit-type-cb");
+  if (limitTypeCbs.length > 0) {
+    const selected = Array.from(limitTypeCbs).filter(cb => cb.checked).map(cb => cb.value);
+    if (selected.length === 0) {
+      showToast("请至少选择一种板单类型", "error");
+      return;
+    }
+    payload.limit_types = selected;
   }
 
   const btn = document.getElementById("trigger-modal-confirm");

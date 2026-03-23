@@ -117,6 +117,8 @@ from load import (
     load_dc_daily_date,
     load_dc_daily_range,
     load_dc_daily_backfill,
+    load_limit_list_ths_date,
+    load_limit_list_ths_range,
 )
 
 TABLES = [
@@ -129,7 +131,11 @@ TABLES = [
     "ci_industry_member", "ci_industry_daily",
     "ths_index", "ths_member", "ths_daily",
     "dc_index", "dc_member", "dc_daily",
+    "limit_list_ths",
 ]
+
+# 同花顺涨跌停榜单 limit_type 可选值
+_LIMIT_LIST_TYPES = ["涨停池", "连板池", "冲刺涨停", "炸板池", "跌停池"]
 
 
 def main():
@@ -165,6 +171,11 @@ def main():
     parser.add_argument("--ths-type", nargs="+",
                         choices=["N", "I", "S", "W", "B"],
                         help="同花顺板块类型 N=行业 I=概念 S=特色 W=其他 B=大盘（默认全部）")
+    parser.add_argument("--limit-type", nargs="+", dest="limit_type",
+                        choices=_LIMIT_LIST_TYPES,
+                        metavar="TYPE",
+                        help=f"涨跌停榜单类型（可多选），默认全部。"
+                             f"可选：{' | '.join(_LIMIT_LIST_TYPES)}")
     args = parser.parse_args()
 
     tables = TABLES if "all" in args.table else args.table
@@ -402,6 +413,19 @@ def main():
             else:
                 print("[pipeline] dc_daily 请指定 --date（单日）、"
                       "--start（日期区间）或 --backfill（历史回填）。")
+                sys.exit(1)
+
+        elif table == "limit_list_ths":
+            limit_types = getattr(args, "limit_type", None) or None
+            if args.date:
+                load_limit_list_ths_date(args.date, limit_types=limit_types)
+            elif args.start:
+                load_limit_list_ths_range(
+                    args.start, end_date=args.end, limit_types=limit_types
+                )
+            else:
+                print("[pipeline] limit_list_ths 请指定 --date（单日）或 --start（日期区间）。"
+                      "\n           可选 --limit-type 指定板单类型，默认拉全部 5 种。")
                 sys.exit(1)
 
     print(f"\n{'='*60}")

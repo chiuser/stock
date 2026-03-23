@@ -818,3 +818,48 @@ CREATE TABLE IF NOT EXISTS dc_daily (
 CREATE INDEX IF NOT EXISTS idx_dc_daily_date    ON dc_daily (trade_date);
 -- 按代码查板块历史K线
 CREATE INDEX IF NOT EXISTS idx_dc_daily_ts_code ON dc_daily (ts_code, trade_date);
+
+
+-- -------------------------------------------------------------
+-- 23. 同花顺涨跌停榜单（limit_list_ths）
+--     来源: pro.limit_list_ths()
+--     描述: 获取同花顺每日涨跌停榜单数据，历史数据从20231101开始提供
+--     限量: 单次最大 4000 条，limit_type 一次只能传一个值
+--     所需积分: 8000
+--     建议更新频率: 每个交易日收盘后，依次拉取 5 种类型
+--     limit_type 取值: 涨停池 | 连板池 | 冲刺涨停 | 炸板池 | 跌停池
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS limit_list_ths (
+    trade_date         DATE         NOT NULL,        -- 交易日期
+    ts_code            VARCHAR(12)  NOT NULL,        -- 股票代码
+    limit_type         VARCHAR(10)  NOT NULL,        -- 板单类别（主键一部分）
+    name               VARCHAR(20),                  -- 股票名称
+    price              NUMERIC(12, 4),               -- 收盘价（元）
+    pct_chg            NUMERIC(10, 4),               -- 涨跌幅%
+    open_num           INTEGER,                      -- 打开次数
+    lu_desc            TEXT,                         -- 涨停原因
+    tag                VARCHAR(100),                 -- 涨停标签
+    status             VARCHAR(30),                  -- 涨停状态（N连板、一字板等）
+    first_lu_time      VARCHAR(8),                   -- 首次涨停时间（HH:MM:SS）
+    last_lu_time       VARCHAR(8),                   -- 最后涨停时间
+    first_ld_time      VARCHAR(8),                   -- 首次跌停时间
+    last_ld_time       VARCHAR(8),                   -- 最后跌停时间
+    limit_order        NUMERIC(20, 2),               -- 封单量（元）
+    limit_amount       NUMERIC(20, 2),               -- 封单额（元）
+    turnover_rate      NUMERIC(10, 4),               -- 换手率%
+    free_float         NUMERIC(20, 2),               -- 实际流通（元）
+    lu_limit_order     NUMERIC(20, 2),               -- 最大封单（元）
+    limit_up_suc_rate  NUMERIC(10, 4),               -- 近一年涨停封板率
+    turnover           NUMERIC(20, 2),               -- 成交额
+    rise_rate          NUMERIC(10, 4),               -- 涨速
+    sum_float          NUMERIC(16, 4),               -- 总市值（亿元）
+    market_type        VARCHAR(20),                  -- 股票类型（HS沪深主板/GEM创业板/STAR科创板）
+    updated_at         TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (trade_date, ts_code, limit_type)
+);
+-- 按日期查当日全部涨跌停榜单
+CREATE INDEX IF NOT EXISTS idx_limit_list_ths_date      ON limit_list_ths (trade_date);
+-- 按股票代码查历史涨跌停记录
+CREATE INDEX IF NOT EXISTS idx_limit_list_ths_ts_code   ON limit_list_ths (ts_code, trade_date);
+-- 按板单类别查询
+CREATE INDEX IF NOT EXISTS idx_limit_list_ths_type_date ON limit_list_ths (limit_type, trade_date);

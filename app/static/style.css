@@ -1115,6 +1115,35 @@ body.admin-body {
 }
 .trigger-none-note.hidden { display: none; }
 
+.trigger-limit-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.trigger-limit-type-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #9598a1;
+  background: #242835;
+  border: 1px solid #2a2e39;
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s, color 0.15s;
+}
+.trigger-limit-type-label:hover {
+  border-color: #3a7bd5;
+  color: #d1d4dc;
+}
+.trigger-limit-type-label input[type="checkbox"] {
+  accent-color: #3a7bd5;
+  cursor: pointer;
+}
+
 .trigger-modal-footer {
   padding: 14px 18px;
   border-top: 1px solid #2a2e39;

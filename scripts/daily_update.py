@@ -183,6 +183,7 @@ def _run_stage(
     placeholders: dict[str, str],
     dry_run: bool,
     logger: logging.Logger,
+    extra_args: Optional[list[str]] = None,
 ) -> tuple[int, int]:
     """
     并行执行一个 stage 内的所有 tasks。
@@ -201,7 +202,7 @@ def _run_stage(
             executor.submit(
                 _run_task,
                 task["name"],
-                _sub(task["cmd"], placeholders),
+                _sub(task["cmd"], placeholders) + (extra_args or []),
                 project_root,
                 python_exe,
                 log_dir,
@@ -287,6 +288,11 @@ def main() -> None:
     parser.add_argument(
         "--end", metavar="YYYYMMDD",
         help="覆盖结束日期（替换 {today}），用于补拉历史数据",
+    )
+    parser.add_argument(
+        "--limit-type", nargs="+", dest="limit_type",
+        metavar="TYPE",
+        help="涨跌停榜单类型（可多选），透传给 pipeline.py --limit-type",
     )
     args = parser.parse_args()
 
@@ -394,8 +400,13 @@ def main() -> None:
         task_names = [t["name"] for t in stage.get("tasks", [])]
         logger.info("[%s] 并行执行 %d 个任务: %s", name, len(task_names), ", ".join(task_names))
 
+        # 构建透传给 pipeline.py 的额外参数（如 --limit-type）
+        extra_args: list[str] = []
+        if getattr(args, "limit_type", None):
+            extra_args += ["--limit-type"] + args.limit_type
+
         t0 = datetime.datetime.now()
-        ok, fail = _run_stage(stage, project_root, python_exe, log_dir, placeholders, args.dry_run, logger)
+        ok, fail = _run_stage(stage, project_root, python_exe, log_dir, placeholders, args.dry_run, logger, extra_args)
         elapsed = (datetime.datetime.now() - t0).seconds
 
         total_ok += ok

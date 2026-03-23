@@ -166,6 +166,7 @@ _DATE_QUERIES: list[tuple[str, str, str]] = [
     ("sw_industry_daily",  "sw_industry_daily",   "trade_date"),
     ("ci_industry_daily",  "ci_industry_daily",   "trade_date"),
     ("ths_daily",          "ths_daily",           "trade_date"),
+    ("limit_list_ths",     "limit_list_ths",      "trade_date"),
 ]
 
 # 任务名 → 缓存 key（用于在 stage 内寻找代表性日期）
@@ -329,8 +330,9 @@ class SaveConfigRequest(BaseModel):
 
 class TriggerRequest(BaseModel):
     stage: str
-    start_date: Optional[str] = None   # YYYYMMDD，覆盖起始日期占位符
-    end_date:   Optional[str] = None   # YYYYMMDD，覆盖结束日期占位符
+    start_date:  Optional[str]       = None   # YYYYMMDD，覆盖起始日期占位符
+    end_date:    Optional[str]       = None   # YYYYMMDD，覆盖结束日期占位符
+    limit_types: Optional[list[str]] = None   # 涨跌停榜单类型列表，None 表示全部
 
 
 class StopRequest(BaseModel):
@@ -423,6 +425,7 @@ def get_status(user: dict = Depends(_get_current_user)):
             "date_type": _stage_date_type(stage),
             "latest_date": _stage_latest_date(stage, latest_dates),
             "is_manual_running": is_manual_running,
+            "limit_type_options": stage.get("limit_type_options") or [],
             "tasks": tasks_status,
         })
 
@@ -551,6 +554,8 @@ def trigger_stage(body: TriggerRequest, user: dict = Depends(_get_current_user))
         run_cmd += ["--start", body.start_date]
     if body.end_date:
         run_cmd += ["--end", body.end_date]
+    if body.limit_types:
+        run_cmd += ["--limit-type"] + body.limit_types
 
     try:
         proc = subprocess.Popen(
