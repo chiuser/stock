@@ -48,15 +48,20 @@ def search_stocks(q: str = Query("", max_length=50)):
         return []
 
     # 指数：从内存缓存过滤（支持代码、名称、拼音首字母缩写）
+    # 优先级：① 代码前缀 ② 名称精确 ③ 名称前缀 ④ 名称包含/拼音前缀
     ql = q.lower()
     cache = _get_index_cache()
-    code_matches, other_matches = [], []
+    code_matches, exact_matches, prefix_matches, other_matches = [], [], [], []
     for ts_code, name, market, pinyin in cache:
         if ts_code.lower().startswith(ql):
             code_matches.append((ts_code, name, market))
-        elif name.startswith(q) or ql in name.lower() or pinyin.startswith(ql):
+        elif name == q:
+            exact_matches.append((ts_code, name, market))
+        elif name.startswith(q):
+            prefix_matches.append((ts_code, name, market))
+        elif ql in name.lower() or pinyin.startswith(ql):
             other_matches.append((ts_code, name, market))
-    index_rows = (code_matches + other_matches)[:10]
+    index_rows = (code_matches + exact_matches + prefix_matches + other_matches)[:15]
 
     # 个股：数据库查询（支持拼音缩写列 cnspell）
     with get_conn() as conn:
