@@ -14,6 +14,11 @@ function authHeaders() {
   return { 'Authorization': `Bearer ${getToken()}` };
 }
 
+async function parseApiError(res, fallback) {
+  const body = await res.json().catch(() => ({}));
+  return body.detail || fallback;
+}
+
 // ── 初始化导航栏 ──────────────────────────────────────────
 function initNav() {
   const el = document.getElementById('nav-username');
@@ -124,6 +129,10 @@ async function removeStock(tsCode) {
     headers: authHeaders(),
   });
   if (res.status === 401) { logout(); return; }
+  if (!res.ok) {
+    alert(await parseApiError(res, '删除失败，请稍后重试'));
+    return;
+  }
   await loadPortfolio();
 }
 
@@ -135,6 +144,10 @@ async function addStock(tsCode) {
     body:    JSON.stringify({ ts_code: tsCode }),
   });
   if (res.status === 401) { logout(); return; }
+  if (!res.ok) {
+    alert(await parseApiError(res, '添加失败，请稍后重试'));
+    return;
+  }
   closeModal();
   await loadPortfolio();
 }
@@ -197,7 +210,14 @@ function renderModalSugs(results) {
       ? `<span class="sug-badge sug-badge-index">指数</span>`
       : '';
     item.innerHTML = `${badge}<span class="sug-code">${r.ts_code}</span><span class="sug-name">${r.name}</span>`;
-    item.addEventListener('click', () => addStock(r.ts_code));
+    item.addEventListener('click', () => {
+      // 和后端限制保持一致：指数允许搜索，但不允许加入持仓。
+      if (r.type === 'index') {
+        alert('当前持仓列表仅支持个股，指数请直接在行情页查看。');
+        return;
+      }
+      addStock(r.ts_code);
+    });
     modalSugs.appendChild(item);
   });
   modalSugs.classList.add('open');

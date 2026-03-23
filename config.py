@@ -1,8 +1,8 @@
 import os
 
 # Tushare API token
-# 可以通过环境变量 TUSHARE_TOKEN 设置，或直接在此处填写
-TUSHARE_TOKEN = os.environ.get("TUSHARE_TOKEN", "b80f8622aa63023a0fb62059844f341debcc346babb9ed4b896ce203")
+# 请通过环境变量 TUSHARE_TOKEN 提供，避免把真实 token 写入仓库
+TUSHARE_TOKEN = os.environ.get("TUSHARE_TOKEN", "")
 
 # PostgreSQL 远程数据库连接配置
 # 建议通过环境变量设置，避免明文密码提交到代码仓库

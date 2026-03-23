@@ -1,5 +1,6 @@
 // ── 认证工具（与其他页面一致）─────────────────────────────────
 function getToken() { return localStorage.getItem('token'); }
+function getUsername() { return localStorage.getItem('username'); }
 
 function apiFetch(url, opts = {}) {
   const token = getToken();
@@ -11,14 +12,11 @@ function apiFetch(url, opts = {}) {
 
 // ── 导航栏用户名 + 退出 ────────────────────────────────────────
 function initNav() {
-  const payload = getToken()
-    ? JSON.parse(atob(getToken().split('.')[1]))
-    : null;
-  if (payload) {
-    document.getElementById('nav-username').textContent = payload.sub || '';
-  }
+  // 这里直接使用登录时缓存的用户名，避免把 JWT 的 sub(user_id) 当成展示名。
+  document.getElementById('nav-username').textContent = getUsername() || '';
   document.getElementById('nav-logout').addEventListener('click', () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('username');
     location.href = '/login';
   });
 }

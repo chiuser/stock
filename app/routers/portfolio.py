@@ -3,18 +3,12 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 from db import get_conn
-from app.routers.auth import decode_token
+from app.routers.auth import get_current_user
 
 router = APIRouter()
-_bearer = HTTPBearer()
-
-
-def get_current_user(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> dict:
-    return decode_token(creds.credentials)
 
 
 # ── Schema ─────────────────────────────────────────────────
@@ -111,10 +105,18 @@ def add_stock(body: AddStockRequest, user: dict = Depends(get_current_user)):
 
     with get_conn() as conn:
         with conn.cursor() as cur:
-            # 验证股票存在
+            # 持仓列表当前仅支持个股，不接收指数代码
             cur.execute("SELECT name FROM stock_basic WHERE ts_code = %s", (ts_code,))
             row = cur.fetchone()
             if not row:
+                cur.execute("SELECT name FROM index_basic WHERE ts_code = %s", (ts_code,))
+                index_row = cur.fetchone()
+                if index_row:
+                    # 搜索接口会同时返回指数和个股，这里明确给出业务限制，避免前端表现成“点击无反应”。
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"{ts_code} 是指数代码，当前持仓列表仅支持个股",
+                    )
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"股票代码 {ts_code} 不存在",

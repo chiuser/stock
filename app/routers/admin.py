@@ -17,26 +17,17 @@ from typing import Optional
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from app.routers.auth import decode_token
+from app.routers.auth import require_admin
 
 router = APIRouter()
-_bearer = HTTPBearer()
 
 # 配置文件和调度脚本路径（相对于项目根目录）
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
 _CONFIG_FILE  = _PROJECT_ROOT / "scripts" / "update_config.yaml"
 _SCHEDULER    = _PROJECT_ROOT / "scripts" / "daily_update.py"
-
-
-def _get_current_user(
-    creds: HTTPAuthorizationCredentials = Depends(_bearer),
-) -> dict:
-    return decode_token(creds.credentials)
-
 
 # ------------------------------------------------------------------ #
 # 工具函数
@@ -362,7 +353,7 @@ def _stage_date_type(stage: dict) -> str:
 # ------------------------------------------------------------------ #
 
 @router.get("/admin/status")
-def get_status(user: dict = Depends(_get_current_user)):
+def get_status(user: dict = Depends(require_admin)):
     """返回今日各阶段任务的执行状态。"""
     config = _load_config()
     log_dir = _get_log_dir(config)
@@ -442,7 +433,7 @@ def get_status(user: dict = Depends(_get_current_user)):
 # ------------------------------------------------------------------ #
 
 @router.get("/admin/config")
-def get_config(user: dict = Depends(_get_current_user)):
+def get_config(user: dict = Depends(require_admin)):
     """返回当前配置文件内容。"""
     config = _load_config()
     g = config.get("global", {})
@@ -471,8 +462,9 @@ def get_config(user: dict = Depends(_get_current_user)):
 # ------------------------------------------------------------------ #
 
 @router.put("/admin/config")
-def save_config(body: SaveConfigRequest, user: dict = Depends(_get_current_user)):
+def save_config(body: SaveConfigRequest, user: dict = Depends(require_admin)):
     """更新配置文件（只更新 global 设置 及各阶段 cron/enabled）。"""
+    # 配置文件会影响调度脚本如何启动，因此只允许管理员修改。
     config = _load_config()
 
     # 更新 global
@@ -509,8 +501,9 @@ def save_config(body: SaveConfigRequest, user: dict = Depends(_get_current_user)
 # ------------------------------------------------------------------ #
 
 @router.post("/admin/run")
-def trigger_stage(body: TriggerRequest, user: dict = Depends(_get_current_user)):
+def trigger_stage(body: TriggerRequest, user: dict = Depends(require_admin)):
     """在后台触发指定阶段的更新任务。"""
+    # 手动触发会直接在服务端启动子进程，权限必须和普通用户隔离。
     config = _load_config()
     g = config.get("global", {})
     python_exe = g.get("python", "python3")
@@ -586,7 +579,7 @@ def trigger_stage(body: TriggerRequest, user: dict = Depends(_get_current_user))
 # ------------------------------------------------------------------ #
 
 @router.post("/admin/stop")
-def stop_stage(body: StopRequest, user: dict = Depends(_get_current_user)):
+def stop_stage(body: StopRequest, user: dict = Depends(require_admin)):
     """终止指定阶段的手动触发进程（发送 SIGTERM 给整个进程组）。"""
     proc = _running_procs.get(body.stage)
     if not proc or proc.poll() is not None:
@@ -618,7 +611,7 @@ def stop_stage(body: StopRequest, user: dict = Depends(_get_current_user)):
 # ------------------------------------------------------------------ #
 
 @router.get("/admin/trigger-log/{stage_name}")
-def get_trigger_log(stage_name: str, user: dict = Depends(_get_current_user)):
+def get_trigger_log(stage_name: str, user: dict = Depends(require_admin)):
     """返回今日最新手动触发日志（trigger_*.log）的最后 80 行。"""
     if not re.match(r"^[\w\s\u4e00-\u9fff\-]+$", stage_name):
         raise HTTPException(status_code=400, detail="非法阶段名")
@@ -642,7 +635,7 @@ def get_trigger_log(stage_name: str, user: dict = Depends(_get_current_user)):
 # ------------------------------------------------------------------ #
 
 @router.get("/admin/log/{task_name}")
-def get_task_log(task_name: str, user: dict = Depends(_get_current_user)):
+def get_task_log(task_name: str, user: dict = Depends(require_admin)):
     """返回指定任务今日日志的最后 50 行。"""
     config = _load_config()
     log_dir = _get_log_dir(config)
