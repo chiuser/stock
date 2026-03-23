@@ -1,0 +1,41 @@
+global:
+  # 本地开发机项目路径
+  project_root: /Users/congming/github/stock
+
+  # 本地虚拟环境 Python 路径
+  python: /Users/congming/github/stock/.venv/bin/python
+
+  # 本地日志目录
+  log_dir: logs/daily_update
+
+  # 本地环境变量文件；本地调试 web/脚本 时通过这份文件连接远程数据库。
+  env_file: /Users/congming/github/stock/.env.local
+
+stages:
+  - name: 基础列表
+    cron: "0 19 * * 1-5"
+    enabled: true
+    only_on: [weekday]
+    tasks:
+      - name: stock_basic
+        cmd: ["--table", "stock_basic"]
+      - name: index_basic
+        cmd: ["--table", "index_basic"]
+
+  - name: 日线行情
+    cron: "10 19 * * 1-5"
+    enabled: true
+    only_on: [weekday]
+    tasks:
+      - name: index_daily
+        cmd: ["--table", "index_daily", "--start", "{date_start}", "--end", "{today}"]
+      - name: stock_daily_basic
+        cmd: ["--table", "stock_daily_basic", "--date", "{today}"]
+      - name: stock_daily
+        cmd: ["--table", "stock_daily", "--start", "{date_start}", "--end", "{today}"]
+      - name: moneyflow_dc
+        cmd: ["--table", "moneyflow_dc", "--start", "{date_start}", "--end", "{today}"]
+      - name: moneyflow_ind_dc
+        cmd: ["--table", "moneyflow_ind_dc", "--start", "{date_start}", "--end", "{today}"]
+      - name: moneyflow_mkt_dc
+        cmd: ["--table", "moneyflow_mkt_dc", "--start", "{date_start}", "--end", "{today}"]

@@ -426,8 +426,13 @@ CREATE TABLE IF NOT EXISTS users (
     id            SERIAL       PRIMARY KEY,
     username      VARCHAR(32)  NOT NULL UNIQUE,
     password_hash VARCHAR(128) NOT NULL,
+    is_admin      BOOLEAN      NOT NULL DEFAULT FALSE,
     created_at    TIMESTAMP    NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE users
+    -- 兼容老库升级：已有 users 表时补齐管理员标记字段。
+    ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE;
 
 
 -- -------------------------------------------------------------
