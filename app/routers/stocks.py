@@ -119,19 +119,85 @@ def get_stock_info(ts_code: str):
     }
 
 
+def _sf(v):
+    """安全转 float，None/NaN 返回 None。"""
+    try:
+        f = float(v)
+        return None if pd.isna(f) else f
+    except (TypeError, ValueError):
+        return None
+
+
 @router.get("/stock/{ts_code}/daily")
 def get_stock_daily(
     ts_code: str,
     start:   Optional[str] = None,
     end:     Optional[str] = None,
     adj:     str = "qfq",
+    freq:    str = "daily",   # daily | weekly | monthly
 ):
     """
-    获取个股日线数据（K线 + 均线 + 成交量）。
+    获取个股 K 线数据（K线 + 均线 + 成交量）。
 
-    adj: qfq=前复权  hfq=后复权  空=不复权
-    start/end: YYYYMMDD
+    freq: daily=日线  weekly=周线  monthly=月线
+    adj:  qfq=前复权  hfq=后复权  空=不复权（周线/月线无复权，忽略此参数）
+    start/end: YYYYMMDD（仅日线有效）
     """
+    # ── 周线 / 月线 分支 ──────────────────────────────────────
+    if freq in ("weekly", "monthly"):
+        table = "stock_weekly" if freq == "weekly" else "stock_monthly"
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT trade_date, open, high, low, close, vol, pct_chg, amount "
+                    f"FROM {table} WHERE ts_code = %s ORDER BY trade_date ASC",
+                    (ts_code,),
+                )
+                rows = cur.fetchall()
+
+        if not rows:
+            return {"ts_code": ts_code, "candles": [], "volume": [], "ma": {}, "is_index": False}
+
+        df = pd.DataFrame(rows, columns=[
+            "trade_date", "open", "high", "low", "close", "vol", "pct_chg", "amount"
+        ])
+        df["trade_date"] = pd.to_datetime(df["trade_date"])
+        df = df.dropna(subset=["open", "close"]).reset_index(drop=True)
+
+        for w in MA_WINDOWS:
+            df[f"ma{w}"] = df["close"].rolling(w).mean().round(4)
+
+        candles, volume = [], []
+        for row in df.itertuples(index=False):
+            d = str(row.trade_date)[:10]
+            candles.append({
+                "time":          d,
+                "open":          float(row.open),
+                "high":          float(row.high),
+                "low":           float(row.low),
+                "close":         float(row.close),
+                "pct_chg":       _sf(row.pct_chg),
+                "amount":        _sf(row.amount),
+                "turnover_rate": None,
+            })
+            volume.append({
+                "time":  d,
+                "value": float(row.vol) if row.vol and not pd.isna(row.vol) else 0,
+                "color": "#E04040" if row.close >= row.open else "#45AA55",
+            })
+
+        ma_out = {}
+        for w in MA_WINDOWS:
+            col = f"ma{w}"
+            ma_out[str(w)] = [
+                {"time": str(row.trade_date)[:10], "value": float(getattr(row, col))}
+                for row in df.itertuples(index=False)
+                if pd.notna(getattr(row, col))
+            ]
+
+        return {"ts_code": ts_code, "candles": candles, "volume": volume, "ma": ma_out, "is_index": False}
+
+    # ── 日线分支（原有逻辑）──────────────────────────────────
     cols = _ADJ_COLS.get(adj, _ADJ_COLS["qfq"])
     o, h, l, c = cols
 
@@ -199,14 +265,6 @@ def get_stock_daily(
     if start:
         start_dt = pd.to_datetime(start, format="%Y%m%d")
         df = df[df["trade_date"] >= start_dt].reset_index(drop=True)
-
-    def _sf(v):
-        """安全转 float，None/NaN 返回 None。"""
-        try:
-            f = float(v)
-            return None if pd.isna(f) else f
-        except (TypeError, ValueError):
-            return None
 
     # 序列化
     candles, volume = [], []

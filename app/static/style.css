@@ -441,6 +441,20 @@ button:hover { border-color: #aaa; color: #d1d4dc; }
   color: #2962ff;
 }
 
+/* Freq buttons active */
+.freq-btn.active {
+  background: #2962ff22;
+  border-color: #2962ff;
+  color: #2962ff;
+}
+
+/* Disabled state for adj buttons when freq != daily */
+.btn-disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 /* Range buttons active */
 .range-btn.active {
   background: #2962ff22;

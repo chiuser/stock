@@ -51,7 +51,11 @@ function tickFormatter(time, tickMarkType) {
 }
 
 // ── 配置 ──────────────────────────────────────────────────
-const VISIBLE_BARS = { 1: 25, 3: 70, 6: 135, 12: 260, 36: 780 };
+const VISIBLE_BARS = {
+  daily:   { 1: 25,  3: 70,  6: 135, 12: 260, 36: 780, 0: 0 },
+  weekly:  { 1: 5,   3: 13,  6: 26,  12: 52,  36: 156, 0: 0 },
+  monthly: { 1: 1,   3: 3,   6: 6,   12: 12,  36: 36,  0: 0 },
+};
 
 const KLINE_RED   = '#E04040';
 const KLINE_GREEN = '#45AA55';
@@ -78,6 +82,7 @@ const volumeMap = new Map();
 
 let currentCode  = null;
 let currentAdj   = 'qfq';
+let currentFreq  = 'daily';
 let currentRange = 6;
 let activeMA     = new Set([5, 10, 20, 60]);
 let allCandleCount = 0;   // 全量已加载的 K 线根数，供滑动窗口计算
@@ -374,7 +379,7 @@ async function loadData(tsCode) {
   currentCode = tsCode;
 
   // 不传 start/end，一次性取全部历史，拖动时才能滑窗到更早的K线
-  const params = new URLSearchParams({ adj: currentAdj });
+  const params = new URLSearchParams({ adj: currentAdj, freq: currentFreq });
 
   const [dailyRes, infoRes] = await Promise.all([
     fetch(`/api/stock/${tsCode}/daily?${params}`, { headers: authHeaders() }),
@@ -420,7 +425,7 @@ async function loadData(tsCode) {
 // ── 按 currentRange 设置可见窗口（不重新请求数据） ─────────
 function applyVisibleRange() {
   if (!allCandleCount) return;
-  const targetBars = VISIBLE_BARS[currentRange];
+  const targetBars = (VISIBLE_BARS[currentFreq] || VISIBLE_BARS.daily)[currentRange];
   if (!targetBars || allCandleCount <= targetBars) {
     // 全部 或 数据不足指定范围 → 自适应
     chart.timeScale().fitContent();
@@ -486,9 +491,30 @@ function hideSuggestions() {
   suggestionsEl.style.display = 'none';
 }
 
+// ── 频率切换（日K / 周K / 月K）────────────────────────────
+function updateAdjBtnState() {
+  const disabled = currentFreq !== 'daily';
+  document.querySelectorAll('.adj-btn').forEach(b => {
+    b.disabled = disabled;
+    b.classList.toggle('btn-disabled', disabled);
+  });
+}
+
+document.querySelectorAll('.freq-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (btn.dataset.freq === currentFreq) return;
+    document.querySelectorAll('.freq-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentFreq = btn.dataset.freq;
+    updateAdjBtnState();
+    if (currentCode) loadData(currentCode);
+  });
+});
+
 // ── 复权切换 ──────────────────────────────────────────────
 document.querySelectorAll('.adj-btn').forEach(btn => {
   btn.addEventListener('click', () => {
+    if (currentFreq !== 'daily') return;   // 周/月线无复权数据，忽略点击
     document.querySelectorAll('.adj-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     currentAdj = btn.dataset.adj;
