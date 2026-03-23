@@ -56,10 +56,10 @@ def _get_pro_api():
     return ts.pro_api()
 
 
-_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
+_FIELDS = "ts_code,trade_date,end_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
 
 _COL_ORDER = [
-    "ts_code", "trade_date",
+    "ts_code", "trade_date", "end_date",
     "open", "high", "low", "close", "pre_close", "change", "pct_chg",
     "vol", "amount",
 ]
@@ -115,6 +115,8 @@ def fetch_stk_weekly_monthly(
         return pd.DataFrame()
 
     df["trade_date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d")
+    if "end_date" in df.columns:
+        df["end_date"] = pd.to_datetime(df["end_date"], format="%Y%m%d", errors="coerce")
     df = df[[c for c in _COL_ORDER if c in df.columns]]
     df = df.sort_values(["ts_code", "trade_date"]).reset_index(drop=True)
     return df

@@ -254,13 +254,14 @@ CREATE INDEX IF NOT EXISTS idx_stock_news_datetime ON stock_news (datetime);
 -- -------------------------------------------------------------
 -- 8. 个股周线行情
 --    来源: pro.stk_weekly_monthly(freq='week')
---    字段: ts_code, trade_date, open, high, low, close,
+--    字段: ts_code, trade_date, end_date, open, high, low, close,
 --          pre_close, change, pct_chg, vol, amount
 --    建议更新频率: 每周收盘后（周五）
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS stock_weekly (
     ts_code    VARCHAR(12)  NOT NULL,            -- 股票代码
     trade_date DATE         NOT NULL,            -- 本周最后一个交易日
+    end_date   DATE,                             -- 本周自然日末尾（如周五，含假日与trade_date可能不同）
     open       NUMERIC(12, 4),                   -- 周开盘价（元）
     high       NUMERIC(12, 4),                   -- 周最高价（元）
     low        NUMERIC(12, 4),                   -- 周最低价（元）
@@ -286,6 +287,7 @@ CREATE INDEX IF NOT EXISTS idx_stock_weekly_date
 CREATE TABLE IF NOT EXISTS stock_monthly (
     ts_code    VARCHAR(12)  NOT NULL,            -- 股票代码
     trade_date DATE         NOT NULL,            -- 本月最后一个交易日
+    end_date   DATE,                             -- 本月自然日末尾（月末，含假日与trade_date可能不同）
     open       NUMERIC(12, 4),                   -- 月开盘价（元）
     high       NUMERIC(12, 4),                   -- 月最高价（元）
     low        NUMERIC(12, 4),                   -- 月最低价（元）
