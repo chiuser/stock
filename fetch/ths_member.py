@@ -53,6 +53,13 @@ def _clean(df: pd.DataFrame) -> pd.DataFrame:
     for col in ("in_date", "out_date"):
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], format="%Y%m%d", errors="coerce")
+    # in_date 是主键列，不能为 NULL；接口偶尔返回 null，填哨兵值 1900-01-01
+    if "in_date" in df.columns:
+        sentinel = pd.Timestamp("1900-01-01")
+        filled = df["in_date"].isna().sum()
+        if filled:
+            df["in_date"] = df["in_date"].fillna(sentinel)
+            print(f"[ths_member] {filled} 行 in_date=null，已填充哨兵值 1900-01-01")
     # con_code 是 PK 列，接口偶尔返回 null，直接丢弃这类行
     if "con_code" in df.columns:
         before = len(df)
