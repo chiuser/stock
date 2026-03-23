@@ -29,7 +29,7 @@ from load.ths_index import get_ths_codes
 from db import upsert_df
 
 TABLE = "ths_member"
-CONFLICT_COLS = ["ts_code", "con_code"]
+CONFLICT_COLS = ["ts_code", "con_code", "in_date"]
 
 KEEP_COLS = [
     "ts_code", "con_code", "con_name", "weight", "in_date", "out_date",
