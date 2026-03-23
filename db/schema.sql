@@ -840,10 +840,10 @@ CREATE TABLE IF NOT EXISTS limit_list_ths (
     lu_desc            TEXT,                         -- 涨停原因
     tag                VARCHAR(100),                 -- 涨停标签
     status             VARCHAR(30),                  -- 涨停状态（N连板、一字板等）
-    first_lu_time      VARCHAR(8),                   -- 首次涨停时间（HH:MM:SS）
-    last_lu_time       VARCHAR(8),                   -- 最后涨停时间
-    first_ld_time      VARCHAR(8),                   -- 首次跌停时间
-    last_ld_time       VARCHAR(8),                   -- 最后跌停时间
+    first_lu_time      VARCHAR(20),                  -- 首次涨停时间
+    last_lu_time       VARCHAR(20),                  -- 最后涨停时间
+    first_ld_time      VARCHAR(20),                  -- 首次跌停时间
+    last_ld_time       VARCHAR(20),                  -- 最后跌停时间
     limit_order        NUMERIC(20, 2),               -- 封单量（元）
     limit_amount       NUMERIC(20, 2),               -- 封单额（元）
     turnover_rate      NUMERIC(10, 4),               -- 换手率%
