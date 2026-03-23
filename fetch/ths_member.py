@@ -8,8 +8,9 @@ tushare 接口：ths_member
 
 输出字段
 --------
-ts_code（板块代码）, code（成分股代码）, name（成分股名称）,
-weight（权重）, in_date（纳入日期）, out_date（移出日期，部分接口有）
+ts_code（板块代码）, con_code（成分股代码）, con_name（成分股名称）,
+weight（权重）, in_date（纳入日期）, out_date（剔除日期）, is_new（是否最新）
+入库时 con_code → code, con_name → name
 
 拉取策略
 --------
@@ -28,6 +29,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from config import TUSHARE_TOKEN
 
 _PAGE_SIZE = 900   # 保守低于接口上限 1000
+
+# API 返回 con_code / con_name，入库改为 code / name
+_RENAME = {
+    "con_code": "code",
+    "con_name": "name",
+}
 
 _COLS = [
     "ts_code", "code", "name", "weight", "in_date", "out_date",
@@ -49,6 +56,8 @@ def _get_pro_api():
 def _clean(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
+    # API 返回 con_code/con_name，重命名为入库字段名
+    df = df.rename(columns=_RENAME)
     cols = [c for c in _COLS if c in df.columns]
     df = df[cols].copy()
     for col in ("in_date", "out_date"):
