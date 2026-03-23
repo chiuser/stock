@@ -294,3 +294,11 @@ kill -9 <pid>
 
 **规则**：
 - 凡涉及 `CREATE TABLE`、`ALTER TABLE`、`ADD COLUMN`、`DROP COLUMN` 等表结构操作，必须先将完整的表结构方案展示给用户，**等待用户确认后**再继续编写依赖该结构的代码
+
+### 3. 修复 upsert/数据库写入报错时，必须同时读完整个数据链路
+
+**背景**：`ths_member` upsert 报 `NotNullViolation`，只读了 `fetch/ths_member.py` 就动手修复，未读 `load/ths_member.py`。哨兵值修复消除了第一个错后，第二个错（`CONFLICT_COLS` 与实际主键不一致）才暴露，导致多跑一次失败。而 `load/ths_member.py` 内部注释就写着正确的主键，读了即可发现。
+
+**规则**：
+- 遇到任何数据库写入报错（`NotNullViolation`、`InvalidColumnReference`、`UniqueViolation` 等），修复前必须**完整阅读该表对应的 `fetch/` 和 `load/` 两个文件**，以及 `db/schema.sql` 中的建表语句
+- 确认 `CONFLICT_COLS`、字段列表、NOT NULL 约束三者与实际 DB 表结构完全一致后，再写代码
