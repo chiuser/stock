@@ -344,13 +344,13 @@ function openTriggerModal(stage) {
     noneNote.classList.remove("hidden");
   }
 
-  // 涨跌停类型复选框
+  // 类型复选框（通用：涨跌停类型 / 热榜市场类型等）
   const limitTypeSection = document.getElementById("trigger-limit-type-section");
   const limitTypesContainer = document.getElementById("trigger-limit-types");
-  const limitTypeOptions = stage.limit_type_options || [];
+  const typeChoices = (stage.type_options || {}).choices || [];
 
-  if (limitTypeOptions.length > 0) {
-    limitTypesContainer.innerHTML = limitTypeOptions.map(t =>
+  if (typeChoices.length > 0) {
+    limitTypesContainer.innerHTML = typeChoices.map(t =>
       `<label class="trigger-limit-type-label">
         <input type="checkbox" class="trigger-limit-type-cb" value="${t}" checked>
         <span>${t}</span>
@@ -391,15 +391,15 @@ async function confirmTrigger() {
     if (month) payload.start_date = month.replace("-", "") + "01";
   }
 
-  // 涨跌停类型
+  // 类型过滤（涨跌停类型 / 热榜市场类型等）
   const limitTypeCbs = document.querySelectorAll(".trigger-limit-type-cb");
   if (limitTypeCbs.length > 0) {
     const selected = Array.from(limitTypeCbs).filter(cb => cb.checked).map(cb => cb.value);
     if (selected.length === 0) {
-      showToast("请至少选择一种板单类型", "error");
+      showToast("请至少选择一种类型", "error");
       return;
     }
-    payload.limit_types = selected;
+    payload.type_filter = selected;
   }
 
   const btn = document.getElementById("trigger-modal-confirm");

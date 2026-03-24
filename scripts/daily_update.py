@@ -294,6 +294,11 @@ def main() -> None:
         metavar="TYPE",
         help="涨跌停榜单类型（可多选），透传给 pipeline.py --limit-type",
     )
+    parser.add_argument(
+        "--market", nargs="+", dest="market",
+        metavar="MARKET",
+        help="热榜市场类型（可多选），透传给 pipeline.py --market",
+    )
     args = parser.parse_args()
 
     # 定位配置文件
@@ -400,10 +405,12 @@ def main() -> None:
         task_names = [t["name"] for t in stage.get("tasks", [])]
         logger.info("[%s] 并行执行 %d 个任务: %s", name, len(task_names), ", ".join(task_names))
 
-        # 构建透传给 pipeline.py 的额外参数（如 --limit-type）
+        # 构建透传给 pipeline.py 的额外参数（如 --limit-type / --market）
         extra_args: list[str] = []
         if getattr(args, "limit_type", None):
             extra_args += ["--limit-type"] + args.limit_type
+        if getattr(args, "market", None):
+            extra_args += ["--market"] + args.market
 
         t0 = datetime.datetime.now()
         ok, fail = _run_stage(stage, project_root, python_exe, log_dir, placeholders, args.dry_run, logger, extra_args)

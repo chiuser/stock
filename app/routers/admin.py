@@ -324,7 +324,7 @@ class TriggerRequest(BaseModel):
     stage: str
     start_date:  Optional[str]       = None   # YYYYMMDD，覆盖起始日期占位符
     end_date:    Optional[str]       = None   # YYYYMMDD，覆盖结束日期占位符
-    limit_types: Optional[list[str]] = None   # 涨跌停榜单类型列表，None 表示全部
+    type_filter: Optional[list[str]] = None   # 类型过滤列表（对应 yaml type_options.choices），None 表示全部
 
 
 class StopRequest(BaseModel):
@@ -417,7 +417,7 @@ def get_status(user: dict = Depends(require_admin)):
             "date_type": _stage_date_type(stage),
             "latest_date": _stage_latest_date(stage, latest_dates),
             "is_manual_running": is_manual_running,
-            "limit_type_options": stage.get("limit_type_options") or [],
+            "type_options": stage.get("type_options") or {},
             "tasks": tasks_status,
         })
 
@@ -548,8 +548,12 @@ def trigger_stage(body: TriggerRequest, user: dict = Depends(require_admin)):
         run_cmd += ["--start", body.start_date]
     if body.end_date:
         run_cmd += ["--end", body.end_date]
-    if body.limit_types:
-        run_cmd += ["--limit-type"] + body.limit_types
+    # 类型过滤：从 stage 配置读取对应的 CLI 参数名（如 --limit-type / --market）
+    if body.type_filter:
+        stage_cfg = next((s for s in config.get("stages", []) if s["name"] == body.stage), {})
+        type_arg = (stage_cfg.get("type_options") or {}).get("arg")
+        if type_arg:
+            run_cmd += [type_arg] + body.type_filter
 
     try:
         proc = subprocess.Popen(

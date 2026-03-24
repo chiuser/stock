@@ -334,12 +334,14 @@ stages:
   - name: 涨跌停榜单
     cron: "40 19 * * 1-5"
     only_on: [weekday]
-    limit_type_options:
-      - 涨停池
-      - 连板池
-      - 冲刺涨停
-      - 炸板池
-      - 跌停池
+    type_options:
+      arg: "--limit-type"
+      choices:
+        - 涨停池
+        - 连板池
+        - 冲刺涨停
+        - 炸板池
+        - 跌停池
     tasks:
       - name: limit_list_ths
         cmd: ["--table", "limit_list_ths", "--start", "{date_start}", "--end", "{today}"]
@@ -384,6 +386,18 @@ stages:
   - name: 同花顺热榜
     cron: "*/15 9-22 * * 1-5"
     only_on: [weekday]
+    type_options:
+      arg: "--market"
+      choices:
+        - 热股
+        - ETF
+        - 可转债
+        - 行业板块
+        - 概念板块
+        - 期货
+        - 港股
+        - 热基
+        - 美股
     tasks:
       - name: hot_list_ths
         cmd: ["--table", "hot_list_ths", "--start", "{date_start}", "--end", "{today}"]

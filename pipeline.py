@@ -147,6 +147,9 @@ _LIMIT_LIST_TYPES = ["涨停池", "连板池", "冲刺涨停", "炸板池", "跌
 # 开盘啦涨跌停榜单 tag 可选值
 _KPL_TAGS = ["涨停", "炸板", "跌停", "自然涨停", "竞价"]
 
+# 同花顺热榜市场类型
+_HOT_LIST_MARKETS = ["热股", "ETF", "可转债", "行业板块", "概念板块", "期货", "港股", "热基", "美股"]
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -191,6 +194,11 @@ def main():
                         metavar="TAG",
                         help=f"开盘啦榜单类型（可多选），默认全部。"
                              f"可选：{' | '.join(_KPL_TAGS)}")
+    parser.add_argument("--market", nargs="+", dest="market",
+                        choices=_HOT_LIST_MARKETS,
+                        metavar="MARKET",
+                        help=f"热榜市场类型（可多选），默认全部。"
+                             f"可选：{' | '.join(_HOT_LIST_MARKETS)}")
     args = parser.parse_args()
 
     tables = TABLES if "all" in args.table else args.table
@@ -457,13 +465,15 @@ def main():
                 sys.exit(1)
 
         elif table == "hot_list_ths":
+            markets = getattr(args, "market", None) or None
             if args.start:
                 # 日期区间：逐日拉取（定时任务 start=end=today；手动补数时遍历多天）
-                load_hot_list_ths_range(args.start, end_date=args.end)
+                load_hot_list_ths_range(args.start, end_date=args.end, markets=markets)
             elif args.date:
-                load_hot_list_ths_by_date(args.date)
+                load_hot_list_ths_by_date(args.date, markets=markets)
             else:
-                print("[pipeline] hot_list_ths 请指定 --start（日期区间）或 --date（单日）。")
+                print("[pipeline] hot_list_ths 请指定 --start（日期区间）或 --date（单日）。"
+                      "\n           可选 --market 指定市场类型，默认拉全部 9 种。")
                 sys.exit(1)
 
     print(f"\n{'='*60}")
