@@ -29,6 +29,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import argparse
+import datetime
 from typing import Optional
 
 from fetch.hot_list_ths import fetch_latest, fetch_by_date, ALL_MARKETS
@@ -89,6 +90,38 @@ def load_by_date(trade_date: str, markets: Optional[list[str]] = None) -> int:
         df = fetch_by_date(trade_date, market)
         total += _upsert(df, f"{trade_date} {market}")
     print(f"[{TABLE}] 全部 market 完成，共 upsert {total} 行。")
+    return total
+
+
+def load_date_range(
+    start_date: str,
+    end_date: Optional[str] = None,
+    markets: Optional[list[str]] = None,
+) -> int:
+    """
+    按日期区间逐日拉取全量快照（is_new=N）。
+    定时任务 start=end=today 时退化为单日拉取；
+    手动补数时按区间遍历每一天。
+
+    参数
+    ----
+    start_date : YYYYMMDD
+    end_date   : YYYYMMDD（默认今日）
+    markets    : 要拉取的市场类型列表，默认全部9种
+    """
+    today = datetime.date.today()
+    end = datetime.date(int(end_date[:4]), int(end_date[4:6]), int(end_date[6:])) if end_date else today
+    cur = datetime.date(int(start_date[:4]), int(start_date[4:6]), int(start_date[6:]))
+    delta = datetime.timedelta(days=1)
+
+    total = 0
+    while cur <= end:
+        d = cur.strftime("%Y%m%d")
+        print(f"\n[{TABLE}] ── {d} ──")
+        total += load_by_date(d, markets=markets)
+        cur += delta
+
+    print(f"\n[{TABLE}] 区间 {start_date}~{end_date or today.strftime('%Y%m%d')} 全部完成，共 upsert {total} 行。")
     return total
 
 

@@ -386,4 +386,4 @@ stages:
     only_on: [weekday]
     tasks:
       - name: hot_list_ths
-        cmd: ["--table", "hot_list_ths", "--date", "{today}"]
+        cmd: ["--table", "hot_list_ths", "--start", "{date_start}", "--end", "{today}"]

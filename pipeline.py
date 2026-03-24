@@ -123,6 +123,7 @@ from load import (
     load_kpl_list_range,
     load_hot_list_ths_latest,
     load_hot_list_ths_by_date,
+    load_hot_list_ths_range,
 )
 
 TABLES = [
@@ -456,12 +457,13 @@ def main():
                 sys.exit(1)
 
         elif table == "hot_list_ths":
-            if args.date:
-                # is_new=N：拉取指定日期的全量快照（盘中 + 收盘后所有时间点）
-                # 每15分钟执行时传入当日日期，补数时传入历史日期，均安全可重跑
+            if args.start:
+                # 日期区间：逐日拉取（定时任务 start=end=today；手动补数时遍历多天）
+                load_hot_list_ths_range(args.start, end_date=args.end)
+            elif args.date:
                 load_hot_list_ths_by_date(args.date)
             else:
-                print("[pipeline] hot_list_ths 请指定 --date YYYYMMDD。")
+                print("[pipeline] hot_list_ths 请指定 --start（日期区间）或 --date（单日）。")
                 sys.exit(1)
 
     print(f"\n{'='*60}")
