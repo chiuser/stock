@@ -121,6 +121,8 @@ from load import (
     load_limit_list_ths_range,
     load_kpl_list_date,
     load_kpl_list_range,
+    load_hot_list_ths_latest,
+    load_hot_list_ths_by_date,
 )
 
 TABLES = [
@@ -135,6 +137,7 @@ TABLES = [
     "dc_index", "dc_member", "dc_daily",
     "limit_list_ths",
     "kpl_list",
+    "hot_list_ths",
 ]
 
 # 同花顺涨跌停榜单 limit_type 可选值
@@ -451,6 +454,14 @@ def main():
                 print("[pipeline] kpl_list 请指定 --date（单日）或 --start（日期区间）。"
                       "\n           可选 --tag 指定板单类型，默认拉全部 5 种。")
                 sys.exit(1)
+
+        elif table == "hot_list_ths":
+            if args.date:
+                # 补拉指定日期全量快照（is_new=N）
+                load_hot_list_ths_by_date(args.date)
+            else:
+                # 拉取当前最新快照（is_new=Y），定时任务每15分钟调用
+                load_hot_list_ths_latest()
 
     print(f"\n{'='*60}")
     print("  所有任务完成。")

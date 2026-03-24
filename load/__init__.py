@@ -43,6 +43,8 @@ from .limit_list_ths       import load_date as load_limit_list_ths_date
 from .limit_list_ths       import load_date_range as load_limit_list_ths_range
 from .kpl_list             import load_date as load_kpl_list_date
 from .kpl_list             import load_date_range as load_kpl_list_range
+from .hot_list_ths         import load_latest as load_hot_list_ths_latest
+from .hot_list_ths         import load_by_date as load_hot_list_ths_by_date
 
 __all__ = [
     "load_stock_basic",
@@ -90,4 +92,6 @@ __all__ = [
     "load_limit_list_ths_range",
     "load_kpl_list_date",
     "load_kpl_list_range",
+    "load_hot_list_ths_latest",
+    "load_hot_list_ths_by_date",
 ]

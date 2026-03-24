@@ -360,3 +360,30 @@ stages:
     tasks:
       - name: kpl_list
         cmd: ["--table", "kpl_list", "--start", "{date_start}", "--end", "{today}"]
+
+
+  # ----------------------------------------------------------
+  # 阶段 19：同花顺热榜（盘中 + 收盘后每15分钟更新）
+  #   拉取热股/ETF/可转债/行业板块/概念板块/期货/港股/热基/美股
+  #   共9种类型的当前最新热榜快照（is_new=Y）
+  #   每次调用写入以 rank_time 为标识的一批快照行，安全可重跑
+  #
+  #   取某日最新热榜查询示例：
+  #     SELECT * FROM hot_list_ths
+  #     WHERE trade_date='2026-03-23' AND data_type='热股'
+  #       AND rank_time = (
+  #         SELECT MAX(rank_time) FROM hot_list_ths
+  #         WHERE trade_date='2026-03-23' AND data_type='热股'
+  #       )
+  #     ORDER BY rank;
+  #
+  #   cron: 工作日 9:00~22:00 每15分钟（覆盖盘中+盘后+22点收录）
+  #   补拉历史某日全量：
+  #     python pipeline.py --table hot_list_ths --date 20260323
+  # ----------------------------------------------------------
+  - name: 同花顺热榜
+    cron: "*/15 9-22 * * 1-5"
+    only_on: [weekday]
+    tasks:
+      - name: hot_list_ths
+        cmd: ["--table", "hot_list_ths"]

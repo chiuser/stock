@@ -919,3 +919,40 @@ CREATE INDEX IF NOT EXISTS idx_kpl_list_date     ON kpl_list (trade_date);
 CREATE INDEX IF NOT EXISTS idx_kpl_list_date_tag ON kpl_list (trade_date, tag);
 -- 按板块精确过滤（GIN，支持 '某板块' = ANY(theme)）
 CREATE INDEX IF NOT EXISTS idx_kpl_list_theme    ON kpl_list USING GIN (theme);
+
+
+-- -------------------------------------------------------------
+-- 同花顺热榜（hot_list_ths）
+--    来源: pro.ths_hot()
+--    描述: 同花顺App热榜数据，含热股/ETF/可转债/行业板块/
+--          概念板块/期货/港股/热基/美股等多类型
+--    拉取策略: 每15分钟拉取一次最新快照（is_new=Y），
+--              存储全量快照用于盘中热度变化分析
+--    建议更新频率: 工作日 9:00~22:00 每15分钟
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS hot_list_ths (
+    trade_date     DATE         NOT NULL,          -- 交易日期
+    data_type      VARCHAR(20)  NOT NULL,          -- 热榜类型（热股/ETF/可转债/行业板块/概念板块/期货/港股/热基/美股）
+    rank_time      TIMESTAMP    NOT NULL,          -- 快照时间（排行榜获取时间）
+    ts_code        VARCHAR(32)  NOT NULL,          -- 标的代码
+    ts_name        VARCHAR(100),                   -- 标的名称
+    rank           SMALLINT,                       -- 排行
+    pct_change     NUMERIC(8,4),                   -- 涨跌幅%
+    current_price  NUMERIC(12,4),                  -- 当前价格
+    concept        TEXT,                           -- 标签
+    rank_reason    TEXT,                           -- 上榜解读
+    hot            NUMERIC(16,4),                  -- 热度值
+    PRIMARY KEY (trade_date, data_type, rank_time, ts_code)
+);
+
+-- 按日期查询（最常用）
+CREATE INDEX IF NOT EXISTS idx_hot_list_ths_date
+    ON hot_list_ths (trade_date);
+
+-- 按标的查询历史热度
+CREATE INDEX IF NOT EXISTS idx_hot_list_ths_code
+    ON hot_list_ths (ts_code);
+
+-- 取某日最新快照（MAX rank_time）高效索引
+CREATE INDEX IF NOT EXISTS idx_hot_list_ths_latest
+    ON hot_list_ths (trade_date, data_type, rank_time DESC);
