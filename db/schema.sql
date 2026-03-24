@@ -936,7 +936,7 @@ CREATE TABLE IF NOT EXISTS hot_list_ths (
     rank_time      TIMESTAMP    NOT NULL,          -- 快照时间（排行榜获取时间）
     ts_code        VARCHAR(32)  NOT NULL,          -- 标的代码
     ts_name        VARCHAR(100),                   -- 标的名称
-    rank           SMALLINT,                       -- 排行
+    rank           INTEGER,                        -- 排行
     pct_change     NUMERIC(8,4),                   -- 涨跌幅%
     current_price  NUMERIC(12,4),                  -- 当前价格
     concept        TEXT,                           -- 标签
@@ -956,3 +956,6 @@ CREATE INDEX IF NOT EXISTS idx_hot_list_ths_code
 -- 取某日最新快照（MAX rank_time）高效索引
 CREATE INDEX IF NOT EXISTS idx_hot_list_ths_latest
     ON hot_list_ths (trade_date, data_type, rank_time DESC);
+
+-- 兼容升级：rank 从 SMALLINT 改为 INTEGER（Tushare 返回值可能超出 32767）
+ALTER TABLE hot_list_ths ALTER COLUMN rank TYPE INTEGER;
