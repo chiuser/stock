@@ -457,11 +457,12 @@ def main():
 
         elif table == "hot_list_ths":
             if args.date:
-                # 补拉指定日期全量快照（is_new=N）
+                # is_new=N：拉取指定日期的全量快照（盘中 + 收盘后所有时间点）
+                # 每15分钟执行时传入当日日期，补数时传入历史日期，均安全可重跑
                 load_hot_list_ths_by_date(args.date)
             else:
-                # 拉取当前最新快照（is_new=Y），定时任务每15分钟调用
-                load_hot_list_ths_latest()
+                print("[pipeline] hot_list_ths 请指定 --date YYYYMMDD。")
+                sys.exit(1)
 
     print(f"\n{'='*60}")
     print("  所有任务完成。")
