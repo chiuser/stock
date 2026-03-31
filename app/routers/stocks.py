@@ -6,7 +6,7 @@ from datetime import timedelta
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from db import get_conn
+from db import get_gs_conn
 
 from pypinyin import lazy_pinyin, Style
 
@@ -14,15 +14,28 @@ router = APIRouter()
 
 MA_WINDOWS = [5, 10, 15, 20, 30, 60, 120, 250]
 
+# ── goldenshare 表名（schema.table）─────────────────────────
+_T_SECURITY      = "core.security"
+_T_INDEX_BASIC   = "core.index_basic"
+_T_DAILY_BAR     = "core.equity_daily_bar"
+_T_DAILY_BASIC   = "core.equity_daily_basic"
+_T_ADJ_FACTOR    = "core.equity_adj_factor"
+_T_INDEX_BAR     = "core.index_daily_bar"
+_T_PERIOD_BAR    = "core.stk_period_bar_adj"
+
+# freq 映射：weekly/monthly → goldenshare freq 值
+_FREQ_MAP = {"weekly": "W", "monthly": "M"}
+
 # ── 指数拼音缓存（内存，进程级）──────────────────────────────
 _index_cache: list | None = None
+
 
 def _get_index_cache():
     global _index_cache
     if _index_cache is None:
-        with get_conn() as conn:
+        with get_gs_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT ts_code, name, market FROM index_basic")
+                cur.execute(f"SELECT ts_code, name, market FROM {_T_INDEX_BASIC}")
                 rows = cur.fetchall()
         _index_cache = [
             (r[0], r[1], r[2],
@@ -31,13 +44,14 @@ def _get_index_cache():
         ]
     return _index_cache
 
-# 白名单：避免列名注入
-_ADJ_COLS = {
-    "qfq":   ("open_qfq",  "high_qfq",  "low_qfq",  "close_qfq"),
-    "hfq":   ("open_hfq",  "high_hfq",  "low_hfq",  "close_hfq"),
-    "":      ("open",      "high",      "low",      "close"),
-    "unadj": ("open",      "high",      "low",      "close"),
-}
+
+def _sf(v):
+    """安全转 float，None/NaN 返回 None。"""
+    try:
+        f = float(v)
+        return None if pd.isna(f) else f
+    except (TypeError, ValueError):
+        return None
 
 
 @router.get("/stocks/search")
@@ -47,8 +61,7 @@ def search_stocks(q: str = Query("", max_length=50)):
     if not q:
         return []
 
-    # 指数：从内存缓存过滤（支持代码、名称、拼音首字母缩写）
-    # 优先级：① 代码前缀 ② 名称精确 ③ 名称前缀 ④ 名称包含/拼音前缀
+    # 指数：从内存缓存过滤
     ql = q.lower()
     cache = _get_index_cache()
     code_matches, exact_matches, prefix_matches, other_matches = [], [], [], []
@@ -63,15 +76,14 @@ def search_stocks(q: str = Query("", max_length=50)):
             other_matches.append((ts_code, name, market))
     index_rows = (code_matches + exact_matches + prefix_matches + other_matches)[:15]
 
-    # 个股：数据库查询（支持拼音缩写列 cnspell）
-    with get_conn() as conn:
+    # 个股：查 core.security（security_type = 'EQUITY'）
+    with get_gs_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(f"""
                 SELECT ts_code, name, market
-                FROM stock_basic
-                WHERE ts_code ILIKE %s
-                   OR name LIKE %s
-                   OR cnspell ILIKE %s
+                FROM {_T_SECURITY}
+                WHERE security_type = 'EQUITY'
+                  AND (ts_code ILIKE %s OR name LIKE %s OR cnspell ILIKE %s)
                 ORDER BY
                     CASE WHEN ts_code ILIKE %s THEN 0 ELSE 1 END,
                     ts_code
@@ -89,12 +101,12 @@ def search_stocks(q: str = Query("", max_length=50)):
 @router.get("/stock/{ts_code}/info")
 def get_stock_info(ts_code: str):
     """获取股票或指数基本信息。"""
-    with get_conn() as conn:
+    with get_gs_conn() as conn:
         with conn.cursor() as cur:
             # 先查个股
             cur.execute(
-                "SELECT ts_code, name, industry, market, list_date "
-                "FROM stock_basic WHERE ts_code = %s",
+                f"SELECT ts_code, name, industry, market, list_date "
+                f"FROM {_T_SECURITY} WHERE ts_code = %s AND security_type = 'EQUITY'",
                 (ts_code,),
             )
             row = cur.fetchone()
@@ -108,8 +120,8 @@ def get_stock_info(ts_code: str):
                 }
             # 再查指数
             cur.execute(
-                "SELECT ts_code, name, market, list_date "
-                "FROM index_basic WHERE ts_code = %s",
+                f"SELECT ts_code, name, market, list_date "
+                f"FROM {_T_INDEX_BASIC} WHERE ts_code = %s",
                 (ts_code,),
             )
             row = cur.fetchone()
@@ -124,39 +136,38 @@ def get_stock_info(ts_code: str):
     }
 
 
-def _sf(v):
-    """安全转 float，None/NaN 返回 None。"""
-    try:
-        f = float(v)
-        return None if pd.isna(f) else f
-    except (TypeError, ValueError):
-        return None
-
-
 @router.get("/stock/{ts_code}/daily")
 def get_stock_daily(
     ts_code: str,
     start:   Optional[str] = None,
     end:     Optional[str] = None,
     adj:     str = "qfq",
-    freq:    str = "daily",   # daily | weekly | monthly
+    freq:    str = "daily",
 ):
     """
     获取个股 K 线数据（K线 + 均线 + 成交量）。
 
     freq: daily=日线  weekly=周线  monthly=月线
-    adj:  qfq=前复权  hfq=后复权  空=不复权（周线/月线无复权，忽略此参数）
-    start/end: YYYYMMDD（仅日线有效）
+    adj:  qfq=前复权  hfq=后复权  空/unadj=不复权（周线/月线直接有复权列，忽略此参数不合法）
     """
-    # ── 周线 / 月线 分支 ──────────────────────────────────────
+    # ── 周线 / 月线 ──────────────────────────────────────────
     if freq in ("weekly", "monthly"):
-        table = "stock_weekly" if freq == "weekly" else "stock_monthly"
-        with get_conn() as conn:
+        gs_freq = _FREQ_MAP[freq]
+        # stk_period_bar_adj 已内置 qfq/hfq 价格列，直接取
+        adj_norm = adj if adj in ("qfq", "hfq") else ""
+        o = f"open_{adj_norm}"  if adj_norm else "open"
+        h = f"high_{adj_norm}"  if adj_norm else "high"
+        l = f"low_{adj_norm}"   if adj_norm else "low"
+        c = f"close_{adj_norm}" if adj_norm else "close"
+
+        with get_gs_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"SELECT trade_date, open, high, low, close, vol, pct_chg, amount "
-                    f"FROM {table} WHERE ts_code = %s ORDER BY trade_date ASC",
-                    (ts_code,),
+                    f"SELECT trade_date, {o}, {h}, {l}, {c}, vol, pct_chg, amount "
+                    f"FROM {_T_PERIOD_BAR} "
+                    f"WHERE ts_code = %s AND freq = %s "
+                    f"ORDER BY trade_date ASC",
+                    (ts_code, gs_freq),
                 )
                 rows = cur.fetchall()
 
@@ -202,10 +213,7 @@ def get_stock_daily(
 
         return {"ts_code": ts_code, "candles": candles, "volume": volume, "ma": ma_out, "is_index": False}
 
-    # ── 日线分支（原有逻辑）──────────────────────────────────
-    cols = _ADJ_COLS.get(adj, _ADJ_COLS["qfq"])
-    o, h, l, c = cols
-
+    # ── 日线 ─────────────────────────────────────────────────
     # 向前多取 ~400 个自然日，确保 MA250 有足够历史
     lookback_start: Optional[str] = None
     if start:
@@ -213,57 +221,80 @@ def get_stock_daily(
             pd.to_datetime(start, format="%Y%m%d") - timedelta(days=400)
         ).strftime("%Y%m%d")
 
-    # 构建两套条件：stock_daily 用别名 sd，index_daily 不用别名
-    stock_conds = ["sd.ts_code = %s"]
-    idx_conds   = ["ts_code = %s"]
+    conds  = ["d.ts_code = %s"]
     params: list = [ts_code]
     if lookback_start:
-        stock_conds.append("sd.trade_date >= %s")
-        idx_conds.append("trade_date >= %s")
+        conds.append("d.trade_date >= %s")
         params.append(lookback_start)
     if end:
-        stock_conds.append("sd.trade_date <= %s")
-        idx_conds.append("trade_date <= %s")
+        conds.append("d.trade_date <= %s")
         params.append(end)
+    where = " AND ".join(conds)
 
-    stock_where = " AND ".join(stock_conds)
-    idx_where   = " AND ".join(idx_conds)
-
-    sql = (
-        f"SELECT sd.trade_date, sd.{o}, sd.{h}, sd.{l}, sd.{c}, sd.vol, "
-        f"sd.pct_chg, sd.amount, sdb.turnover_rate "
-        f"FROM stock_daily sd "
-        f"LEFT JOIN stock_daily_basic sdb "
-        f"  ON sdb.ts_code = sd.ts_code AND sdb.trade_date = sd.trade_date "
-        f"WHERE {stock_where} ORDER BY sd.trade_date ASC"
-    )
+    # 取原始价 + 复权因子 + 换手率，复权在 Python 里完成
+    sql = f"""
+        SELECT d.trade_date, d.open, d.high, d.low, d.close,
+               d.vol, d.pct_chg, d.amount,
+               af.adj_factor, sdb.turnover_rate
+        FROM {_T_DAILY_BAR} d
+        LEFT JOIN {_T_ADJ_FACTOR} af
+               ON af.ts_code = d.ts_code AND af.trade_date = d.trade_date
+        LEFT JOIN {_T_DAILY_BASIC} sdb
+               ON sdb.ts_code = d.ts_code AND sdb.trade_date = d.trade_date
+        WHERE {where}
+        ORDER BY d.trade_date ASC
+    """
 
     is_index = False
-    with get_conn() as conn:
+    with get_gs_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, params)
             rows = cur.fetchall()
 
-            # 个股表无数据时，回退到指数日线表（指数无复权价，固定用原始 OHLC）
+            # 个股表无数据时，回退到指数日线（指数无复权因子）
             if not rows:
-                idx_sql = (
-                    "SELECT trade_date, open, high, low, close, vol, "
-                    "pct_chg, amount, NULL::float AS turnover_rate "
-                    f"FROM index_daily WHERE {idx_where} ORDER BY trade_date ASC"
+                idx_conds  = ["ts_code = %s"]
+                idx_params: list = [ts_code]
+                if lookback_start:
+                    idx_conds.append("trade_date >= %s")
+                    idx_params.append(lookback_start)
+                if end:
+                    idx_conds.append("trade_date <= %s")
+                    idx_params.append(end)
+                idx_where = " AND ".join(idx_conds)
+                cur.execute(
+                    f"SELECT trade_date, open, high, low, close, vol, "
+                    f"pct_chg, amount, NULL::float AS adj_factor, "
+                    f"NULL::float AS turnover_rate "
+                    f"FROM {_T_INDEX_BAR} WHERE {idx_where} ORDER BY trade_date ASC",
+                    idx_params,
                 )
-                cur.execute(idx_sql, params)
                 rows = cur.fetchall()
                 is_index = True
 
     if not rows:
         return {"ts_code": ts_code, "candles": [], "volume": [], "ma": {}, "is_index": is_index}
 
-    df = pd.DataFrame(rows, columns=["trade_date", "open", "high", "low", "close", "vol",
-                                     "pct_chg", "amount", "turnover_rate"])
+    df = pd.DataFrame(rows, columns=[
+        "trade_date", "open", "high", "low", "close",
+        "vol", "pct_chg", "amount", "adj_factor", "turnover_rate"
+    ])
     df["trade_date"] = pd.to_datetime(df["trade_date"])
     df = df.dropna(subset=["open", "close"]).reset_index(drop=True)
 
-    # 先用全部历史计算均线，再按用户请求的 start 截断
+    # 复权计算：adj_factor 缺失时视为 1.0
+    if adj in ("qfq", "hfq") and not is_index:
+        af = pd.to_numeric(df["adj_factor"], errors="coerce").fillna(1.0)
+        price_cols = ["open", "high", "low", "close"]
+        if adj == "qfq":
+            latest_af = af.iloc[-1] if len(af) > 0 and af.iloc[-1] != 0 else 1.0
+            for col in price_cols:
+                df[col] = (pd.to_numeric(df[col], errors="coerce") * af / latest_af).round(4)
+        else:  # hfq
+            for col in price_cols:
+                df[col] = (pd.to_numeric(df[col], errors="coerce") * af).round(4)
+
+    # 先用全量历史计算均线，再截断到用户请求范围
     for w in MA_WINDOWS:
         df[f"ma{w}"] = df["close"].rolling(w).mean().round(4)
 
@@ -271,7 +302,6 @@ def get_stock_daily(
         start_dt = pd.to_datetime(start, format="%Y%m%d")
         df = df[df["trade_date"] >= start_dt].reset_index(drop=True)
 
-    # 序列化
     candles, volume = [], []
     for row in df.itertuples(index=False):
         d = str(row.trade_date)[:10]

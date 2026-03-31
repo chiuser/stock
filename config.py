@@ -12,6 +12,9 @@ DB_NAME     = os.environ.get("DB_NAME",     "stock")
 DB_USER     = os.environ.get("DB_USER",     "postgres")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "")
 
+# goldenshare 数据底座（同一实例，不同数据库）
+GS_DB_NAME  = os.environ.get("GS_DB_NAME",  "goldenshare")
+
 # 常用A股指数代码
 INDEX_CODES = {
     "上证指数": "000001.SH",

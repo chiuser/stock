@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from db import get_conn
+from db import get_gs_conn
 
 router = APIRouter()
 
@@ -30,12 +30,12 @@ def index_summary():
     codes = [c for grp in INDEX_GROUPS for c, _ in grp]
     name_map = {c: n for grp in INDEX_GROUPS for c, n in grp}
 
-    with get_conn() as conn:
+    with get_gs_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT ts_code, trade_date, close, pre_close, pct_chg
-                FROM index_daily
+                FROM core.index_daily_bar
                 WHERE ts_code = ANY(%s)
                 ORDER BY trade_date DESC
                 """,

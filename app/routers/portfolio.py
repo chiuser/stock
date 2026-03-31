@@ -5,95 +5,110 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from db import get_conn
+from db import get_conn, get_gs_conn
 from app.routers.auth import get_current_user
 
 router = APIRouter()
 
 
-# ── Schema ─────────────────────────────────────────────────
 class AddStockRequest(BaseModel):
     ts_code: str
 
 
-# ── 路由 ──────────────────────────────────────────────────
+def _f(v):
+    return float(v) if v is not None else None
+
+
 @router.get("/portfolio")
 def list_portfolio(user: dict = Depends(get_current_user)):
     user_id = int(user["sub"])
 
+    # ── Step 1: 从 stock DB 取持仓列表 ──────────────────────
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT
-                    up.ts_code,
-                    sb.name,
-                    sd.close,
-                    sd.pct_chg,
-                    sd.vol,
-                    sdb.turnover_rate,
-                    sdb.turnover_rate_f,
-                    sdb.volume_ratio,
-                    sdb.pe_ttm,
-                    sdb.dv_ratio,
-                    sdb.dv_ttm,
-                    sdb.total_share,
-                    sdb.float_share,
-                    sdb.free_share,
-                    sdb.total_mv,
-                    sdb.circ_mv,
-                    up.added_at
-                FROM user_portfolio up
-                LEFT JOIN stock_basic sb ON sb.ts_code = up.ts_code
-                LEFT JOIN LATERAL (
-                    SELECT close, pct_chg, vol
-                    FROM stock_daily
-                    WHERE ts_code = up.ts_code
-                    ORDER BY trade_date DESC
-                    LIMIT 1
-                ) sd ON true
-                LEFT JOIN LATERAL (
-                    SELECT turnover_rate, turnover_rate_f, volume_ratio,
-                           pe_ttm, dv_ratio, dv_ttm,
-                           total_share, float_share, free_share,
-                           total_mv, circ_mv
-                    FROM stock_daily_basic
-                    WHERE ts_code = up.ts_code
-                    ORDER BY trade_date DESC
-                    LIMIT 1
-                ) sdb ON true
-                WHERE up.user_id = %s
-                ORDER BY up.added_at
-            """, (user_id,))
-            rows = cur.fetchall()
+            cur.execute(
+                "SELECT ts_code, added_at FROM user_portfolio "
+                "WHERE user_id = %s ORDER BY added_at",
+                (user_id,),
+            )
+            portfolio_rows = cur.fetchall()
 
-    def _f(v):
-        return float(v) if v is not None else None
+    if not portfolio_rows:
+        return []
 
+    ts_codes = [r[0] for r in portfolio_rows]
+
+    # ── Step 2: 从 goldenshare 取市场数据 ────────────────────
+    with get_gs_conn() as conn:
+        with conn.cursor() as cur:
+            # 证券名称
+            cur.execute(
+                "SELECT ts_code, name FROM core.security WHERE ts_code = ANY(%s)",
+                (ts_codes,),
+            )
+            name_map = {r[0]: r[1] for r in cur.fetchall()}
+
+            # 最新日线（close / pct_chg / vol）
+            cur.execute(
+                """
+                SELECT DISTINCT ON (ts_code) ts_code, close, pct_chg, vol
+                FROM core.equity_daily_bar
+                WHERE ts_code = ANY(%s)
+                ORDER BY ts_code, trade_date DESC
+                """,
+                (ts_codes,),
+            )
+            daily_map = {r[0]: {"close": r[1], "pct_chg": r[2], "vol": r[3]}
+                         for r in cur.fetchall()}
+
+            # 最新每日指标
+            cur.execute(
+                """
+                SELECT DISTINCT ON (ts_code) ts_code,
+                       turnover_rate, turnover_rate_f, volume_ratio,
+                       pe_ttm, dv_ratio, dv_ttm,
+                       total_share, float_share, free_share,
+                       total_mv, circ_mv
+                FROM core.equity_daily_basic
+                WHERE ts_code = ANY(%s)
+                ORDER BY ts_code, trade_date DESC
+                """,
+                (ts_codes,),
+            )
+            _basic_cols = [
+                "turnover_rate", "turnover_rate_f", "volume_ratio",
+                "pe_ttm", "dv_ratio", "dv_ttm",
+                "total_share", "float_share", "free_share",
+                "total_mv", "circ_mv",
+            ]
+            basic_map = {
+                r[0]: dict(zip(_basic_cols, r[1:]))
+                for r in cur.fetchall()
+            }
+
+    # ── Step 3: 按持仓顺序组装结果 ───────────────────────────
     result = []
-    for i, row in enumerate(rows, start=1):
-        (ts_code, name, close, pct_chg, vol,
-         turnover_rate, turnover_rate_f, volume_ratio,
-         pe_ttm, dv_ratio, dv_ttm,
-         total_share, float_share, free_share,
-         total_mv, circ_mv, added_at) = row
+    for i, ts_code in enumerate(ts_codes, start=1):
+        daily = daily_map.get(ts_code, {})
+        basic = basic_map.get(ts_code, {})
         result.append({
-            "idx":            i,
-            "ts_code":        ts_code,
-            "name":           name or ts_code,
-            "close":          _f(close),
-            "pct_chg":        _f(pct_chg),
-            "vol":            _f(vol),
-            "turnover_rate":  _f(turnover_rate),
-            "turnover_rate_f": _f(turnover_rate_f),
-            "volume_ratio":   _f(volume_ratio),
-            "pe_ttm":         _f(pe_ttm),
-            "dv_ratio":       _f(dv_ratio),
-            "dv_ttm":         _f(dv_ttm),
-            "total_share":    _f(total_share),
-            "float_share":    _f(float_share),
-            "free_share":     _f(free_share),
-            "total_mv":       _f(total_mv),
-            "circ_mv":        _f(circ_mv),
+            "idx":             i,
+            "ts_code":         ts_code,
+            "name":            name_map.get(ts_code, ts_code),
+            "close":           _f(daily.get("close")),
+            "pct_chg":         _f(daily.get("pct_chg")),
+            "vol":             _f(daily.get("vol")),
+            "turnover_rate":   _f(basic.get("turnover_rate")),
+            "turnover_rate_f": _f(basic.get("turnover_rate_f")),
+            "volume_ratio":    _f(basic.get("volume_ratio")),
+            "pe_ttm":          _f(basic.get("pe_ttm")),
+            "dv_ratio":        _f(basic.get("dv_ratio")),
+            "dv_ttm":          _f(basic.get("dv_ttm")),
+            "total_share":     _f(basic.get("total_share")),
+            "float_share":     _f(basic.get("float_share")),
+            "free_share":      _f(basic.get("free_share")),
+            "total_mv":        _f(basic.get("total_mv")),
+            "circ_mv":         _f(basic.get("circ_mv")),
         })
     return result
 
@@ -103,16 +118,21 @@ def add_stock(body: AddStockRequest, user: dict = Depends(get_current_user)):
     user_id = int(user["sub"])
     ts_code = body.ts_code.strip().upper()
 
-    with get_conn() as conn:
+    # 验证代码是否存在于 goldenshare（个股或指数）
+    with get_gs_conn() as conn:
         with conn.cursor() as cur:
-            # 持仓列表当前仅支持个股，不接收指数代码
-            cur.execute("SELECT name FROM stock_basic WHERE ts_code = %s", (ts_code,))
+            cur.execute(
+                "SELECT name FROM core.security "
+                "WHERE ts_code = %s AND security_type = 'EQUITY'",
+                (ts_code,),
+            )
             row = cur.fetchone()
             if not row:
-                cur.execute("SELECT name FROM index_basic WHERE ts_code = %s", (ts_code,))
-                index_row = cur.fetchone()
-                if index_row:
-                    # 搜索接口会同时返回指数和个股，这里明确给出业务限制，避免前端表现成“点击无反应”。
+                cur.execute(
+                    "SELECT name FROM core.index_basic WHERE ts_code = %s",
+                    (ts_code,),
+                )
+                if cur.fetchone():
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"{ts_code} 是指数代码，当前持仓列表仅支持个股",
@@ -123,6 +143,9 @@ def add_stock(body: AddStockRequest, user: dict = Depends(get_current_user)):
                 )
             name = row[0]
 
+    # 写入持仓到 stock DB
+    with get_conn() as conn:
+        with conn.cursor() as cur:
             try:
                 cur.execute(
                     "INSERT INTO user_portfolio (user_id, ts_code) VALUES (%s, %s)",

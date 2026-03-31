@@ -19,15 +19,26 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import psycopg2
 from psycopg2.extras import execute_values
 import pandas as pd
-from config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
+from config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, GS_DB_NAME
 
 
 def get_conn():
-    """返回一个 psycopg2 连接对象。调用方负责关闭。"""
+    """返回连接到 stock 数据库的 psycopg2 连接（用户/持仓等表）。"""
     return psycopg2.connect(
         host=DB_HOST,
         port=DB_PORT,
         dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+    )
+
+
+def get_gs_conn():
+    """返回连接到 goldenshare 数据库的 psycopg2 连接（行情/基础数据）。"""
+    return psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        dbname=GS_DB_NAME,
         user=DB_USER,
         password=DB_PASSWORD,
     )
