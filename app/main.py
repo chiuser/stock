@@ -1,26 +1,25 @@
+"""FastAPI entrypoint for the P6S camera management console."""
+
+from __future__ import annotations
+
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
-from app.routers import stocks
-from app.routers import auth
-from app.routers import portfolio
-from app.routers import admin
-from app.routers import sentiment
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-app = FastAPI(title="Stock Charts", docs_url="/api/docs")
+from app.routers import auth, camera
 
-app.include_router(stocks.router,    prefix="/api")
-app.include_router(auth.router,      prefix="/api")
-app.include_router(portfolio.router, prefix="/api")
-app.include_router(admin.router,     prefix="/api")
-app.include_router(sentiment.router, prefix="/api")
+app = FastAPI(title="Camera Face Guard", docs_url="/api/docs")
 
-_static = os.path.join(os.path.dirname(__file__), "static")
+app.include_router(auth.router, prefix="/api")
+app.include_router(camera.router, prefix="/api")
+
+_static = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=_static), name="static")
 
 
@@ -34,29 +33,14 @@ async def no_cache_static(request: Request, call_next):
 
 @app.get("/")
 def index():
-    return RedirectResponse(url="/portfolio")
+    return RedirectResponse(url="/camera")
 
 
 @app.get("/login")
 def login_page():
-    return FileResponse(os.path.join(_static, "login.html"))
+    return FileResponse(_static / "login.html")
 
 
-@app.get("/portfolio")
-def portfolio_page():
-    return FileResponse(os.path.join(_static, "portfolio.html"))
-
-
-@app.get("/chart")
-def chart_page():
-    return FileResponse(os.path.join(_static, "chart.html"))
-
-
-@app.get("/admin")
-def admin_page():
-    return FileResponse(os.path.join(_static, "admin.html"))
-
-
-@app.get("/sentiment")
-def sentiment_page():
-    return FileResponse(os.path.join(_static, "sentiment.html"))
+@app.get("/camera")
+def camera_page():
+    return FileResponse(_static / "camera.html")

@@ -2,7 +2,7 @@
 
 // 已登录则直接跳转
 if (localStorage.getItem('token')) {
-  location.href = '/portfolio';
+  location.href = '/camera';
 }
 
 const usernameEl = document.getElementById('username');
@@ -35,7 +35,7 @@ async function doLogin() {
       const data = await res.json();
       localStorage.setItem('token',    data.token);
       localStorage.setItem('username', data.username);
-      location.href = '/portfolio';
+      location.href = '/camera';
     } else {
       const err = await res.json().catch(() => ({}));
       showError(err.detail || '登录失败，请重试');

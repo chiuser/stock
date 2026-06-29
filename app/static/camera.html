@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>摄像头管理 - Camera Face Guard</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="admin-body camera-body">
+
+  <nav class="nav-bar">
+    <div class="nav-left">
+      <a class="nav-link nav-active" href="/camera">摄像头</a>
+    </div>
+    <div class="nav-right">
+      <span class="nav-username" id="nav-username"></span>
+      <button class="nav-logout" id="nav-logout">退出登录</button>
+    </div>
+  </nav>
+
+  <div class="admin-header">
+    <div class="admin-header-left">
+      <h2>摄像头管理</h2>
+      <span class="admin-date" id="camera-summary">—</span>
+    </div>
+    <div class="admin-header-right">
+      <button class="admin-btn admin-btn-ghost" id="btn-refresh">↺ 刷新</button>
+    </div>
+  </div>
+
+  <div class="camera-grid">
+    <section class="camera-card">
+      <h3>连接状态</h3>
+      <div class="camera-kv" id="camera-config">加载中…</div>
+      <div class="camera-actions">
+        <button class="admin-btn admin-btn-primary" id="btn-test-camera">测试摄像头连接</button>
+      </div>
+      <pre class="camera-result" id="camera-test-result">—</pre>
+    </section>
+
+    <section class="camera-card">
+      <h3>事件接收</h3>
+      <p class="camera-desc">
+        在摄像头后台配置 HTTP 事件上报。服务器收到 heartbeat 后，会开启人脸抓拍和人脸识别事件。
+      </p>
+      <div class="camera-kv" id="event-config">加载中…</div>
+    </section>
+
+    <section class="camera-card">
+      <h3>脸库 Owner</h3>
+      <p class="camera-desc">
+        Owner 是摄像头脸库拥有者标记，后续增删改脸库都要用它生成安全码，请固定保存到环境变量。
+      </p>
+      <div class="camera-form-row">
+        <input type="text" class="config-input" id="owner-input" placeholder="留空则自动生成">
+        <button class="admin-btn admin-btn-primary" id="btn-set-owner">写入 Owner</button>
+      </div>
+      <pre class="camera-result" id="owner-result">—</pre>
+    </section>
+
+    <section class="camera-card">
+      <h3>创建脸库</h3>
+      <div class="camera-form-grid">
+        <input type="text" class="config-input" id="group-id" placeholder="脸库 ID，例如 members">
+        <input type="text" class="config-input" id="group-name" placeholder="脸库名称，例如 会员人脸库">
+        <input type="number" class="config-input" id="group-threshold" placeholder="阈值 0-100，可留空">
+      </div>
+      <div class="camera-actions">
+        <button class="admin-btn admin-btn-primary" id="btn-create-group">创建脸库</button>
+      </div>
+      <pre class="camera-result" id="group-result">—</pre>
+    </section>
+
+    <section class="camera-card camera-card-wide">
+      <h3>本地会员头像同步</h3>
+      <p class="camera-desc">
+        当前先使用我们抓取到的本地头像目录。建议先上传 1 张测试，确认真机接口字段无误后再批量上传。
+      </p>
+      <div class="camera-kv" id="face-summary">加载中…</div>
+      <div class="camera-form-row">
+        <input type="text" class="config-input" id="member-id" placeholder="会员 ID，例如 3787108955784829">
+        <button class="admin-btn admin-btn-primary" id="btn-upload-one">上传单张</button>
+      </div>
+      <div class="camera-form-row">
+        <input type="number" class="config-input" id="batch-limit" placeholder="批量数量，建议先填 1 或 3">
+        <button class="admin-btn admin-btn-ghost" id="btn-upload-batch">批量上传</button>
+      </div>
+      <pre class="camera-result" id="upload-result">—</pre>
+      <div class="camera-face-list" id="face-list"></div>
+    </section>
+
+    <section class="camera-card">
+      <h3>飞书通知</h3>
+      <p class="camera-desc">
+        先配置机器人 webhook 后，可以在这里测试文字通知。图片通知需要再配置飞书应用凭证。
+      </p>
+      <div class="camera-kv" id="feishu-config">加载中…</div>
+      <div class="camera-actions">
+        <button class="admin-btn admin-btn-primary" id="btn-test-feishu">发送测试通知</button>
+      </div>
+      <pre class="camera-result" id="feishu-result">—</pre>
+    </section>
+  </div>
+
+  <div class="toast-wrap" id="toast-wrap"></div>
+
+  <script src="/static/camera.js"></script>
+</body>
+</html>

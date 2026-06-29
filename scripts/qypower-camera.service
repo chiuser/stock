@@ -1,0 +1,19 @@
+[Unit]
+Description=Camera Face Guard Web Service
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/camera-face-guard
+EnvironmentFile=/etc/camera-face-guard/app.env
+ExecStart=/opt/camera-face-guard/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
