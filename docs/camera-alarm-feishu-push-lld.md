@@ -2669,6 +2669,141 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
   - 或通过浏览器 DevTools/Web 后台真实点击保存，抓取成功持久化这些开关时是否调用了其他前置接口。
   - 如果需要继续真机写配置，必须先在新 LLD 中明确要切换的算法/工作模式字段和回滚方式。
 
+### 23.17 Round 17：算法仓库与 AI 工作模式只读诊断
+
+本轮目标：
+
+- 解释 Round 14 到 Round 16 中多次出现的“PUT 返回成功，但 `Enable` 字段不持久化”现象。
+- 判断摄像头是否处在 `FaceCapture`、`FaceRecognition` 或其他算法仓库模式中。
+- 明确下一轮如果要写设备配置，应该写上层算法模式，还是继续停留在人脸抓拍/识别子配置排查。
+
+本轮技术方案：
+
+- 先从离线 ShowDoc 和摄像头 Web 前端脚本确认算法仓库配置接口。
+- 只读读取真机当前算法相关配置，覆盖：
+  - `/System/AlgorithmStoreCfg`：算法仓库当前类型，重点看 `AlgorithmType`。
+  - `/System/AICap`：算法仓库能力，重点看 `AlgorithmWarehouse.support`、`FaceSnap.support`、`FaceReco.support`。
+  - `/System/DeviceCap`：通道人脸识别、人脸抓拍、人脸侦测能力。
+  - `/System/AIWorkMode`：如设备支持，确认是否还有额外 AI 工作模式。
+  - `/FaceReco/1/BaseConfig`、`/AI/FaceSnapshotCfg`、`/FaceReco/1/RecoRuleList`、`/Pictures/1/FaceDetect`：只复核摘要，用于和算法模式做交叉判断。
+- 只读统计远程服务器事件目录，确认在诊断期间是否仍只有 heartbeat。
+- 本轮不新增运行时代码；如果必须解析 XML，只使用临时只读命令输出字段摘要，不保存 raw XML 到仓库。
+
+本轮范围：
+
+- 允许修改：
+  - `docs/camera-alarm-feishu-push-lld.md`
+- 允许只读访问摄像头 GET 接口。
+- 允许只读访问远程服务器事件目录摘要。
+
+本轮不做：
+
+- 不执行 PUT `/System/AlgorithmStoreCfg`。
+- 不执行 PUT `/System/AIWorkMode`。
+- 不修改 `/FaceReco/1/BaseConfig`、`/AI/FaceSnapshotCfg`、`/FaceReco/1/RecoRuleList`、`/Pictures/1/FaceDetect`。
+- 不重启远程服务，不修改 nginx/systemd/env。
+- 不读取或展示完整 raw payload、图片 base64、摄像头密码、事件 token、飞书秘钥。
+
+影响面：
+
+- 设备影响：只读，无配置变化。
+- 远程影响：只读统计文件，无服务变化。
+- 文档影响：记录算法仓库证据、当前配置摘要、下一轮是否需要受控切换算法模式。
+
+风险点：
+
+- Web 前端脚本可能存在 bug 或错误处理分支，不能仅凭脚本判断真机状态，必须以真机 GET 为准。
+- `/System/AlgorithmStoreCfg` 的 XML 示例在文档中闭合标签存在笔误，执行写入前必须重新设计 XML 构造和回读验证。
+- 如果 `/System/AIWorkMode` 返回空或不支持，不能把它当成关闭状态；只能记录为“本机未暴露有效字段”。
+- `FaceCapture` 与 `FaceRecognition` 可能是互斥算法模式，切换可能影响当前抓拍或识别行为；本轮不能直接写。
+
+回滚方式：
+
+- 本轮只读无设备回滚。
+- 文档结论如后续被真机验证推翻，下一轮先修订本节。
+
+验证方式：
+
+- 使用离线文档确认：
+  - `GET /System/AlgorithmStoreCfg` 返回 `AlgorithmType`。
+  - `PUT /System/AlgorithmStoreCfg` 可设置 `Unknown`、`IntelligentAlert`、`FaceCapture`、`FaceRecognition`，但本轮不调用。
+- 使用 Web 前端脚本确认后台“算法仓库”页面保存时调用 `/System/AlgorithmStoreCfg`。
+- 使用只读 GET 读取真机当前 `AlgorithmType` 和 AI 能力摘要。
+- 使用 `ssh qypower-prod` 只读统计远程 raw/records operator 分布。
+
+本轮停止条件：
+
+- 任何需要写摄像头配置的动作。
+- 读取到的算法状态与文档明显不一致，需要先人工复核。
+- 远程出现新的真实人脸事件但字段结构未知；先记录字段摘要，不能直接改解析逻辑。
+- 发现摄像头返回敏感字段或 raw 图片内容；停止输出并只保留脱敏结论。
+
+本轮提交策略：
+
+- 如果只更新文档，提交类型使用 `docs:`。
+- 暂存前确认不包含 `.env.local`、图片文件、STYD 会员数据、临时备份 XML 和摄像头 raw payload。
+
+本轮文档与 Web 前端复核结果：
+
+- 离线 ShowDoc 中“算法商场定制”明确暴露 `GET /System/AlgorithmStoreCfg` 和 `PUT /System/AlgorithmStoreCfg`。
+- `AlgorithmStoreCfg/AlgorithmType` 的可选值为 `Unknown`、`IntelligentAlert`、`FaceCapture`、`FaceRecognition`。
+- 摄像头 Web 前端 `ipc_js_events_AlgorithmWarehouse.js` 的算法仓库页面保存逻辑也调用 `/System/AlgorithmStoreCfg`：
+  - 选择人脸抓拍时写 `FaceCapture`。
+  - 选择人脸识别时写 `FaceRecognition`。
+- Web 前端脚本中的 GET 成功分支为空、error 分支读取 `xmlDoc` 的写法明显可疑，因此不能只依赖脚本判断 UI 行为；真机 GET 结果优先级更高。
+
+本轮真机只读诊断结果：
+
+- `GET /System/AlgorithmStoreCfg`：
+  - `AlgorithmType=Unknown`。
+  - 该值既不是 `FaceCapture`，也不是 `FaceRecognition`。
+- `GET /System/AICap`：
+  - XML 根节点为 `Channel`，不是 ShowDoc/Web 前端假设的 `AICap` 包裹结构。
+  - `AlgorithmWarehouse.support=false`。
+  - `AlgorithmWarehouse.FaceSnap.support=false`。
+  - `AlgorithmWarehouse.FaceReco.support=true`。
+  - `ForFaceReco.support=true`，且支持 `AudioVolume`、`AudioType`。
+- `GET /System/DeviceCap`：
+  - `FunctionList/FaceFunction/FaceSnapshot=true`。
+  - `FunctionList/FaceFunction/FaceReco=true`。
+  - `FunctionList/Push/FaceCapture/Support=true`。
+  - `FunctionList/ConfigReboot/FaceSnapshot=true`、`FaceReco=true`。
+  - `FunctionList/AIWorkMode/PeopleMode=true`、`FaceMode=false`。
+  - `FunctionListAboutChannel/ChannelList/Channel/FaceSnap=true`。
+  - `FunctionListAboutChannel/ChannelList/Channel/FaceReco=true`。
+  - `FunctionListAboutChannel/ChannelList/Channel/SmartEvent/FaceSnap=false`、`SmartEvent/FaceReco=false`，该字段与前几项能力字段不一致，不能单独作为禁用依据。
+- `GET /System/AIWorkMode`：
+  - 返回空 `<AIWorkMode Version="1.0" />`。
+  - 本机未通过该接口暴露可直接读取的 `PeopleMode`、`FaceMode` 当前值。
+- 复核人脸子配置：
+  - `/FaceReco/1/BaseConfig`：`EnableRecognition=true`、`OverlayHumanBox=0`、`Senstive=0`。
+  - `/AI/FaceSnapshotCfg`：`Enable=true`、`Trigger.Push.Enable=true`、`Trigger.Snapshot.Enable=true`、`ShowFaceFrame=true`、`Schedule.AllDay=true`。
+  - `/FaceReco/1/RecoRuleList`：`rule_count=1`、第一层 `Enable=false`、`RecognitionRule=Comparison pass`、`FaceGroupList.ControlPersonnelType=OrganizationMember`、`Trigger.Push.Enable=true`、`Trigger.Snapshot.Enable=true`。
+  - `/Pictures/1/FaceDetect`：`Enable=false`、`Trigger.Push.Enable=true`、`Trigger.Snapshot.Enable=true`、`Schedule.AllDay=true`。
+
+本轮远程只读复核结果：
+
+- `/var/lib/camera-face-guard/p6s_events/raw/2026-07-02`：
+  - `total=139`。
+  - `operators={"heartbeat": 139}`。
+- `/var/lib/camera-face-guard/p6s_events/records/2026-07-02`：
+  - `total=139`。
+  - `operators={"heartbeat": 139}`。
+  - `results={"heartbeat": 139}`。
+
+本轮结论：
+
+- 服务端 HTTP 推送链路仍然正常，摄像头持续推送 heartbeat，远程服务也持续落盘。
+- 设备明确具备人脸抓拍和人脸识别能力，但当前上层算法仓库模式为 `Unknown`。
+- 这可以解释前几轮现象：人脸抓拍、人脸识别、普通人脸侦测的子配置看似存在，部分字段也可读写，但关键 `Enable` 字段可能受上层算法模式约束，导致 PUT 返回成功却不持久化或不触发真实事件。
+- 当前不应继续重试 `/FaceReco/1/RecoRuleList.Enable` 或 `/Pictures/1/FaceDetect.Enable`。
+- 下一轮建议单独设计受控写入 `/System/AlgorithmStoreCfg`：
+  - 目标值优先为 `FaceRecognition`，因为本项目目标是匹配会员人脸库并区分熟人/陌生人。
+  - 写入前必须备份当前 XML。
+  - 写入后必须 GET 回读 `AlgorithmType=FaceRecognition`。
+  - 写入后再复核 `/FaceReco/1/BaseConfig`、`/AI/FaceSnapshotCfg`、`/FaceReco/1/RecoRuleList`、`/Pictures/1/FaceDetect` 是否发生派生变化。
+  - 如果算法模式切换成功，再进入真实人脸事件观察；如果仍不能持久化，停止并复述困难，不继续盲目写其他字段。
+
 ## 24. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`
