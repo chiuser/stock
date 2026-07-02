@@ -541,7 +541,6 @@ records/YYYY-MM-DD/{dedupe_key}.json
   },
   "link": {
     "token_hash": "sha256...",
-    "view_url": "http://82.156.198.180/api/p6s/event-images/view/...",
     "expires_at": "2026-07-03T18:35:02+08:00"
   },
   "feishu": {
@@ -614,7 +613,7 @@ token = secrets.token_urlsafe(32)
 token_hash = sha256(token)
 ```
 
-服务器只保存 `token_hash`，不保存明文 token。
+服务器只保存 `token_hash`，不保存明文 token。包含明文 token 的 `view_url` 只能在运行时生成并发送给飞书，不能写入 raw、records 或 links 目录。
 
 链接记录：
 
@@ -1571,6 +1570,85 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
 本轮提交策略：
 
 - 本轮完成并验证后单独提交一次，提交信息需说明飞书签名、富文本模板和兼容边界。
+
+### 23.5 Round 05：LLD 步骤 5
+
+本轮对应 LLD 步骤：
+
+- 步骤 5：开发，建立 P6S 事件解析与分流层。
+
+本轮目标：
+
+- 新增 `app/services/p6s_events.py`，集中处理 P6S 事件标准化、分流、Ack、存储、图片保存、链接生成和飞书通知调用。
+- 将 `FaceReco` 的 known、stranger、parse_error、ignored 分支固化为服务层结果。
+- 为 Round 06 路由改造提供单一入口 `handle_event(...)`。
+
+本轮范围：
+
+- 新增 `app/services/p6s_events.py`。
+- 小幅调整 `event_store.build_event_identity()`，让 `event_day` 优先使用可解析的事件时间，解析失败才使用 `received_at`。
+- 不改 `app/routers/camera.py`。
+- 不新增图片查看路由。
+- 不连接摄像头，不发送真实飞书消息；验证时使用 `notify=False` 或 fake 方式。
+
+具体开发计划：
+
+1. 定义结果数据结构：
+   - `MatchedPerson`：人员姓名、人员 ID、ack 用 `person_id`、缺字段标记。
+   - `EventHandleResult`：Ack、分流结果、identity、raw file、record file、image、link、feishu、duplicate。
+   - `DecodedEventImage`：图片来源、bytes、expected_md5。
+2. 修正事件日期：
+   - 在 `event_store.py` 中新增事件时间日期解析。
+   - `EventIdentity.event_day` 优先使用 `info.time` 可解析出的日期。
+   - 无法解析时继续使用 `received_at` 日期。
+3. 实现入口：
+   - `async def handle_event(payload, request_meta=None, root=None, notify=True)`。
+   - 生成 identity。
+   - 原始事件落盘。
+   - 如果处理记录已存在，返回 Ack 但跳过通知，保证同一事件重复投递不重复通知。
+4. 实现分流：
+   - `heartbeat` 返回 heartbeat Ack。
+   - 非 `FaceReco` 写入 ignored 记录并返回通用 Ack。
+   - `FaceReco` 按 `matchNumber` 和 `personInfo` 判断 known、stranger、parse_error。
+5. 实现 known：
+   - 解析人员姓名和人员 ID。
+   - 姓名缺失显示 `未知姓名`，ID 缺失显示 `未知ID`。
+   - `P6S_EVENT_NOTIFY_KNOWN_PERSON=true` 时调用 `feishu.notify_known_face`。
+   - 写入处理记录。
+6. 实现 stranger：
+   - 按 `CaptureImage`、`BackgroundImage`、`recognizeImage` 优先级提取图片。
+   - 支持 data URL 和纯 base64。
+   - 解码失败、缺图、格式不支持都写记录并发异常通知。
+   - 图片保存成功后调用 `image_links.create_image_link`。
+   - 调用 `feishu.notify_unknown_face`，传入保存路径和查看链接。
+7. 实现 parse_error：
+   - 写入处理记录。
+   - 调用 `feishu.notify_event_error`，不暴露堆栈。
+8. 实现 Ack：
+   - heartbeat Ack 沿用现有策略。
+   - FaceReco Ack 返回 `personId`、`uniqueId`、`pictureMd5`、`storedImage`。
+   - 所有通知失败不影响 Ack。
+9. 验证：
+   - `python3 -m py_compile app/services/event_store.py app/services/image_links.py app/services/feishu.py app/services/p6s_events.py`。
+   - 使用临时目录验证 known 样本、stranger 样本、missing image 样本、heartbeat 样本。
+   - 验证重复调用同一 known 样本不会重复通知。
+   - `git diff --check`。
+
+本轮风险：
+
+- 如果 known/stranger 分流条件实现错误，会导致陌生人不保存图片或已入库人员被误报。
+- 如果重复事件判断过早，可能在首次处理失败后跳过补偿。
+- 如果通知异常冒泡，会影响摄像头 Ack，引发摄像头重推。
+
+本轮回滚方式：
+
+- 删除 `app/services/p6s_events.py`。
+- 回滚 `event_store.py` 中 event_day 解析调整。
+- 删除本节 Round 05 开发执行记录。
+
+本轮提交策略：
+
+- 本轮完成并验证后单独提交一次，提交信息需说明新增 P6S 事件解析分流层，且尚未接入 FastAPI 路由。
 
 ## 24. 参考文档
 

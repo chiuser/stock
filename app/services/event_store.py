@@ -169,6 +169,7 @@ def build_event_identity(
         info.get("EventTime"),
     )
     event_time_compact = _compact_time(event_time, received)
+    event_day = _event_day(event_time, received)
     dedupe_key = build_dedupe_key(
         serial_number=serial_number,
         operator=operator,
@@ -186,7 +187,7 @@ def build_event_identity(
         event_time=event_time,
         event_time_compact=event_time_compact,
         received_at=received,
-        event_day=received.strftime("%Y-%m-%d"),
+        event_day=event_day,
     )
 
 
@@ -392,6 +393,23 @@ def _compact_time(value: str, fallback: datetime) -> str:
         except ValueError:
             pass
     return fallback.astimezone(_LOCAL_TZ).strftime("%Y%m%d%H%M%S")
+
+
+def _event_day(value: str, fallback: datetime) -> str:
+    digits = re.sub(r"\D", "", value or "")
+    if len(digits) >= 8:
+        try:
+            parsed = datetime.strptime(digits[:8], "%Y%m%d")
+            return parsed.strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    if value:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed.astimezone(_LOCAL_TZ).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return fallback.astimezone(_LOCAL_TZ).strftime("%Y-%m-%d")
 
 
 def _first_str(*values: Any, default: str = "") -> str:
