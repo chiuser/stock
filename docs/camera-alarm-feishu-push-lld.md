@@ -3037,6 +3037,115 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
   - 如果新增非 heartbeat 人脸事件，就按真实事件继续验证服务端解析和飞书通知。
   - 如果仍只有 heartbeat，再回到摄像头触发条件、画面识别框、Web 后台算法页面等方向排查。
 
+### 23.20 Round 20：恢复 RecoRule 到已知可抓拍状态
+
+本轮目标：
+
+- 按用户明确指令恢复第 3 条可疑配置：`/FaceReco/1/RecoRuleList`。
+- 将当前识别规则恢复到历史证据中“抓拍变好”后的状态：`ControlPersonnelType=Stranger`、`Trigger.Snapshot.Enable=true`。
+- 恢复后停止，交给用户重新做现实抓拍测试。
+
+本轮技术方案：
+
+- 使用已存在的历史可用状态 XML：
+  - `/private/tmp/p6sai-fix-recorule-20260702_171528/after_recorule.xml`
+- 写入前只读读取当前 `/FaceReco/1/RecoRuleList`，只比较摘要字段：
+  - `RecoRule.Enable`
+  - `RecognitionRule`
+  - `CompareLimit`
+  - `FaceGroupList.ControlPersonnelType`
+  - `Trigger.Push.Enable`
+  - `Trigger.Snapshot.Enable`
+  - `Trigger.Snapshot.SnapshotMask`
+  - `Trigger.Record.Enable`
+  - `Schedule.AllDay`
+- 执行一次完整 XML PUT `/FaceReco/1/RecoRuleList`。
+- 写入后立即 GET 回读，确认至少满足：
+  - `FaceGroupList.ControlPersonnelType=Stranger`
+  - `Trigger.Snapshot.Enable=true`
+  - `Trigger.Snapshot.SnapshotMask=1`
+  - `Trigger.Push.Enable=true`
+  - `Trigger.Record.Enable=true`
+
+本轮范围：
+
+- 允许修改：
+  - `docs/camera-alarm-feishu-push-lld.md`
+- 允许对摄像头执行一次 PUT `/FaceReco/1/RecoRuleList`。
+
+本轮不做：
+
+- 不写 `/AI/FaceSnapshotCfg`。
+- 不写 `/Pictures/1/FaceDetect`。
+- 不写 `/System/AlgorithmStoreCfg`。
+- 不写 `/System/HTTPEventServerConfigV2`。
+- 不写人脸库、人员、Owner、组织结构。
+- 不重启摄像头或远程服务。
+- 不展示摄像头密码、事件 token、图片 base64 或完整 raw payload。
+
+影响面：
+
+- 设备影响：人脸识别规则的布控对象会恢复为陌生人，抓拍联动保持开启。
+- 远程影响：如果摄像头重新产生人脸事件，服务器可能收到新的非 heartbeat 事件。
+- 文档影响：记录恢复前后摘要，作为后续测试基线。
+
+风险点：
+
+- 完整 XML PUT 可能让设备按自身固件规则回写部分字段，例如 `RecoRule.Enable` 仍可能保持 `false`。
+- 如果当前用户其实希望识别组织成员而不是陌生人，恢复为 `Stranger` 会改变识别规则语义；但本轮是按用户要求恢复“第 3 条”。
+- 如果恢复后仍不抓拍，说明问题不止在 `ControlPersonnelType` 或抓拍联动字段。
+
+回滚方式：
+
+- 本轮写入前保存当前 `/FaceReco/1/RecoRuleList` 到系统临时目录。
+- 如恢复后表现更差，可用该备份完整 PUT 回写。
+
+验证方式：
+
+- 写入前后摘要对比。
+- 写入后只读回查关键字段。
+- 用户随后站到摄像头前做现实抓拍测试。
+
+本轮停止条件：
+
+- 历史 XML 文件不存在或无法解析。
+- 当前规则读取失败。
+- PUT 返回 HTTP 非 2xx 或设备 `statusCode` 非 `0`。
+- 写入后 `ControlPersonnelType` 未恢复为 `Stranger`。
+- 写入后 `Trigger.Snapshot.Enable` 未保持 `true`。
+
+本轮执行结果：
+
+- 写入前只读保存当前规则到系统临时文件：
+  - `/private/tmp/reco_rule_before_restore_round20.xml`
+- 使用历史可用状态 XML 作为恢复目标：
+  - `/private/tmp/p6sai-fix-recorule-20260702_171528/after_recorule.xml`
+- 写入前摘要对比：
+  - 当前：`ControlPersonnelType=OrganizationMember`
+  - 目标：`ControlPersonnelType=Stranger`
+  - 其他关键字段无差异：`RecognitionRule=Comparison pass`、`CompareLimit=0`、`Trigger.Push.Enable=true`、`Trigger.Snapshot.Enable=true`、`Trigger.Snapshot.SnapshotMask=1`、`Trigger.Record.Enable=true`、`Schedule.AllDay=true`
+- 已执行一次完整 XML PUT `/FaceReco/1/RecoRuleList`。
+- 写入响应：
+  - HTTP 状态：`200`
+  - 设备 `ResponseStatus.statusCode=0`
+  - 设备 message 为空
+- 写入后只读回读摘要：
+  - `ControlPersonnelType=Stranger`
+  - `Trigger.Snapshot.Enable=true`
+  - `Trigger.Snapshot.SnapshotMask=1`
+  - `Trigger.Push.Enable=true`
+  - `Trigger.Record.Enable=true`
+  - `Schedule.AllDay=true`
+  - `RecoRule.Enable=false`
+
+本轮结论：
+
+- 第 3 条已按用户要求恢复成功。
+- 当前设备规则已经回到历史证据中的可抓拍基线：`Stranger + Snapshot=true + Push=true + Record=true`。
+- `RecoRule.Enable=false` 仍存在，但该值与历史可抓拍基线一致，本轮不再把它作为恢复失败条件。
+- 本轮没有写入 `/AI/FaceSnapshotCfg`、`/Pictures/1/FaceDetect`、`/System/AlgorithmStoreCfg`、`/System/HTTPEventServerConfigV2`、人脸库、人员、Owner 或组织结构。
+- 下一步应由用户重新站到摄像头前测试现实抓拍效果；如仍不抓拍，再基于该恢复基线只读排查。
+
 ## 24. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`
