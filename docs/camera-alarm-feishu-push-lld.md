@@ -1432,6 +1432,77 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
 
 - 本轮完成并验证后单独提交一次，提交信息需说明新增文件系统事件存储层，并明确尚未接入路由。
 
+### 23.3 Round 03：LLD 步骤 3
+
+本轮对应 LLD 步骤：
+
+- 步骤 3：开发，建立图片 token 链接层。
+
+本轮目标：
+
+- 新增 `app/services/image_links.py`，负责陌生人图片查看链接的生成、保存和校验。
+- 使用不透明随机 token，服务器只保存 `sha256(token)`，不保存 token 明文。
+- 为后续 `GET /api/p6s/event-images/view/{token}` 路由提供可复用解析能力。
+
+本轮范围：
+
+- 新增 `app/services/image_links.py`。
+- 复用 `event_store.py` 的事件根目录、日期目录和路径归属校验。
+- 实现 token 生成、token 哈希、链接记录落盘、链接 URL 生成。
+- 实现 token 访问解析、过期校验、目标图片路径校验、文件存在性校验。
+- 实现访问计数 `access_count` 和 `last_accessed_at` 更新。
+- 不新增 FastAPI 路由。
+- 不改现有 `camera.py` 图片接口。
+- 不改飞书通知逻辑。
+
+具体开发计划：
+
+1. 定义异常和数据结构：
+   - `ImageLinkError`：图片链接基础异常。
+   - `InvalidImageTokenError`：token 字符非法。
+   - `ImageLinkNotFoundError`：找不到 token 哈希记录。
+   - `ImageLinkExpiredError`：链接过期。
+   - `ImageLinkTargetError`：图片路径非法、不存在或不是文件。
+   - `CreatedImageLink`：返回 token、token_hash、view_url、record_path、expires_at。
+   - `ResolvedImageLink`：返回 image_path、content_type、link_record。
+2. 实现配置读取：
+   - `P6S_EVENT_IMAGE_LINK_TTL_SECONDS` 默认 `86400`。
+   - `P6S_EVENT_IMAGE_PUBLIC_BASE_URL` 优先。
+   - 如果未配置图片专用前缀，则使用 `PUBLIC_BASE_URL + /api/p6s/event-images/view`。
+3. 实现链接生成：
+   - `token = secrets.token_urlsafe(32)`。
+   - `token_hash = sha256(token)`。
+   - 记录写入 `links/YYYY-MM-DD/{token_hash}.json`。
+   - 记录中包含 `record_dedupe_key`、`relative_path`、`content_type`、`created_at`、`expires_at`、`access_count`、`last_accessed_at`。
+4. 实现链接解析：
+   - 清洗 token，只允许 `0-9A-Za-z_-`。
+   - 在 `links/**/{token_hash}.json` 查找记录。
+   - 校验 `expires_at`。
+   - 使用 `relative_path` 定位图片，并确认目标在 `P6S_EVENT_IMAGE_DIR` 内。
+   - 确认文件存在且是普通文件。
+   - 成功时更新访问计数和最后访问时间。
+5. 验证：
+   - `python3 -m py_compile app/services/event_store.py app/services/image_links.py`。
+   - 使用临时目录创建图片、生成 link、解析 link。
+   - 验证伪造 token 抛出 not found。
+   - 验证过期 token 抛出 expired。
+   - 验证路径穿越记录无法解析。
+   - `git diff --check`。
+
+本轮风险：
+
+- 如果 token 明文被写入文件，会造成链接泄露后无法控制。
+- 如果 `relative_path` 没有严格限制在事件根目录内，后续公网图片接口可能产生路径穿越风险。
+
+本轮回滚方式：
+
+- 删除 `app/services/image_links.py`。
+- 删除本节 Round 03 开发执行记录。
+
+本轮提交策略：
+
+- 本轮完成并验证后单独提交一次，提交信息需说明新增 token 图片链接层，并明确尚未接入 FastAPI 路由。
+
 ## 24. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`
