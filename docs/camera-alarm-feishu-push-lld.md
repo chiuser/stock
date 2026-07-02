@@ -2268,6 +2268,77 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
 - 更可能的方向是：该固件把 `RecoRule.Enable` 作为只读/派生字段、需要通过其他关联字段或 UI 启用、当前规则组合不允许启用，或需要完整后台页面保存流程触发额外接口。
 - 下一步不能继续盲目重试 PUT `/FaceReco/1/RecoRuleList`；需要先通过摄像头 Web 后台操作或浏览器/接口抓包确认 UI 启用规则时实际调用了哪些接口和提交了哪些字段。
 
+### 23.13 Round 13：方式3，确认 Web 后台真实启用路径
+
+本轮目标：
+
+- 按“方式3”推进：把摄像头 Web 后台作为真实来源，确认后台启用人脸识别规则时实际访问的接口、请求方法、请求体和字段变化。
+- 优先通过离线 ShowDoc 和浏览器/接口轨迹找出 `RecoRule.Enable` 不持久化的根因，避免继续对同一个 PUT 接口做无依据重试。
+- 形成可执行结论：如果能确认正确启用接口，则再设计下一轮最小配置写入；如果不能确认，则明确需要人工在 Web 后台操作并提供抓包证据。
+
+本轮范围：
+
+- 只读检索 `docs/p6scgi-showdoc` 中 `FaceReco`、人脸识别规则、识别区域、布防计划、联动策略、Web 后台配置保存相关接口。
+- 只读采集当前设备的人脸抓拍、人脸识别规则、事件推送模式和可能的人脸识别关联配置摘要。
+- 如需要浏览器验证，只允许打开摄像头 Web 后台并观察网络请求；不在 UI 上保存配置，除非先追加 LLD 并说明会改变哪些设备配置。
+- 允许补充只读诊断脚本或文档记录；不允许真实修改摄像头配置。
+
+本轮不做：
+
+- 不再重复 PUT `/FaceReco/1/RecoRuleList`。
+- 不进入端到端人脸识别触发测试。
+- 不修改远程服务器、飞书 webhook 或已部署服务。
+- 不把摄像头密码、事件 token、飞书秘钥写入文档或 git。
+
+影响面：
+
+- 文档影响：更新本 LLD 中关于 `RecoRule.Enable` 不持久化的根因判断和后续动作。
+- 代码影响：如果新增诊断能力，仅限只读查询和摘要输出，不改变运行时服务行为。
+- 设备影响：本轮预期无设备配置变更。
+
+风险点：
+
+- 摄像头 Web 后台可能通过前端状态组合多个接口，单看一个保存按钮不一定能直接定位根因。
+- 浏览器抓包可能包含登录态或认证信息，记录到文档时必须脱敏。
+- 如果设备固件与 ShowDoc 不一致，需要以真机返回和 Web 后台请求为准。
+
+回滚方式：
+
+- 本轮不写设备配置，正常不需要设备回滚。
+- 如果只读诊断脚本引入问题，删除或回退该脚本即可。
+- 如果文档判断不准确，下一轮先修订 LLD 后再继续。
+
+验证方式：
+
+- 使用 `rg` 对离线 ShowDoc 做限定关键词检索，输出命中的接口文件和关键字段。
+- 运行只读诊断命令，确认当前设备相关配置摘要可读，且未触发写接口。
+- 如发生代码变更，运行 `python3 -m py_compile` 验证脚本和服务模块语法。
+- 最终把“是否找到替代启用路径、是否需要 Web 后台人工操作、下一轮是否可以安全写入”的结论写回本节。
+
+本轮只读验证记录：
+
+- 离线 ShowDoc 确认 `/FaceReco/ChannelID/RecoRuleList` 是人脸识别规则列表接口，字段受 `Device-FunctionListAboutChannel-ChannelList-Channel-FaceReco` 能力限制。
+- 离线 ShowDoc 确认 `/Pictures/ChannelID/FaceDetect` 是“普通事件-人脸侦测”配置接口，字段受 `DeviceCap-FaceDetect-Support` 能力限制。
+- 离线 ShowDoc 确认 `/System/AIWorkMode` 存在 `PeopleMode` 和 `FaceMode`，但当前设备只读返回空 `<AIWorkMode />`，不能作为本机启用依据。
+- 通过 Web 后台页面实现定位到 `ipc/js/route.json` 中 `fcrecognition` 菜单实际打开 `ipc/pages/events/Facerecognition.html`。
+- `Facerecognition.html` 实际加载 `ipc/js/events/Facerecognition.js`。
+- `Facerecognition.js` 中人脸识别总开关绑定到 `/FaceReco/1/BaseConfig`，字段为 `FaceBaseConfig/EnableRecognition`。
+- `Facerecognition.js` 中 `/FaceReco/1/RecoRuleList` 主要用于布控人员、布防时间和联动方式配置；Web 后台保存联动方式时修改的是 `Trigger/BeepAlert`、`Trigger/Push`、`Trigger/Snapshot`、`Trigger/Record`、`Trigger/LightAlarm` 等字段，没有读取或写入第一层 `RecoRule/Enable` 作为开关。
+- 只读读取当前 `/FaceReco/1/BaseConfig`，`EnableRecognition=true`，说明 Web 后台意义上的人脸识别总开关已经打开。
+- 只读读取当前 `/AI/FaceSnapshotCfg`，`Enable=true`、`Trigger.Push.Enable=true`、`Trigger.Snapshot.Enable=true`、`IsCaptureBackground=true`、`ShowFaceFrame=true`。
+- 只读读取当前 `/FaceReco/1/RecoRuleList`，仍为 `RecoRule.Enable=false`，但 `RecognitionRule=Comparison pass`、`ControlPersonnelType=OrganizationMember`、`Trigger.Push.Enable=true`、`Trigger.Snapshot.Enable=true`。
+- 只读读取当前 `/Pictures/1/FaceDetect`，顶层 `FaceDetect.Enable=false`。该配置属于普通事件的人脸侦测页面，不等同于 Web 后台人脸识别页签的总开关，但如果画面完全没有人脸框或普通人脸侦测事件，也可能影响肉眼观察判断。
+- 只读读取当前 `/System/DeviceCap`，`FunctionListAboutChannel/Channel/FaceReco=true`，Web 前端也正是用该字段显示人脸识别菜单；同一能力文档里 `SmartEvent/FaceReco=false`，但 Web 菜单逻辑没有用它控制人脸识别页签。
+- `/System/FaceRecognitionIntervalCfg` 和旧 `/FaceRecognition/Ability` 在当前设备返回 `16001`，不适合作为本机配置依据。
+
+本轮结论：
+
+- 找到了替代启用路径：Web 后台实际使用 `/FaceReco/1/BaseConfig/EnableRecognition` 作为人脸识别总开关，而不是第一层 `RecoRule/Enable`。
+- `RecoRule.Enable=false` 当前不能再单独视为阻塞条件，因为 Web 后台自身不把它作为可操作开关，而且前一轮两种 PUT 模式都无法让它持久化。
+- 当前设备在人脸识别主链路上已经具备三项关键条件：`EnableRecognition=true`、`AIFaceSnapshotCfg.Enable=true`、`RecoRule.Trigger.Push.Enable=true`。
+- 下一轮不应继续尝试修改第一层 `RecoRule/Enable`；应进入端到端事件验证，观察真实 `FaceReco` 或 `FaceSnapshot` 推送是否到达远程服务器。
+- 如果下一轮仍没有识别事件，再按新 LLD 单独设计“人脸侦测/抓拍观察增强”配置，重点评估是否需要启用 `/Pictures/1/FaceDetect`，而不是把它混入本轮。
+
 ## 24. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`
