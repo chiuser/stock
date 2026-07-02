@@ -1,0 +1,1204 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>摄像头人脸识别结果推送到飞书技术方案</title>
+  <style>
+    :root {
+      --bg: #eef1ea;
+      --paper: #fffdf6;
+      --paper-2: rgba(255, 253, 246, .78);
+      --ink: #202620;
+      --muted: #667060;
+      --line: #ddd8c8;
+      --brand: #1f6f5b;
+      --brand-dark: #164b40;
+      --accent: #c6783d;
+      --warn: #ad6133;
+      --danger: #a93f39;
+      --good: #21724f;
+      --soft: #e7f0e7;
+      --soft-warn: #faecd9;
+      --shadow: 0 28px 80px rgba(46, 53, 41, .16);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.72;
+      background:
+        radial-gradient(circle at 12% 8%, rgba(31, 111, 91, .16), transparent 30rem),
+        radial-gradient(circle at 88% 2%, rgba(198, 120, 61, .16), transparent 28rem),
+        linear-gradient(135deg, #e8f0e7 0%, var(--bg) 46%, #f3eadb 100%);
+    }
+
+    a { color: var(--brand-dark); text-decoration: none; font-weight: 750; }
+    a:hover { text-decoration: underline; }
+
+    code {
+      padding: 2px 6px;
+      border: 1px solid rgba(32, 38, 32, .08);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, .72);
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: .92em;
+    }
+
+    pre {
+      overflow: auto;
+      padding: 18px;
+      border-radius: 18px;
+      color: #f5f2e9;
+      background: #1e2a24;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
+    }
+
+    pre code {
+      padding: 0;
+      border: 0;
+      color: inherit;
+      background: transparent;
+      font-size: 13px;
+    }
+
+    .shell {
+      width: min(1180px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 42px 0 72px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.35fr .75fr;
+      gap: 22px;
+      align-items: stretch;
+      margin-bottom: 22px;
+    }
+
+    .hero-card,
+    .panel {
+      border: 1px solid rgba(32, 38, 32, .08);
+      border-radius: 30px;
+      background: var(--paper-2);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(16px);
+    }
+
+    .hero-card { padding: 40px; }
+    .panel { padding: 26px; margin-top: 18px; }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 13px;
+      border-radius: 999px;
+      color: var(--brand-dark);
+      background: rgba(31, 111, 91, .12);
+      font-size: 13px;
+      font-weight: 850;
+      letter-spacing: .02em;
+    }
+
+    h1 {
+      margin: 18px 0 16px;
+      font-size: clamp(34px, 5vw, 58px);
+      line-height: 1.04;
+      letter-spacing: -.045em;
+    }
+
+    h2 {
+      margin: 0 0 16px;
+      font-size: 25px;
+      line-height: 1.25;
+      letter-spacing: -.025em;
+    }
+
+    h3 {
+      margin: 22px 0 10px;
+      font-size: 18px;
+      line-height: 1.35;
+    }
+
+    p { margin: 0 0 12px; }
+
+    ul,
+    ol {
+      margin: 10px 0 0;
+      padding-left: 22px;
+    }
+
+    li { margin: 7px 0; }
+
+    .lead {
+      color: var(--muted);
+      font-size: 18px;
+      margin: 0;
+    }
+
+    .meta {
+      display: grid;
+      gap: 12px;
+      padding: 26px;
+    }
+
+    .meta-item {
+      padding: 15px;
+      border: 1px solid rgba(32, 38, 32, .07);
+      border-radius: 18px;
+      background: rgba(255,255,255,.52);
+    }
+
+    .meta-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .meta-value {
+      margin-top: 4px;
+      font-weight: 900;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      padding: 18px;
+      border: 1px solid rgba(32, 38, 32, .08);
+      border-radius: 22px;
+      background: rgba(255,255,255,.50);
+    }
+
+    .card strong { color: var(--brand-dark); }
+
+    .tag {
+      display: inline-flex;
+      padding: 4px 9px;
+      border-radius: 999px;
+      color: var(--brand-dark);
+      background: rgba(31, 111, 91, .12);
+      font-size: 12px;
+      font-weight: 850;
+      white-space: nowrap;
+    }
+
+    .tag.warn {
+      color: var(--warn);
+      background: rgba(198, 120, 61, .14);
+    }
+
+    .tag.danger {
+      color: var(--danger);
+      background: rgba(169, 63, 57, .12);
+    }
+
+    .tag.good {
+      color: var(--good);
+      background: rgba(33, 114, 79, .12);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 18px;
+      background: rgba(255,255,255,.54);
+    }
+
+    th,
+    td {
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--brand-dark);
+      background: rgba(31, 111, 91, .10);
+      font-size: 13px;
+      letter-spacing: .03em;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .step {
+      position: relative;
+      min-height: 160px;
+      padding: 18px;
+      border: 1px solid rgba(32, 38, 32, .08);
+      border-radius: 24px;
+      background: rgba(255,255,255,.56);
+    }
+
+    .step::after {
+      content: ">";
+      position: absolute;
+      top: 50%;
+      right: -12px;
+      transform: translateY(-50%);
+      color: var(--accent);
+      font-weight: 900;
+      font-size: 22px;
+    }
+
+    .step:last-child::after { display: none; }
+
+    .step-num {
+      display: inline-grid;
+      place-items: center;
+      width: 32px;
+      height: 32px;
+      margin-bottom: 12px;
+      border-radius: 50%;
+      color: white;
+      background: var(--brand);
+      font-weight: 900;
+    }
+
+    .note {
+      padding: 16px 18px;
+      border-left: 5px solid var(--brand);
+      border-radius: 16px;
+      background: var(--soft);
+    }
+
+    .note.warn {
+      border-left-color: var(--accent);
+      background: var(--soft-warn);
+    }
+
+    .note.danger {
+      border-left-color: var(--danger);
+      background: rgba(169, 63, 57, .10);
+    }
+
+    .timeline {
+      display: grid;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .timeline-item {
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 16px;
+      padding: 16px;
+      border: 1px solid rgba(32, 38, 32, .08);
+      border-radius: 18px;
+      background: rgba(255,255,255,.46);
+    }
+
+    .phase {
+      color: var(--brand-dark);
+      font-weight: 900;
+    }
+
+    .small { color: var(--muted); font-size: 14px; }
+
+    footer {
+      margin-top: 24px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    @media (max-width: 900px) {
+      .hero,
+      .grid,
+      .grid-3,
+      .flow,
+      .timeline-item {
+        grid-template-columns: 1fr;
+      }
+
+      .step { min-height: auto; }
+      .step::after { display: none; }
+      .hero-card { padding: 28px; }
+      .shell { width: min(100% - 24px, 1180px); padding-top: 24px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div class="hero-card">
+        <span class="eyebrow">P6S Event HTTP V2 + 飞书通知</span>
+        <h1>摄像头人脸识别结果推送到服务器并转发飞书机器人</h1>
+        <p class="lead">
+          本方案建议使用摄像头主动推送的人脸识别事件 <code>FaceReco</code> 作为主链路：
+          摄像头完成识别与抓拍，服务器接收事件后按“匹配成功”和“未匹配成功”分流，再推送飞书通知。
+        </p>
+      </div>
+
+      <aside class="hero-card meta">
+        <div class="meta-item">
+          <div class="meta-label">文档状态</div>
+          <div class="meta-value">技术方案已确认，LLD 已完成，待按 LLD 实现</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">日期</div>
+          <div class="meta-value">2026-07-02</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">本阶段边界</div>
+          <div class="meta-value">本次更新只固化方案决策，不改代码，不改摄像头配置，不部署</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">部署目标</div>
+          <div class="meta-value"><code>ssh qypower-prod</code> / <code>82.156.198.180</code></div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="panel">
+      <h2>1. 目标与范围</h2>
+      <div class="grid">
+        <div class="card">
+          <span class="tag good">一期目标</span>
+          <ul>
+            <li>让摄像头通过 HTTP 主动把人脸识别事件推送到远程服务器。</li>
+            <li>匹配成功时，每个独立识别事件都向飞书机器人发送匹配到的人员姓名、人员 ID、摄像头和识别时间。</li>
+            <li>未匹配成功时，服务器把陌生人抓拍图保存到按日期创建的目录，并把保存位置与可点击查看链接发送到飞书。</li>
+            <li>链路具备可验证、可回滚、可排障的最小闭环。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <span class="tag warn">一期不做</span>
+          <ul>
+            <li>不把摄像头管理后台部署到远程服务器。</li>
+            <li>不依赖摄像头内部识别记录查询接口作为主链路。</li>
+            <li>不在本阶段实现完整人脸库管理 UI。</li>
+            <li>不把真实飞书密钥、摄像头 Token 或服务器密钥写入仓库。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="card">
+          <span class="tag good">已确认决策</span>
+          <ul>
+            <li>首版沿用当前 FastAPI 服务 <code>camera-face-guard</code>，不另起一个事件桥接服务。</li>
+            <li>摄像头事件入口采用现有风格：<code>POST /api/p6s/events/&lt;P6S_EVENT_SECRET&gt;</code>。</li>
+            <li>陌生人图片查看采用“服务器保存文件 + 短期 token 链接”方案，首版不依赖飞书内嵌图片能力。</li>
+            <li>远程访问先使用 <code>http://82.156.198.180</code> 打通链路，后续再升级域名和 HTTPS。</li>
+            <li>匹配成功必须每次通知：不同识别事件即使是同一个人也都发送飞书；只有同一个事件被摄像头缓存重放时，才按事件去重避免重复通知。</li>
+            <li>陌生人图片链接默认有效期 <code>24</code> 小时，原图文件默认保留 <code>30</code> 天。</li>
+            <li>原有按文件名直接访问图片的接口不作为飞书消息链接使用，后续以 token 查看接口为准。</li>
+            <li>首版不引入数据库，原始事件、处理记录、图片和 token 映射都先落到服务器文件系统。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <span class="tag">实现参数</span>
+          <ul>
+            <li><code>P6S_EVENT_NOTIFY_KNOWN_PERSON=true</code>，表示匹配成功事件全部通知。</li>
+            <li><code>P6S_EVENT_IMAGE_LINK_TTL_SECONDS=86400</code>，表示图片查看链接有效期为 24 小时。</li>
+            <li><code>P6S_EVENT_RETENTION_DAYS=30</code>，表示事件图片默认保留 30 天。</li>
+            <li><code>P6S_EVENT_IMAGE_PUBLIC_BASE_URL=http://82.156.198.180/api/p6s/event-images/view</code>，作为首版图片链接前缀。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>2. 推荐事件选择</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>事件</th>
+            <th>用途</th>
+            <th>关键字段</th>
+            <th>结论</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>FaceReco</code></td>
+            <td>人脸识别事件，包含是否匹配到脸库人员的信息。</td>
+            <td><code>operator</code>、<code>info.matchNumber</code>、<code>personInfo</code>、<code>info.CaptureImage.picture</code>、<code>info.BackgroundImage.picture</code></td>
+            <td><strong>主链路推荐。</strong> 文档说明 <code>matchNumber=0</code> 表示未匹配到目标，且陌生人时 <code>personInfo</code> 为空；匹配成功时则从 <code>personInfo</code> 提取人员姓名与 ID。</td>
+          </tr>
+          <tr>
+            <td><code>FaceSnapshot</code></td>
+            <td>人脸抓拍事件，能拿到人脸图和背景图。</td>
+            <td><code>operator</code>、<code>info.faceNumber</code>、<code>info.CaptureImage.picture</code>、<code>info.BackgroundImage.picture</code></td>
+            <td><strong>备用链路。</strong> 如果真机暂时不触发 <code>FaceReco</code>，可以先用它验证 HTTP 推送与飞书图片链路，但它本身不能判断是否陌生人。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="note">
+        <strong>核心判断：</strong>
+        所有人脸识别通知都应优先基于 <code>FaceReco</code>。服务器先判断 <code>operator == "FaceReco"</code>，
+        再按 <code>matchNumber</code> 和 <code>personInfo</code> 分流：匹配成功则通知人员姓名与 ID；未匹配成功则保存图片并通知图片存储信息。
+        为避免误报，后续 LLD 里应把匹配成功和未匹配成功的真机样本都记录下来，确认 <code>personInfo</code> 字段的真实结构。
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>3. 总体链路</h2>
+      <div class="flow">
+        <div class="step">
+          <div class="step-num">1</div>
+          <h3>摄像头识别</h3>
+          <p>摄像头本地启用人脸识别、人脸抓拍和事件推送联动。</p>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <h3>HTTP 事件推送</h3>
+          <p>摄像头通过 P6SEvent HTTP V2 把 <code>FaceReco</code> JSON 推到服务器。</p>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <h3>服务器接收</h3>
+          <p>服务端验签/鉴权、保存原始事件、解码抓拍图并返回 Ack。</p>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <h3>识别结果分流</h3>
+          <p>根据 <code>matchNumber</code> 与 <code>personInfo</code> 区分匹配成功和未匹配成功。</p>
+        </div>
+        <div class="step">
+          <div class="step-num">5</div>
+          <h3>飞书分支通知</h3>
+          <p>匹配成功发人员信息；未匹配成功保存图片并发送存储位置和查看链接。</p>
+        </div>
+      </div>
+
+      <div class="grid" style="margin-top: 18px;">
+        <div class="card">
+          <span class="tag good">匹配成功</span>
+          <h3>只通知识别结果</h3>
+          <p>飞书消息包含人员姓名、人员 ID、摄像头标识、识别时间、事件 ID。默认不保存额外陌生人图片，减少存储和隐私压力。</p>
+        </div>
+        <div class="card">
+          <span class="tag warn">未匹配成功</span>
+          <h3>保存图片并通知链接</h3>
+          <p>服务器把抓拍图保存到按日期创建的目录，再生成一个短期有效的 HTTPS 查看链接。飞书消息同时展示服务器保存路径和可点击链接。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>4. 摄像头侧配置方案</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>4.1 HTTP 服务器配置</h3>
+          <p>使用 <code>/System/HTTPEventServerConfigV2</code> 配置摄像头要推送到的远程服务器。</p>
+          <table>
+            <thead>
+              <tr>
+                <th>字段</th>
+                <th>建议</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>Enable</code></td>
+                <td>设为 <code>true</code>，启用 HTTP 事件推送。</td>
+              </tr>
+              <tr>
+                <td><code>Protocol</code></td>
+                <td>先用 <code>http</code> 验证。离线文档标注 <code>https</code> 暂不支持，是否可用需真机确认。</td>
+              </tr>
+              <tr>
+                <td><code>Host</code></td>
+                <td>远程服务器公网域名或公网 IP。</td>
+              </tr>
+              <tr>
+                <td><code>URLPath</code></td>
+                <td>首版使用 <code>/api/p6s/events/{P6S_EVENT_SECRET}</code>，通过随机 secret 降低公网入口暴露风险。</td>
+              </tr>
+              <tr>
+                <td><code>Port</code></td>
+                <td>根据反向代理配置选择 <code>80</code>、<code>443</code> 或专用端口。</td>
+              </tr>
+              <tr>
+                <td><code>AuthMode</code></td>
+                <td>首轮联调可用 <code>none</code>，打通后切到 <code>OAuth</code> 或服务端自定义 Token 校验。</td>
+              </tr>
+              <tr>
+                <td><code>DeviceToken</code> / <code>Secret</code></td>
+                <td>仅在启用 <code>OAuth</code> 或设备认证能力确认后填写，真实值只放服务器密钥管理和摄像头配置中。</td>
+              </tr>
+              <tr>
+                <td><code>CacheEventEnable</code></td>
+                <td>建议 <code>true</code>，服务器短暂不可用时尽量减少事件丢失。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <h3>4.2 推送与识别能力启用</h3>
+          <p>需要确保智能事件、人脸抓拍/识别，以及联动方式里的推送开关均已打开。</p>
+          <ul>
+            <li><code>/System/AIEventCfg</code>：启用 AI 事件上传，配置 <code>Enable=true</code> 和 <code>HttpType=http</code>。</li>
+            <li><code>/System/EventPushMode</code>：确认人脸识别事件推送模式。字段 <code>MQTTPushMode</code> 是否影响 HTTP 合并推送，需要真机样本验证。</li>
+            <li><code>/AI/FaceSnapshotCfg</code>：启用人脸抓拍，并确认 <code>Trigger.Push.Enable=true</code>。</li>
+            <li><code>/FaceReco/1/RecoRuleList</code>：确认人脸识别规则、识别区域、联动推送策略是否生效。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="note warn">
+        <strong>安全取舍：</strong>
+        如果摄像头固件只能稳定推送 HTTP，建议由公网入口接收 HTTP，再在服务器内部转发到本机服务。
+        公网入口需要至少具备随机路径、Token 校验、IP 限制、请求体大小限制和日志审计。不要裸露一个无鉴权的通用事件入口。
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>5. 服务器侧模块设计</h2>
+      <div class="grid-3">
+        <div class="card">
+          <span class="tag">接收层</span>
+          <h3>p6s_event_receiver</h3>
+          <p>提供 <code>POST /api/p6s/events/{P6S_EVENT_SECRET}</code>，接收摄像头 JSON 事件，做基础鉴权、大小限制、结构解析和统一 Ack。</p>
+        </div>
+        <div class="card">
+          <span class="tag">存储层</span>
+          <h3>event_store</h3>
+          <p>保存原始事件、事件索引、抓拍图文件、处理状态。第一阶段可先用文件系统，后续再接数据库。</p>
+        </div>
+        <div class="card">
+          <span class="tag">分流层</span>
+          <h3>recognition_result_router</h3>
+          <p>只处理 <code>FaceReco</code>，依据 <code>matchNumber</code> 与 <code>personInfo</code> 分流到“匹配成功通知”或“陌生人图片保存”。</p>
+        </div>
+        <div class="card">
+          <span class="tag">图片层</span>
+          <h3>stranger_image_service</h3>
+          <p>未匹配成功时保存抓拍图。优先使用事件内图片；如果真机只给图片记录 ID，再按记录 ID 从摄像头存储拉取图片。</p>
+        </div>
+        <div class="card">
+          <span class="tag">链接层</span>
+          <h3>image_link_service</h3>
+          <p>把服务器真实文件路径映射为短期有效的 HTTPS 查看链接，飞书里点击链接时由服务器校验 token 后返回图片。</p>
+        </div>
+        <div class="card">
+          <span class="tag">通知层</span>
+          <h3>feishu_notifier</h3>
+          <p>负责飞书机器人发送。匹配成功发送人员姓名与 ID；未匹配成功发送保存路径和图片查看链接。</p>
+        </div>
+        <div class="card">
+          <span class="tag">运维层</span>
+          <h3>observability</h3>
+          <p>记录收到事件数、匹配成功数、陌生人事件数、图片保存结果、链接访问结果、飞书成功/失败、Ack 延迟和重复事件。</p>
+        </div>
+      </div>
+
+      <div class="note warn" style="margin-top: 18px;">
+        <strong>远程部署目标：</strong>
+        服务器代码需要部署到用户自有远程服务器，SSH 入口为 <code>ssh qypower-prod</code>，
+        公网 IP 为 <code>82.156.198.180</code>。本方案阶段只记录前置条件；实际初始化服务器、安装服务、修改防火墙和启动进程，
+        需要在 LLD 明确后再执行。
+      </div>
+
+      <h3>5.1 远程服务器前置部署清单</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>准备项</th>
+            <th>建议配置</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>SSH 访问</td>
+            <td><code>ssh qypower-prod</code></td>
+            <td>后续所有远程初始化、部署和日志排查都以该 SSH alias 为入口。</td>
+          </tr>
+          <tr>
+            <td>公网入口</td>
+            <td><code>82.156.198.180</code></td>
+            <td>摄像头 HTTP 事件推送的目标公网地址。联调阶段可直接使用 IP；正式运行建议绑定域名并启用 HTTPS。</td>
+          </tr>
+          <tr>
+            <td>系统用户</td>
+            <td><code>ubuntu</code> 或等价低权限用户</td>
+            <td>服务进程不要直接用 <code>root</code> 运行。图片目录、日志目录和应用目录授权给该用户。</td>
+          </tr>
+          <tr>
+            <td>应用目录</td>
+            <td><code>/opt/camera-face-guard</code></td>
+            <td>存放服务器接收事件、图片保存、飞书通知相关代码。首版沿用当前 FastAPI 服务目录。</td>
+          </tr>
+          <tr>
+            <td>图片目录</td>
+            <td><code>/var/lib/camera-face-guard/p6s_events/strangers/YYYY-MM-DD/</code></td>
+            <td>未匹配成功的人脸图片按日期保存，便于清理和追溯。</td>
+          </tr>
+          <tr>
+            <td>日志目录</td>
+            <td><code>journalctl -u camera-face-guard</code> 和 <code>/var/log/nginx/</code></td>
+            <td>保存接收事件、图片保存、链接访问、飞书通知和错误日志。</td>
+          </tr>
+          <tr>
+            <td>运行方式</td>
+            <td><code>systemd</code> 托管服务</td>
+            <td>建议以 systemd 管理服务自启动、重启策略、环境变量加载和日志收集。</td>
+          </tr>
+          <tr>
+            <td>反向代理</td>
+            <td><code>Nginx</code> 或等价代理</td>
+            <td>公网只暴露 <code>80/443</code>，再反代到本机应用端口；同时配置请求体大小、超时和基础安全头。</td>
+          </tr>
+          <tr>
+            <td>防火墙/安全组</td>
+            <td>开放 <code>22</code>、<code>80</code>、<code>443</code></td>
+            <td><code>22</code> 用于运维，<code>80/443</code> 用于摄像头事件和图片查看。若摄像头只能 HTTP 推送，至少需要开放 <code>80</code>。</td>
+          </tr>
+          <tr>
+            <td>公网路径</td>
+            <td><code>/api/p6s/events/{P6S_EVENT_SECRET}</code>、<code>/api/p6s/event-images/view/{token}</code></td>
+            <td>前者接收摄像头事件，后者给飞书点击查看图片。两者都需要限流、鉴权或签名保护。</td>
+          </tr>
+          <tr>
+            <td>远程密钥配置</td>
+            <td><code>/etc/camera-face-guard/app.env</code></td>
+            <td>存放飞书 webhook、飞书签名秘钥、图片链接签名秘钥等真实配置。该文件不能进入 git。</td>
+          </tr>
+          <tr>
+            <td>时间同步</td>
+            <td>NTP / systemd-timesyncd</td>
+            <td>飞书签名校验和摄像头事件时间都依赖服务器时间准确，部署前必须确认时间同步正常。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="note" style="margin-top: 18px;">
+        <strong>联调入口建议：</strong>
+        首次联调可以让摄像头配置 <code>Host=82.156.198.180</code>、<code>Port=80</code>、
+        <code>URLPath=/api/p6s/events/{P6S_EVENT_SECRET}</code>。图片查看链接如果暂时没有域名，可以先使用
+        <code>http://82.156.198.180/api/p6s/event-images/view/{token}</code> 验证闭环；正式运行建议改为 HTTPS 域名。
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>6. 事件处理细节</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>6.1 接收与去重</h3>
+          <ul>
+            <li>请求体上限建议先设为 <code>2MB</code> 到 <code>5MB</code>，因为图片字段是 base64。</li>
+            <li>原始 JSON 必须落盘或入库，便于复盘字段差异。</li>
+            <li>去重键建议为 <code>serialNumber + operator + eventId + pictureMd5</code>。</li>
+            <li>即使事件不是目标事件，也应返回成功 Ack，避免摄像头反复重试造成噪声。</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h3>6.2 识别结果分流</h3>
+          <pre><code>is_face_reco = event.operator == "FaceReco"
+match_number = event.info.matchNumber
+person_info_empty = event.personInfo is missing or empty
+
+if is_face_reco and match_number > 0 and not person_info_empty:
+    person = parse_matched_person(event.personInfo)
+    send_feishu_known_person(person.name, person.id, event)
+else:
+    image_record = save_stranger_image(event)
+    view_url = build_signed_image_view_url(image_record)
+    send_feishu_stranger(image_record.storage_path, view_url, event)</code></pre>
+          <p class="small">LLD 阶段需要把真机样本中的 <code>personInfo</code> 空值形态和匹配成功字段名记录清楚，可能是空数组、空对象、空字符串或字段缺失。</p>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="card">
+          <h3>6.3 匹配成功通知</h3>
+          <ul>
+            <li>触发条件：<code>operator == "FaceReco"</code>、<code>matchNumber &gt; 0</code>，且 <code>personInfo</code> 中能解析出人员信息。</li>
+            <li>通知频率：每个独立匹配成功事件都发送飞书通知，不按人员维度静默或采样。</li>
+            <li>去重边界：只对同一个事件的缓存重放或网络重试做幂等处理，避免同一事件重复通知。</li>
+            <li>飞书标题建议：<code>人脸识别成功</code>。</li>
+            <li>消息内容包含：人员姓名、人员 ID、摄像头序列号、识别时间、事件 ID。</li>
+            <li>人员字段优先从 <code>personInfo</code> 中解析，字段名以真机样本为准；LLD 阶段需要固化映射。</li>
+            <li>默认不保存额外图片，除非后续明确需要留存所有识别图片。</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h3>6.4 未匹配成功图片保存</h3>
+          <ul>
+            <li>触发条件：<code>operator == "FaceReco"</code> 且 <code>matchNumber == 0</code>，或 <code>personInfo</code> 为空/缺失。</li>
+            <li>图片来源优先级一：直接使用事件中的 <code>info.CaptureImage.picture</code> 人脸裁剪图。</li>
+            <li>图片来源优先级二：如果裁剪图不存在，使用 <code>info.BackgroundImage.picture</code> 背景图。</li>
+            <li>图片来源优先级三：如果真机事件只提供图片记录 ID 或图片路径，再由服务器调用摄像头接口从摄像头存储拉取。</li>
+            <li>保存目录按日期创建，建议格式：<code>/var/lib/camera-face-guard/p6s_events/strangers/YYYY-MM-DD/</code>。</li>
+            <li>文件名建议包含摄像头序列号、事件 ID 和图片 MD5，避免重名，例如 <code>SN123_42_1bbd8864.jpg</code>。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="card">
+          <h3>6.5 图片处理与校验</h3>
+          <ul>
+            <li>优先使用 <code>info.CaptureImage.picture</code>，这是人脸裁剪图，适合通知。</li>
+            <li>如果裁剪图不存在或解码失败，回退到 <code>info.BackgroundImage.picture</code>。</li>
+            <li>兼容 <code>data:image/jpeg;base64,...</code> 和纯 base64 两种格式。</li>
+            <li>用文件魔数校验 JPEG/PNG，不只相信字段名。</li>
+            <li>如果存在 <code>pictureMd5</code>，保存后计算 MD5 做一致性校验。</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h3>6.6 可点击图片链接</h3>
+          <p>飞书消息里不要直接暴露服务器真实文件路径，而是发送一个由服务器生成的 HTTPS 查看链接。</p>
+          <pre><code>storage_path = /var/lib/camera-face-guard/p6s_events/strangers/2026-07-02/SN123_42.jpg
+view_url = http://82.156.198.180/api/p6s/event-images/view/&lt;token&gt;</code></pre>
+          <ul>
+            <li><code>token</code> 使用随机 token 映射服务器本地图片记录，服务端只保存 token 哈希。</li>
+            <li>访问 <code>GET /api/p6s/event-images/view/{token}</code> 时，服务器校验 token、过期时间和文件存在性。</li>
+            <li>校验通过后返回 <code>Content-Type: image/jpeg</code> 或 <code>image/png</code>，浏览器即可直接查看图片。</li>
+            <li>建议默认链接有效期为 24 小时；如需长期追溯，可提供后台登录后查看的永久记录页。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="card">
+          <h3>6.7 摄像头 Ack</h3>
+          <p>收到 <code>FaceReco</code> 后建议返回文档里的 <code>FaceReco-Ack</code> 结构，并把 <code>pictureMd5</code> 原样带回。</p>
+          <pre><code>{
+  "operator": "FaceReco-Ack",
+  "info": {
+    "personId": 0,
+    "uniqueId": "",
+    "pictureMd5": "from-event-if-present"
+  },
+  "result": {
+    "errorNo": 0,
+    "description": "ok"
+  }
+}</code></pre>
+        </div>
+
+        <div class="card">
+          <h3>6.8 存储记录字段</h3>
+          <p>未匹配成功时建议保存一条结构化记录，方便飞书通知、图片查看和后续排查。</p>
+          <ul>
+            <li><code>event_id</code>、<code>camera_serial_number</code>、<code>event_time</code>、<code>received_at</code>。</li>
+            <li><code>storage_path</code>、<code>file_name</code>、<code>image_md5</code>、<code>image_source</code>。</li>
+            <li><code>view_token</code>、<code>view_url</code>、<code>expires_at</code>、<code>feishu_message_status</code>。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>7. 飞书通知方案</h2>
+      <div class="grid">
+        <div class="card">
+          <span class="tag good">推荐首版</span>
+          <h3>分支通知 + 服务器图片链接</h3>
+          <p>
+            使用飞书自定义机器人 webhook 发送富文本或卡片消息。匹配成功发人员信息；
+            未匹配成功发图片保存路径和可点击查看链接。
+          </p>
+          <ul>
+            <li>匹配成功标题：<code>人脸识别成功</code>。</li>
+            <li>匹配成功内容：人员姓名、人员 ID、摄像头序列号、识别时间、事件 ID。</li>
+            <li>未匹配成功标题：<code>发现未匹配人脸</code>。</li>
+            <li>未匹配成功内容：摄像头序列号、事件时间、事件 ID、服务器保存路径、图片查看链接。</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <span class="tag warn">增强版本</span>
+          <h3>直接发送图片消息或富文本卡片</h3>
+          <p>
+            如果飞书机器人类型支持上传图片并获得 <code>image_key</code>，服务器可以先上传抓拍图，再发送包含图片的消息。
+            这个能力与机器人类型、应用凭证有关，需要在用户创建机器人后按实际文档确认。
+          </p>
+          <ul>
+            <li>只有 webhook 的自定义机器人不一定能直接发送 base64 图片。</li>
+            <li>如果需要图片内嵌展示，可能需要飞书开放平台应用凭证。</li>
+            <li>因此首版先保留两种通知实现，运行时按配置选择。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="grid" style="margin-top: 18px;">
+        <div class="card">
+          <h3>7.1 匹配成功消息模板</h3>
+          <pre><code>标题：人脸识别成功
+姓名：小明
+人员 ID：3427976339944670
+摄像头：SN123456
+识别时间：2026-07-02 18:30:12
+事件 ID：42</code></pre>
+          <p class="small">实际字段名以 <code>FaceReco.personInfo</code> 真机样本为准，LLD 中需要明确姓名和 ID 的映射。</p>
+        </div>
+
+        <div class="card">
+          <h3>7.2 未匹配成功消息模板</h3>
+          <pre><code>标题：发现未匹配人脸
+摄像头：SN123456
+识别时间：2026-07-02 18:35:01
+事件 ID：43
+保存位置：/var/lib/camera-face-guard/p6s_events/strangers/2026-07-02/SN123_43.jpg
+查看图片：http://82.156.198.180/api/p6s/event-images/view/&lt;token&gt;</code></pre>
+          <p class="small">飞书展示“保存位置”用于运维追溯，真正可点击的是 HTTPS 查看链接。</p>
+        </div>
+      </div>
+
+      <div class="note">
+        <strong>点击查看图片的实现：</strong>
+        飞书里的链接指向服务器接口，而不是直接指向磁盘文件。服务器收到
+        <code>GET /api/p6s/event-images/view/{token}</code> 后校验 token、过期时间和文件权限，
+        再读取本地图片并返回图片内容。这样既能点击查看，又不会把服务器目录直接暴露到公网。
+      </div>
+
+      <div class="note">
+        <strong>建议：</strong>
+        第一阶段先不要把飞书图片上传能力作为阻塞点。先完成“摄像头事件到服务器、匹配成功发人员信息、未匹配成功保存图片并生成可点击链接”的闭环。
+        等机器人类型确认后，再把通知升级为直接内嵌图片。
+      </div>
+
+      <div class="note warn">
+        <strong>当前飞书机器人状态：</strong>
+        用户已提供自定义机器人 webhook 和签名秘钥。真实值已按仓库规则写入本地 <code>.env.local</code> 的
+        <code>FEISHU_WEBHOOK_URL</code> 与 <code>FEISHU_WEBHOOK_SECRET</code>，本文档和 git 中只保留变量名与用途，
+        不记录真实秘钥。
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>8. 配置清单</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>配置项</th>
+            <th>存放位置</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>PUBLIC_BASE_URL</code></td>
+            <td>远程服务器环境变量</td>
+            <td>服务对外访问基地址，首版为 <code>http://82.156.198.180</code>。</td>
+          </tr>
+          <tr>
+            <td><code>P6S_EVENT_SECRET</code></td>
+            <td>远程服务器密钥配置</td>
+            <td>摄像头事件入口路径中的随机鉴权 token，对应 <code>/api/p6s/events/&lt;P6S_EVENT_SECRET&gt;</code>。</td>
+          </tr>
+          <tr>
+            <td><code>P6S_EVENT_IMAGE_DIR</code></td>
+            <td>远程服务器环境变量</td>
+            <td>事件、处理记录、陌生人图片和 token 映射的根目录，首版为 <code>/var/lib/camera-face-guard/p6s_events</code>。</td>
+          </tr>
+          <tr>
+            <td><code>P6S_EVENT_IMAGE_PUBLIC_BASE_URL</code></td>
+            <td>远程服务器环境变量</td>
+            <td>飞书图片查看链接前缀，首版为 <code>http://82.156.198.180/api/p6s/event-images/view</code>。</td>
+          </tr>
+          <tr>
+            <td><code>P6S_EVENT_IMAGE_LINK_SECRET</code></td>
+            <td>远程服务器密钥配置</td>
+            <td>生成和校验图片查看 token 的随机密钥。</td>
+          </tr>
+          <tr>
+            <td><code>P6S_EVENT_IMAGE_LINK_TTL_SECONDS</code></td>
+            <td>远程服务器环境变量</td>
+            <td>图片查看链接有效期，首版固定为 <code>86400</code> 秒。</td>
+          </tr>
+          <tr>
+            <td><code>P6S_EVENT_NOTIFY_KNOWN_PERSON</code></td>
+            <td>远程服务器环境变量</td>
+            <td>匹配成功是否通知；已确认必须设为 <code>true</code>。</td>
+          </tr>
+          <tr>
+            <td><code>P6S_EVENT_RETENTION_DAYS</code></td>
+            <td>远程服务器环境变量</td>
+            <td>事件图片与记录的默认保留天数，首版为 <code>30</code>。</td>
+          </tr>
+          <tr>
+            <td><code>P6S_EVENT_MAX_BODY_BYTES</code> / <code>P6S_EVENT_MAX_IMAGE_BYTES</code></td>
+            <td>远程服务器环境变量</td>
+            <td>限制事件请求体与图片大小，首版建议均为 <code>5242880</code> 字节。</td>
+          </tr>
+          <tr>
+            <td><code>CAMERA_SESSION_SECRET</code></td>
+            <td>本地与远程密钥配置</td>
+            <td>管理后台会话签名密钥，本地放 <code>.env.local</code>，远程放 <code>/etc/camera-face-guard/app.env</code>。</td>
+          </tr>
+          <tr>
+            <td><code>CAMERA_ADMIN_USERNAME</code> / <code>CAMERA_ADMIN_PASSWORD</code></td>
+            <td>本地与远程密钥配置</td>
+            <td>管理后台登录账号。本地调试和远程部署可分别配置，但不能进入 git。</td>
+          </tr>
+          <tr>
+            <td><code>P6S_CAMERA_HOST</code> / <code>P6S_CAMERA_USERNAME</code> / <code>P6S_CAMERA_PASSWORD</code></td>
+            <td>本地与远程密钥配置</td>
+            <td>摄像头 API 连接配置。管理后台本地运行时使用本地网络摄像头地址；远程事件服务不依赖它接收推送。</td>
+          </tr>
+          <tr>
+            <td><code>P6S_FACE_OWNER</code> / <code>P6S_FACE_GROUP_ID</code> / <code>P6S_FACE_GROUP_NAME</code></td>
+            <td>远程服务器环境变量</td>
+            <td>人脸库管理默认配置。Owner 本地真实值只写 <code>.env.local</code>，远程真实值只写远程 env 文件。</td>
+          </tr>
+          <tr>
+            <td><code>FEISHU_WEBHOOK_URL</code></td>
+            <td>远程服务器密钥配置</td>
+            <td>飞书机器人 webhook 地址。</td>
+          </tr>
+          <tr>
+            <td><code>FEISHU_WEBHOOK_SECRET</code></td>
+            <td>远程服务器密钥配置</td>
+            <td>如果飞书机器人开启签名校验，则必须配置。</td>
+          </tr>
+          <tr>
+            <td><code>FEISHU_APP_ID</code> / <code>FEISHU_APP_SECRET</code></td>
+            <td>远程服务器密钥配置</td>
+            <td>仅当后续采用“上传图片并发送 image_key”方案时需要。</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small">本地真实配置仍遵守仓库规则，只能写入 <code>.env.local</code>；远程真实密钥只放远程服务器环境变量或密钥文件，不进入 git。</p>
+    </section>
+
+    <section class="panel">
+      <h2>9. 详细开发步骤计划</h2>
+      <div class="timeline">
+        <div class="timeline-item">
+          <div class="phase">步骤 0</div>
+          <div>
+            <strong>文档冻结与范围确认</strong>
+            <p><b>类型：</b>文档/流程任务。阅读 <code>AGENTS.md</code>、本技术方案和 LLD，确认只实现已确认范围：事件接收、分流、陌生人图片保存、token 查看链接、飞书通知和部署说明。</p>
+            <p><b>完成标准：</b>没有计划外功能；真实密钥只在 <code>.env.local</code> 或远程 <code>/etc/camera-face-guard/app.env</code>。</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="phase">步骤 1</div>
+          <div>
+            <strong>配置项与样例文件整理</strong>
+            <p><b>类型：</b>开发/配置任务。更新 <code>.env.example</code>、<code>README.md</code>、<code>DEPLOY.md</code> 中的事件推送、图片链接、飞书签名和远程部署配置说明。</p>
+            <p><b>完成标准：</b>样例文件只有占位值；本地真实配置继续放 <code>.env.local</code>；远程配置路径明确为 <code>/etc/camera-face-guard/app.env</code>。</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="phase">步骤 2</div>
+          <div>
+            <strong>事件存储模块</strong>
+            <p><b>类型：</b>开发任务。新增 <code>app/services/event_store.py</code>，负责创建 <code>raw</code>、<code>records</code>、<code>strangers</code>、<code>links</code> 日期目录，原始事件落盘，处理记录落盘，以及幂等 dedupe key。</p>
+            <p><b>完成标准：</b>陌生人图片和记录按 <code>YYYY-MM-DD</code> 分目录保存；重复事件不会生成重复通知记录。</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="phase">步骤 3</div>
+          <div>
+            <strong>图片 token 链接模块</strong>
+            <p><b>类型：</b>开发任务。新增 <code>app/services/image_links.py</code>，负责生成随机 token、保存 token 哈希映射、校验过期时间、校验路径必须位于事件目录内。</p>
+            <p><b>完成标准：</b>合法 token 返回图片；伪造 token 返回 <code>404</code>；过期 token 返回 <code>410</code>；路径穿越被拒绝。</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="phase">步骤 4</div>
+          <div>
+            <strong>飞书通知模块</strong>
+            <p><b>类型：</b>开发任务。改造 <code>app/services/feishu.py</code>，支持飞书签名、富文本 <code>post</code> 消息、匹配成功消息、陌生人消息和异常消息。</p>
+            <p><b>完成标准：</b>匹配成功每个独立事件都通知姓名和 ID；陌生人通知包含服务器保存路径和图片查看链接；日志不输出 webhook 完整 URL 或签名秘钥。</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="phase">步骤 5</div>
+          <div>
+            <strong>P6S 事件解析与分流模块</strong>
+            <p><b>类型：</b>开发任务。新增 <code>app/services/p6s_events.py</code>，解析 <code>FaceReco</code>、<code>Heartbeat</code>、<code>personInfo</code>、<code>matchNumber</code>、图片字段和 Ack。</p>
+            <p><b>完成标准：</b>匹配成功、未匹配成功、字段异常、缺图和非目标事件都有明确处理结果。</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="phase">步骤 6</div>
+          <div>
+            <strong>摄像头路由改造</strong>
+            <p><b>类型：</b>开发任务。改造 <code>app/routers/camera.py</code>，事件入口只做鉴权、请求体限制、调用服务层和返回 Ack；新增 <code>GET /api/p6s/event-images/view/{token}</code>。</p>
+            <p><b>完成标准：</b>路由层不再堆业务分流逻辑；旧文件名图片接口不再作为飞书链接使用。</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="phase">步骤 7</div>
+          <div>
+            <strong>本地样本与静态验证</strong>
+            <p><b>类型：</b>验证任务。准备 known、stranger、missing image、heartbeat 样本，运行 <code>py_compile</code> 和最小事件处理脚本。</p>
+            <p><b>完成标准：</b>样本能覆盖匹配成功通知、陌生人图片保存、缺图异常和 heartbeat Ack。</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="phase">步骤 8</div>
+          <div>
+            <strong>远程服务器前置配置</strong>
+            <p><b>类型：</b>配置任务。通过 <code>ssh qypower-prod</code> 初始化 Ubuntu 依赖、应用目录、事件目录、systemd、Nginx 和远程 env 文件。</p>
+            <p><b>完成标准：</b><code>/opt/camera-face-guard</code>、<code>/etc/camera-face-guard/app.env</code>、<code>/var/lib/camera-face-guard/p6s_events</code> 权限正确，服务可本机访问。</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="phase">步骤 9</div>
+          <div>
+            <strong>摄像头 HTTP 事件推送配置</strong>
+            <p><b>类型：</b>配置任务。配置 <code>/System/HTTPEventServerConfigV2</code> 指向 <code>82.156.198.180</code> 和 <code>/api/p6s/events/&lt;P6S_EVENT_SECRET&gt;</code>，并检查人脸识别规则与推送开关。</p>
+            <p><b>完成标准：</b><code>/System/HTTPEventServerTest</code> 能到达服务器，服务器 raw 目录出现测试事件。</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="phase">步骤 10</div>
+          <div>
+            <strong>真机端到端验证</strong>
+            <p><b>类型：</b>验证任务。分别触发已入库人员和陌生人识别，检查飞书消息、服务器目录、图片查看链接、token 过期和重复事件幂等。</p>
+            <p><b>完成标准：</b>匹配成功每次通知；陌生人图片能点击查看；重复投递不重复通知。</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="phase">步骤 11</div>
+          <div>
+            <strong>回滚与运维确认</strong>
+            <p><b>类型：</b>配置/验证任务。确认关闭摄像头 HTTP 推送、停止远程服务、移除飞书 webhook、回滚代码和清理事件目录的步骤可执行。</p>
+            <p><b>完成标准：</b>出现异常时可以快速停止推送和通知，不影响本地摄像头管理后台。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>10. 验证步骤</h2>
+      <div class="timeline">
+        <div class="timeline-item">
+          <div class="phase">阶段 0</div>
+          <div>
+            <strong>远程服务器前置初始化</strong>
+            <p>通过 <code>ssh qypower-prod</code> 登录 <code>82.156.198.180</code>，确认系统用户、应用目录、图片目录、日志目录、Nginx/systemd、防火墙和远程密钥配置已准备好。</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="phase">阶段 1</div>
+          <div>
+            <strong>服务器假接收器</strong>
+            <p>先在远程服务器实现只记录原始请求并返回 Ack 的接口，不接飞书。目标是确认摄像头能打到 <code>82.156.198.180</code> 的公网入口。</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="phase">阶段 2</div>
+          <div>
+            <strong>摄像头 HTTP 测试</strong>
+            <p>使用 <code>/System/HTTPEventServerTest</code> 发送测试内容，确认摄像头侧返回 <code>StatusCode</code> 正常，服务器侧能看到请求。</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="phase">阶段 3</div>
+          <div>
+            <strong>真实事件样本</strong>
+            <p>启用人脸识别推送，实际站到摄像头前触发事件，保存第一批 <code>FaceReco</code> 与 <code>FaceSnapshot</code> 样本。</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="phase">阶段 4</div>
+          <div>
+            <strong>识别结果分流</strong>
+            <p>分别采集匹配成功和未匹配成功样本，验证 <code>matchNumber</code>、<code>personInfo</code>、图片字段的真实形态，并固化分流规则。</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="phase">阶段 5</div>
+          <div>
+            <strong>图片保存与链接查看</strong>
+            <p>触发未匹配成功事件，确认图片保存到日期目录；点击飞书里的 HTTPS 链接，浏览器能打开图片，过期 token 会被拒绝。</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="phase">阶段 6</div>
+          <div>
+            <strong>飞书分支通知</strong>
+            <p>匹配成功验证姓名和 ID 通知；未匹配成功验证保存路径和查看链接通知。再验证失败重试、重复事件去重和错误告警。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>11. 风险、回滚与待确认项</h2>
+      <div class="grid">
+        <div class="card">
+          <span class="tag danger">主要风险</span>
+          <ul>
+            <li>摄像头固件可能不支持稳定 HTTPS，需要通过其他方式保护公网入口。</li>
+            <li>飞书机器人是否能直接内嵌图片，取决于机器人类型和凭证能力。</li>
+            <li>base64 图片会放大请求体，服务端需要限制大小并防止内存占用过高。</li>
+            <li><code>FaceReco</code> 事件可能需要正确启用识别规则和联动推送，否则只会有人脸抓拍。</li>
+            <li>摄像头断网后缓存事件重放，可能造成重复通知，需要去重。</li>
+            <li>图片查看链接如果长期有效或无鉴权，会导致陌生人抓拍图被外部访问；必须使用短期 token 或登录态保护。</li>
+            <li>服务器磁盘会持续增长，需要设置图片保留策略，例如保留 30 天或按容量清理。</li>
+            <li>远程服务器 <code>82.156.198.180</code> 如果直接开放 HTTP，需要额外做好随机路径、签名、限流和来源审计。</li>
+            <li>如果公网 IP 后续变化、域名未绑定或安全组未开放端口，摄像头推送和飞书图片查看链接都会失败。</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <span class="tag warn">回滚方式</span>
+          <ul>
+            <li>将 <code>/System/HTTPEventServerConfigV2.Enable</code> 改为 <code>false</code>。</li>
+            <li>将 <code>/System/HTTPEventServerStatusV2.Status</code> 改为 <code>offline</code>。</li>
+            <li>关闭人脸抓拍或识别配置中的 <code>Trigger.Push.Enable</code>。</li>
+            <li>远程服务器移除飞书 webhook 配置或停止事件接收服务。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="note warn">
+        <strong>已进入 LLD 约束：</strong>
+        服务名、远程目录、事件入口、图片 token 链接、飞书消息方式、匹配成功每次通知、陌生人图片 TTL 与保留期都已在 LLD 中固化。
+        剩余待真机确认项只影响字段兼容和边缘异常处理，例如 <code>FaceReco</code> 真机样本结构、图片字段是否稳定存在、
+        以及当前固件对 <code>FaceReco-Ack</code> 额外字段的容忍度。
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>12. 参考文档</h2>
+      <ul>
+        <li><a href="http://docs.p6sai.com/docs/cn/device/Event/http/index.html">P6S AI IPC SDK - HTTP 事件文档目录</a></li>
+        <li><a href="http://docs.p6sai.com/docs/cn/device/Event/http/FaceRecognitionEvents.html">P6S AI IPC SDK - 人脸识别事件 FaceReco</a></li>
+        <li><a href="http://docs.p6sai.com/docs/cn/device/Event/http/FaceSnapshotEvent.html">P6S AI IPC SDK - 人脸抓拍事件 FaceSnapshot</a></li>
+        <li><a href="https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot">飞书开放平台 - 自定义机器人使用指南</a></li>
+        <li><a href="https://open.feishu.cn/document/server-docs/im-v1/image/create">飞书开放平台 - 上传图片</a></li>
+        <li><a href="https://open.feishu.cn/document/server-docs/im-v1/message/create">飞书开放平台 - 发送消息</a></li>
+        <li><code>docs/p6scgi-showdoc/01 API/网络配置管理/平台接入/P6SEvent/HTTP/获取HTTP服务器配置信息V2__149226750.md</code></li>
+        <li><code>docs/p6scgi-showdoc/01 API/网络配置管理/平台接入/P6SEvent/HTTP/HTTP服务器状态测试__149226754.md</code></li>
+        <li><code>docs/p6scgi-showdoc/01 API/未分类/获取人脸识别事件推送模式__149230105.md</code></li>
+        <li><code>docs/p6scgi-showdoc/01 API/智能事件配置管理/人脸相关配置管理接口/人脸抓拍配置管理/获取智能人脸抓拍界面配置__149227113.md</code></li>
+      </ul>
+    </section>
+
+    <footer>
+      本文档为方案草案。后续进入实现前，需要先补齐 LLD：接口契约、配置文件、服务目录结构、数据结构、错误处理、部署和验证命令。
+    </footer>
+  </main>
+</body>
+</html>
