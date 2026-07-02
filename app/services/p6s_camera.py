@@ -237,6 +237,15 @@ class P6SCameraClient:
     def get_ai_event_cfg(self) -> dict[str, Any]:
         return self._request("GET", "/System/AIEventCfg")
 
+    def get_algorithm_store_cfg(self) -> dict[str, Any]:
+        return self._request("GET", "/System/AlgorithmStoreCfg")
+
+    def set_algorithm_store_cfg(self, xml_text: str) -> dict[str, Any]:
+        return self._request("PUT", "/System/AlgorithmStoreCfg", xml_text)
+
+    def get_face_reco_base_config(self, channel_id: int = 1) -> dict[str, Any]:
+        return self._request("GET", f"/FaceReco/{int(channel_id)}/BaseConfig")
+
     def get_face_snapshot_cfg(self) -> dict[str, Any]:
         return self._request("GET", "/AI/FaceSnapshotCfg")
 

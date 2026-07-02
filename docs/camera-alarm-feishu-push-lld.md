@@ -2804,6 +2804,95 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
   - 写入后再复核 `/FaceReco/1/BaseConfig`、`/AI/FaceSnapshotCfg`、`/FaceReco/1/RecoRuleList`、`/Pictures/1/FaceDetect` 是否发生派生变化。
   - 如果算法模式切换成功，再进入真实人脸事件观察；如果仍不能持久化，停止并复述困难，不继续盲目写其他字段。
 
+### 23.18 Round 18：受控切换算法仓库到 FaceRecognition
+
+本轮目标：
+
+- 将摄像头上层算法仓库从 `Unknown` 受控切换为 `FaceRecognition`。
+- 验证算法模式是否能够持久化，并观察它是否带动人脸识别/抓拍子配置出现派生变化。
+- 为后续真实人脸事件验证创造明确的算法前置条件。
+
+本轮技术方案：
+
+- 在 `P6SCameraClient` 中新增算法仓库配置方法：
+  - `get_algorithm_store_cfg()`：GET `/System/AlgorithmStoreCfg`。
+  - `set_algorithm_store_cfg(xml_text)`：PUT `/System/AlgorithmStoreCfg`。
+  - `get_face_reco_base_config(channel_id=1)`：GET `/FaceReco/{ChannelID}/BaseConfig`，供写入后复核人脸识别总开关。
+- 新增脚本 `scripts/configure_p6s_algorithm_store.py`：
+  - 默认只读，输出摄像头连接摘要和当前 `AlgorithmType`。
+  - `--print-diff-summary` 输出拟变更摘要，默认目标为 `FaceRecognition`。
+  - `--apply` 才执行真实 PUT。
+  - 写入前保存完整 `/System/AlgorithmStoreCfg` XML 到系统临时目录，不进入 git。
+  - 写入后立即 GET 回读，要求 `AlgorithmType=FaceRecognition`。
+  - 写入后复核子配置摘要：`/FaceReco/1/BaseConfig`、`/AI/FaceSnapshotCfg`、`/FaceReco/1/RecoRuleList`、`/Pictures/1/FaceDetect`。
+  - 支持 `--restore <backup.xml>` 用完整备份回滚。
+- XML 构造不直接照抄 ShowDoc 中缺少闭合标签的示例，而使用真机 GET 返回根节点和脚本生成的完整闭合 XML。
+- 本轮先提交工具代码；工具提交后再执行 dry-run 和一次受控 `--apply`。
+
+本轮范围：
+
+- 允许修改：
+  - `app/services/p6s_camera.py`
+  - `scripts/configure_p6s_algorithm_store.py`
+  - `docs/camera-alarm-feishu-push-lld.md`
+- 允许对摄像头执行一次 PUT `/System/AlgorithmStoreCfg`，前提是 dry-run 证明只修改 `AlgorithmType=Unknown -> FaceRecognition`。
+- 允许只读复核远程事件目录 operator 分布。
+
+本轮不做：
+
+- 不修改 HTTP 事件服务器配置。
+- 不修改飞书、nginx、systemd 或远程 env。
+- 不直接修改 `/FaceReco/1/BaseConfig`、`/AI/FaceSnapshotCfg`、`/FaceReco/1/RecoRuleList`、`/Pictures/1/FaceDetect`。
+- 不删除远程事件目录，不展示 raw payload、图片 base64 或任何密钥。
+
+影响面：
+
+- 设备影响：摄像头 AI 算法模式会从 `Unknown` 切换为 `FaceRecognition`，可能改变 Web 后台当前算法页面选中状态，并可能让人脸识别/抓拍事件开始真实触发。
+- 远程影响：如果切换成功并触发真实人脸事件，远程 raw/records 可能新增非 heartbeat 记录。
+- 代码影响：新增一个运维配置脚本和两个客户端方法，不改变 FastAPI 运行时业务逻辑。
+
+风险点：
+
+- 当前 `AICap` 中 `AlgorithmWarehouse.support=false`，即使 `FaceReco.support=true`，设备仍可能拒绝或不持久化算法仓库写入。
+- 切换到 `FaceRecognition` 可能重置或派生调整部分人脸子配置；必须在写入后复核摘要。
+- 如果设备返回成功但回读仍为 `Unknown`，不得继续重试，应记录与前几轮相同的固件限制。
+- 如果切换成功但仍没有人脸事件，问题将转移到识别触发条件或摄像头画面/规则层，不能把服务端作为首要嫌疑。
+
+回滚方式：
+
+- 使用脚本写入前保存的完整 XML 备份执行 `--restore <backup.xml>`。
+- 或使用脚本目标值 `Unknown` 重新写回，但优先使用备份。
+- 本地代码通过 `git revert` 本轮提交回滚。
+
+验证方式：
+
+- `python3 -m py_compile app/services/p6s_camera.py scripts/configure_p6s_algorithm_store.py`。
+- `python3 scripts/configure_p6s_algorithm_store.py --print-diff-summary`：
+  - `before.algorithm_type=Unknown`。
+  - `after.algorithm_type=FaceRecognition`。
+  - `changed_fields=["AlgorithmType"]`。
+  - `non_target_mismatches=[]`。
+- `python3 scripts/configure_p6s_algorithm_store.py --apply`：
+  - HTTP 2xx。
+  - 设备 `ResponseStatus.statusCode` 为空或 `0`。
+  - 回读 `AlgorithmType=FaceRecognition`。
+- 写入后复核子配置摘要，确认关键字段未被意外关闭。
+- 写入后只读统计远程 raw/records operator 分布，确认是否开始出现真实人脸事件。
+
+本轮停止条件：
+
+- dry-run 显示除 `AlgorithmType` 外还有其他字段变化。
+- PUT 返回 HTTP 非 2xx 或设备 `statusCode` 非 `0`。
+- 写入后回读不是 `FaceRecognition`。
+- 写入后关键子配置被意外关闭，例如 `EnableRecognition=false`、`AIFaceSnapshotCfg.Enable=false` 或 `Trigger.Push=false`。
+- 远程出现未知真实事件但字段与现有 fixture 不一致；先记录摘要，不直接改解析逻辑。
+
+本轮提交策略：
+
+- 先提交脚本和客户端方法，提交类型使用 `chore:`。
+- 执行真机写入后，如果只更新 LLD 结论，再单独提交 `docs:`。
+- 暂存前确认不包含 `.env.local`、图片文件、STYD 会员数据、临时备份 XML 和摄像头 raw payload。
+
 ## 24. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`
