@@ -2620,6 +2620,55 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
 - 如果执行真机写入和观察后只更新文档结论，再单独提交 `docs:`；如果脚本和实验结果在同一轮完成且 diff 简洁，也可以一次提交，但提交信息必须写清楚设备配置实际变化。
 - 暂存前确认不包含 `.env.local`、临时备份 XML、远程 raw 文件、图片文件或 STYD 会员数据。
 
+本轮工具提交记录：
+
+- 已新增 `P6SCameraClient.get_face_detect(channel_id=1)` 与 `set_face_detect(xml_text, channel_id=1)`。
+- 已新增 `scripts/configure_p6s_face_detect.py`：
+  - 默认只读。
+  - 支持 `--print-diff-summary`。
+  - 支持 `--apply` 写入。
+  - 支持 `--restore <backup.xml>` 使用完整 XML 备份回滚。
+  - 输出只包含配置摘要、差异摘要和设备响应摘要，不输出密码、事件 token、图片 base64 或 raw payload。
+- 本地语法验证通过：`python3 -m py_compile app/services/p6s_camera.py scripts/configure_p6s_face_detect.py`。
+- 工具与计划已提交：`9160d7c chore: 增加P6S FaceDetect受控配置脚本`。
+
+本轮真机执行结果：
+
+- 写入前远程事件基线：
+  - `total_raw=128`，`raw_ops={"heartbeat": 128}`。
+  - `total_records=128`，`record_ops={"heartbeat": 128}`，`record_results={"heartbeat": 128}`。
+- 只读 dry-run 结果：
+  - `FACE_DETECT_BEFORE.enable=false`。
+  - `Trigger.Push.Enable=true`、`Trigger.Snapshot.Enable=true`、`Trigger.Record.Enable=true`、`Trigger.BeepAlert.Enable=true`、`Trigger.LightAlarm.Enable=true`。
+  - `PATCH_DIFF_SUMMARY.changed_fields=["Enable"]`。
+  - `PATCH_DIFF_SUMMARY.changed_count=1`。
+  - `PATCH_DIFF_SUMMARY.non_target_mismatches=[]`。
+- 按计划执行过一次 `python3 scripts/configure_p6s_face_detect.py --apply`。
+- 写入前已保存完整 XML 备份，路径位于系统临时目录：`camera-face-guard-p6s-backups/face_detect_1_20260702212204.xml`。
+- 设备写入响应：
+  - HTTP 状态：`200`。
+  - 设备 `ResponseStatus.statusCode=0`。
+  - 设备 message 为空。
+- 写入后立即 GET 回读：
+  - `FACE_DETECT_AFTER.enable=false`。
+  - 原有 `Trigger.Push/Snapshot/Record/BeepAlert/LightAlarm` 仍为 `true`，未被改坏。
+- 触发本轮停止条件：`写入后回读 Enable 仍不是 true`。
+- 因为配置没有持久化，本轮没有进入 90 秒真实事件观察窗口，也没有继续尝试其他写入。
+- 写入后远程事件复核：
+  - `total_raw=128`，`raw_ops={"heartbeat": 128}`。
+  - `total_records=128`，`record_ops={"heartbeat": 128}`，`record_results={"heartbeat": 128}`。
+
+本轮结论：
+
+- `/Pictures/1/FaceDetect` 与此前 `/FaceReco/1/RecoRuleList` 的第一层 `Enable` 表现一致：设备接受 PUT，并返回成功状态，但目标 `Enable` 字段没有持久化。
+- 这说明当前问题很可能不是单个 XML 序列化或 HTTP 认证问题，而是该固件对这些事件启用字段存在只读、派生、能力模式限制，或需要通过 Web 后台更高层流程切换算法/事件模式。
+- 当前仍无法触发真实 `FaceReco`、`FaceSnapshot` 或普通人脸侦测事件；远程服务仍只收到 heartbeat。
+- 本轮已按停止条件中断，没有盲目重试，也没有继续修改 `/AI/FaceSnapshotCfg`、`/FaceReco/1/BaseConfig`、`/FaceReco/1/RecoRuleList` 或 HTTP 推送配置。
+- 下一轮不应继续对单个 `Enable` 字段做 PUT 重试。建议先进入“设备算法/工作模式与 Web 后台真实保存流程”诊断：
+  - 只读核对 `/System/AIWorkMode`、算法仓库相关接口、AICap/DeviceCap 中与 `FaceCapture`、`FaceRecognition` 相关能力。
+  - 或通过浏览器 DevTools/Web 后台真实点击保存，抓取成功持久化这些开关时是否调用了其他前置接口。
+  - 如果需要继续真机写配置，必须先在新 LLD 中明确要切换的算法/工作模式字段和回滚方式。
+
 ## 24. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`
