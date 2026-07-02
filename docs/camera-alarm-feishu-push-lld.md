@@ -1650,6 +1650,73 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
 
 - 本轮完成并验证后单独提交一次，提交信息需说明新增 P6S 事件解析分流层，且尚未接入 FastAPI 路由。
 
+### 23.6 Round 06：LLD 步骤 6
+
+本轮对应 LLD 步骤：
+
+- 步骤 6：开发，简化摄像头路由。
+
+本轮目标：
+
+- 改造 `app/routers/camera.py`，让 P6S 事件入口调用 `p6s_events.handle_event(...)`。
+- 新增 `GET /api/p6s/event-images/view/{token}`，通过 `image_links.resolve_image_link(...)` 返回图片。
+- 让路由层只负责鉴权、请求体限制、JSON 解析、异常到 HTTP 状态码转换和响应返回。
+
+本轮范围：
+
+- 修改 `app/routers/camera.py`。
+- 小幅调整 `app/services/image_links.py`，细分路径非法和文件不存在异常，便于路由返回 `403` 或 `404`。
+- 不改飞书模板。
+- 不改摄像头管理、人脸库上传等后台 API。
+- 不部署远程服务器。
+- 不调用真实摄像头。
+
+具体开发计划：
+
+1. 事件入口改造：
+   - 保留 `POST /api/p6s/events`。
+   - 保留 `POST /api/p6s/events/{path_secret}`。
+   - `_validate_event_secret` 继续支持路径、query 和 header 三种 secret。
+   - 新增请求体大小检查，默认使用 `P6S_EVENT_MAX_BODY_BYTES=5242880`。
+   - JSON 非对象或解析失败返回 `400`。
+   - 调用 `await p6s_events.handle_event(payload, request_meta=...)`。
+   - 返回 `EventHandleResult.ack`。
+2. 请求元数据：
+   - 从 `request.client.host`、`Content-Type`、`User-Agent`、method、path 构造 `event_store.RequestMeta`。
+3. 图片 token 路由：
+   - 新增 `GET /api/p6s/event-images/view/{token}`。
+   - token 无效或记录不存在返回 `404`。
+   - token 过期返回 `410`。
+   - 路径非法返回 `403`。
+   - 文件不存在返回 `404`。
+   - 成功时返回 `FileResponse`，`media_type` 使用 link record 中的 `content_type`。
+4. 旧图片接口：
+   - 保留 `GET /api/p6s/event-images/{filename}` 作为历史排障接口。
+   - 飞书消息和 README/DEPLOY 不使用该接口。
+5. 清理旧逻辑：
+   - 删除 `camera.py` 中旧的 FaceReco 图片保存、raw 扁平落盘、Ack 和 heartbeat strategy 业务逻辑。
+   - 保留 `_event_dir()`、`_event_secret()`、`_public_base_url()` 等状态展示辅助函数。
+6. 验证：
+   - `python3 -m py_compile app/main.py app/routers/camera.py app/services/event_store.py app/services/image_links.py app/services/feishu.py app/services/p6s_events.py run.py`。
+   - 使用 FastAPI `TestClient` 离线验证无 secret、错误 secret、合法 secret、known 事件、stranger 事件、token 图片查看。
+   - 验证伪造 token `404`，过期 token `410`。
+   - `git diff --check`。
+
+本轮风险：
+
+- 如果动态文件名路由优先于 `/view/{token}`，图片 token 路由会被吞掉。
+- 如果事件入口同步发送飞书耗时过长，摄像头 Ack 可能变慢；首版先按服务层同步执行，后续可用 BackgroundTasks 优化。
+- 如果错误映射不准确，飞书点击图片时可能难以区分过期和文件丢失。
+
+本轮回滚方式：
+
+- 回滚 `app/routers/camera.py` 和 `app/services/image_links.py`。
+- 删除本节 Round 06 开发执行记录。
+
+本轮提交策略：
+
+- 本轮完成并验证后单独提交一次，提交信息需说明事件入口接入服务层和 token 图片查看路由。
+
 ## 24. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`

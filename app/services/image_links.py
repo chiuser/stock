@@ -40,6 +40,14 @@ class ImageLinkTargetError(ImageLinkError):
     """Raised when a link record points to an invalid image target."""
 
 
+class ImageLinkPathError(ImageLinkTargetError):
+    """Raised when a link record points outside the event image root."""
+
+
+class ImageLinkFileNotFoundError(ImageLinkTargetError):
+    """Raised when a valid link points to a missing image file."""
+
+
 @dataclass(frozen=True)
 class CreatedImageLink:
     token: str
@@ -121,9 +129,12 @@ def resolve_image_link(
 
     relative_path = _validate_relative_path(str(record.get("relative_path") or ""))
     image_path = event_store.event_store_root(root) / relative_path
-    event_store.relative_to_root(image_path, root=root)
+    try:
+        event_store.relative_to_root(image_path, root=root)
+    except event_store.EventStoreError as exc:
+        raise ImageLinkPathError("image target is outside event store root") from exc
     if not image_path.exists() or not image_path.is_file():
-        raise ImageLinkTargetError("image target does not exist")
+        raise ImageLinkFileNotFoundError("image target does not exist")
 
     if touch:
         record = _touch_link_record(record_path, record, accessed_at=current_time)
@@ -150,10 +161,10 @@ def _validate_token(token: str) -> str:
 def _validate_relative_path(relative_path: str) -> str:
     candidate = Path(relative_path)
     if candidate.is_absolute() or ".." in candidate.parts:
-        raise ImageLinkTargetError("invalid image relative path")
+        raise ImageLinkPathError("invalid image relative path")
     text = candidate.as_posix().strip("/")
     if not text:
-        raise ImageLinkTargetError("empty image relative path")
+        raise ImageLinkPathError("empty image relative path")
     return text
 
 

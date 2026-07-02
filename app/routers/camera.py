@@ -2,24 +2,22 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import re
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.routers.auth import require_admin
-from app.services import feishu
+from app.services import event_store, feishu, image_links
+from app.services import p6s_events as p6s_event_service
 from app.services.p6s_camera import (
     P6SCameraClient,
     P6SConfig,
@@ -96,7 +94,7 @@ def _find_face_image(member_id: str) -> Path:
 @router.get("/camera/status")
 def camera_status(_: dict = Depends(require_admin)):
     face_files = _list_face_files()
-    event_files = list(_event_dir().glob("*.json")) if _event_dir().exists() else []
+    event_files = list(_event_dir().glob("raw/*/*.json")) if _event_dir().exists() else []
     return {
         "camera": P6SConfig.from_env().safe_summary(),
         "faces": {
@@ -193,18 +191,31 @@ def test_feishu(_: dict = Depends(require_admin)):
 @router.post("/p6s/events")
 async def p6s_events(
     request: Request,
-    background_tasks: BackgroundTasks,
 ):
-    return await _handle_p6s_event(request, background_tasks)
+    return await _handle_p6s_event(request)
 
 
 @router.post("/p6s/events/{path_secret}")
 async def p6s_events_with_secret(
     path_secret: str,
     request: Request,
-    background_tasks: BackgroundTasks,
 ):
-    return await _handle_p6s_event(request, background_tasks, path_secret=path_secret)
+    return await _handle_p6s_event(request, path_secret=path_secret)
+
+
+@router.get("/p6s/event-images/view/{token}")
+def get_event_image_by_token(token: str):
+    try:
+        resolved = image_links.resolve_image_link(token)
+    except (image_links.InvalidImageTokenError, image_links.ImageLinkNotFoundError):
+        raise HTTPException(status_code=404, detail="image link not found")
+    except image_links.ImageLinkExpiredError:
+        raise HTTPException(status_code=410, detail="image link expired")
+    except image_links.ImageLinkPathError:
+        raise HTTPException(status_code=403, detail="image link target is invalid")
+    except image_links.ImageLinkFileNotFoundError:
+        raise HTTPException(status_code=404, detail="image file not found")
+    return FileResponse(resolved.image_path, media_type=resolved.content_type)
 
 
 @router.get("/p6s/event-images/{filename}")
@@ -218,26 +229,27 @@ def get_event_image(filename: str):
 
 async def _handle_p6s_event(
     request: Request,
-    background_tasks: BackgroundTasks,
     path_secret: str | None = None,
 ) -> dict[str, Any]:
     _validate_event_secret(request, path_secret)
-    payload = await request.json()
-    operator = payload.get("operator", "")
+    body = await request.body()
+    if len(body) > _max_event_body_bytes():
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="P6S event body is too large",
+        )
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise HTTPException(status_code=400, detail="invalid P6S event JSON")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="P6S event JSON must be an object")
 
-    _persist_event_payload(payload)
-
-    if operator == "heartbeat":
-        return _heartbeat_ack(payload)
-
-    if operator == "FaceReco":
-        image_path = _handle_face_reco(payload, background_tasks)
-        return _face_reco_ack(payload, image_path)
-
-    return {
-        "operator": f"{operator}-Ack" if operator else "Ack",
-        "result": {"errorNo": 0, "description": "ok"},
-    }
+    result = await p6s_event_service.handle_event(
+        payload,
+        request_meta=_event_request_meta(request),
+    )
+    return result.ack
 
 
 def _validate_event_secret(request: Request, path_secret: str | None) -> None:
@@ -258,136 +270,19 @@ def _validate_event_secret(request: Request, path_secret: str | None) -> None:
         )
 
 
-def _heartbeat_ack(payload: dict[str, Any]) -> dict[str, Any]:
-    info = payload.get("info") or {}
-    return {
-        "operator": "heartbeat-Ack",
-        "info": {
-            "eventId": info.get("eventId", 1),
-            "time": datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%dT%H%M%S+08"),
-            "eventSendMode": os.environ.get("P6S_EVENT_SEND_MODE", "realTime"),
-            "strategy": _event_strategy(),
-        },
-        "result": {"errorNo": 0, "description": "ok"},
-    }
-
-
-def _event_strategy() -> dict[str, Any]:
-    # P6S requires the heartbeat response to explicitly enable event reporting.
-    return {
-        "passengerStaticsInterval": int(os.environ.get("P6S_PASSENGER_INTERVAL", "2")),
-        "heartBeatInterval": int(os.environ.get("P6S_HEARTBEAT_INTERVAL", "30")),
-        "isEnableElectronicDefence": False,
-        "isCrossBorderDetectEnable": False,
-        "isOffDutyDetectEnable": False,
-        "isPassengerFlowStaticsEnable": False,
-        "isCryScreamDetectEnable": False,
-        "isPetDetectEnable": False,
-        "isFallDetectEnable": False,
-        "isSnapshotEnable": True,
-        "isPersonInfoEnable": True,
-        "isPersonDetectEnable": False,
-        "isCarLicenseSnapshotEnable": False,
-        "isCarDetectEnable": False,
-        "isTimedSnapshotEnable": False,
-        "isGroundLockStatusChangedEnable": False,
-        "isStartupReportEnable": True,
-        "isAbnormalEventEnable": False,
-        "isNonWhitelistCarEnable": False,
-        "isMotionDetectEnable": False,
-        "isTrafficStatisticsEnable": False,
-        "isTrafficStatisticsCarShapeEnable": False,
-        "isKey2CallEnable": False,
-        "isLicensePlateSurveillanceEnable": False,
-        "isFireDetectEventEnable": False,
-        "isVideoCoverEventEnable": False,
-        "isElectricBikeEventEnable": False,
-        "isGasContainerEventEnable": False,
-        "isElectronicDefenceV2EventEnable": False,
-        "isPeopleNumberStatisticsEventEnable": False,
-        "isPeopleNumberOverLimitEventEnable": False,
-    }
-
-
-def _handle_face_reco(
-    payload: dict[str, Any],
-    background_tasks: BackgroundTasks,
-) -> Path | None:
-    info = payload.get("info") or {}
-    person_info = info.get("personInfo")
-    is_stranger = not person_info
-    if not is_stranger:
-        return None
-
-    image_path = _save_capture_image(payload)
-    device_info = payload.get("deviceInfo") or {}
-    background_tasks.add_task(
-        feishu.notify_unknown_face,
-        image_path=image_path,
-        device_sn=device_info.get("serialNumber") or device_info.get("SN") or "",
-        event_time=str(info.get("time") or ""),
-        event_id=info.get("eventId"),
+def _event_request_meta(request: Request) -> event_store.RequestMeta:
+    return event_store.RequestMeta(
+        client_host=request.client.host if request.client else "",
+        content_type=request.headers.get("content-type", ""),
+        user_agent=request.headers.get("user-agent", ""),
+        method=request.method,
+        path=request.url.path,
     )
-    return image_path
 
 
-def _face_reco_ack(payload: dict[str, Any], image_path: Path | None) -> dict[str, Any]:
-    info = payload.get("info") or {}
-    person_info = info.get("personInfo") or {}
-    capture = info.get("CaptureImage") or {}
-    return {
-        "operator": "FaceReco-Ack",
-        "info": {
-            "personId": person_info.get("personId", 0),
-            "uniqueId": person_info.get("uniqueId", ""),
-            "pictureMd5": capture.get("pictureMd5", ""),
-            "storedImage": str(image_path) if image_path else "",
-        },
-        "result": {"errorNo": 0, "description": "ok"},
-    }
-
-
-def _save_capture_image(payload: dict[str, Any]) -> Path | None:
-    info = payload.get("info") or {}
-    capture = info.get("CaptureImage") or {}
-    picture = capture.get("picture", "")
-    if not picture:
-        return None
-
-    if "," in picture:
-        _, picture = picture.split(",", 1)
-
+def _max_event_body_bytes() -> int:
+    value = os.environ.get("P6S_EVENT_MAX_BODY_BYTES", "5242880").strip()
     try:
-        raw = base64.b64decode(picture)
-    except Exception:
-        return None
-    event_dir = _event_dir()
-    event_dir.mkdir(parents=True, exist_ok=True)
-
-    device_info = payload.get("deviceInfo") or {}
-    device_sn = re.sub(
-        r"[^0-9A-Za-z_-]",
-        "",
-        str(device_info.get("serialNumber") or device_info.get("SN") or "device"),
-    )
-    event_id = re.sub(r"[^0-9A-Za-z_-]", "", str(info.get("eventId") or "event"))
-    md5_part = re.sub(r"[^0-9A-Fa-f]", "", str(capture.get("pictureMd5") or ""))[:8]
-    ts = datetime.now().strftime("%Y%m%d%H%M%S")
-    filename = f"{ts}_{device_sn}_{event_id}_{md5_part or 'image'}.jpg"
-    path = event_dir / filename
-    path.write_bytes(raw)
-    return path
-
-
-def _persist_event_payload(payload: dict[str, Any]) -> None:
-    event_dir = _event_dir()
-    event_dir.mkdir(parents=True, exist_ok=True)
-    operator = re.sub(r"[^0-9A-Za-z_-]", "", str(payload.get("operator") or "event"))
-    event_id = re.sub(
-        r"[^0-9A-Za-z_-]",
-        "",
-        str((payload.get("info") or {}).get("eventId") or "unknown"),
-    )
-    ts = datetime.now().strftime("%Y%m%d%H%M%S%f")
-    path = event_dir / f"{ts}_{operator}_{event_id}.json"
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return max(1, int(value))
+    except ValueError:
+        return 5_242_880
