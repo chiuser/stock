@@ -1503,6 +1503,75 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
 
 - 本轮完成并验证后单独提交一次，提交信息需说明新增 token 图片链接层，并明确尚未接入 FastAPI 路由。
 
+### 23.4 Round 04：LLD 步骤 4
+
+本轮对应 LLD 步骤：
+
+- 步骤 4：开发，改造飞书通知能力。
+
+本轮目标：
+
+- 改造 `app/services/feishu.py`，支持飞书自定义机器人签名。
+- 支持富文本 `post` 消息，作为匹配成功和陌生人通知的首版消息格式。
+- 新增匹配成功、陌生人和异常三类通知模板。
+- 保持现有 `send_text`、`upload_image`、`send_image` 和 `notify_unknown_face(image_path=...)` 基本兼容，避免当前路由在后续接入前断裂。
+
+本轮范围：
+
+- 修改 `app/services/feishu.py`。
+- `FeishuConfig` 增加 `webhook_secret`。
+- `safe_summary()` 只返回布尔状态，不返回真实 webhook 或 secret。
+- 新增 `send_post(title, lines)`。
+- 新增 `notify_known_face(...)`。
+- 扩展 `notify_unknown_face(...)`，支持 `storage_path` 和 `view_url`。
+- 新增 `notify_event_error(...)`。
+- 不接入 `p6s_events.py`。
+- 不改路由。
+- 不发送真实飞书消息。
+
+具体开发计划：
+
+1. 配置读取：
+   - 从 `FEISHU_WEBHOOK_SECRET` 读取签名秘钥。
+   - `safe_summary()` 增加 `has_webhook_secret` 和 `can_sign_webhook`。
+2. Webhook 发送封装：
+   - 新增 `_send_webhook_payload(payload, cfg)`。
+   - 统一 `send_text`、`send_image`、`send_post` 的 webhook 请求路径。
+   - 如果配置了 `webhook_secret`，按 LLD 签名算法增加 `timestamp` 和 `sign`。
+3. 富文本消息：
+   - `send_post(title, lines)` 发送 `msg_type=post`。
+   - 支持 text 块和 link 块。
+   - 控制消息内容简洁，不暴露内部堆栈。
+4. 通知模板：
+   - `notify_known_face(name, person_id, device_sn, event_time, event_id)`。
+   - `notify_unknown_face(device_sn, event_time, event_id, storage_path, view_url, image_path)`。
+   - `notify_event_error(message, device_sn, event_time, event_id, raw_event_path)`。
+5. 兼容策略：
+   - 保留 `send_text` 原接口。
+   - 保留 `notify_unknown_face` 原有 `image_path` 参数。
+   - 如果没有 `view_url`，仍可在配置了飞书应用凭证时走可选图片上传。
+6. 验证：
+   - `python3 -m py_compile app/services/feishu.py`。
+   - 用 fake `requests.post` 验证 `FEISHU_WEBHOOK_SECRET` 会生成 `timestamp` 和 `sign`。
+   - 验证 `send_post` 的 payload 是飞书 `post` 结构。
+   - 验证 `notify_known_face` 和 `notify_unknown_face` 返回成功结果。
+   - `git diff --check`。
+
+本轮风险：
+
+- 签名算法如果实现错误，飞书机器人会拒绝消息。
+- 如果返回或日志中带出 webhook URL 或 secret，会造成密钥泄露。
+- 如果直接破坏旧 `notify_unknown_face` 签名，当前路由在完整重构前会报错。
+
+本轮回滚方式：
+
+- 回滚 `app/services/feishu.py`。
+- 删除本节 Round 04 开发执行记录。
+
+本轮提交策略：
+
+- 本轮完成并验证后单独提交一次，提交信息需说明飞书签名、富文本模板和兼容边界。
+
 ## 24. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`

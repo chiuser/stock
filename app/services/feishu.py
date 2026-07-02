@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -13,6 +17,7 @@ import requests
 @dataclass(frozen=True)
 class FeishuConfig:
     webhook_url: str
+    webhook_secret: str
     app_id: str
     app_secret: str
 
@@ -20,6 +25,7 @@ class FeishuConfig:
     def from_env(cls) -> "FeishuConfig":
         return cls(
             webhook_url=os.environ.get("FEISHU_WEBHOOK_URL", "").strip(),
+            webhook_secret=os.environ.get("FEISHU_WEBHOOK_SECRET", "").strip(),
             app_id=os.environ.get("FEISHU_APP_ID", "").strip(),
             app_secret=os.environ.get("FEISHU_APP_SECRET", "").strip(),
         )
@@ -27,8 +33,10 @@ class FeishuConfig:
     def safe_summary(self) -> dict[str, bool]:
         return {
             "has_webhook": bool(self.webhook_url),
+            "has_webhook_secret": bool(self.webhook_secret),
             "has_app_id": bool(self.app_id),
             "has_app_secret": bool(self.app_secret),
+            "can_sign_webhook": bool(self.webhook_url and self.webhook_secret),
             "can_upload_image": bool(
                 self.webhook_url and self.app_id and self.app_secret
             ),
@@ -37,22 +45,30 @@ class FeishuConfig:
 
 def send_text(text: str, config: FeishuConfig | None = None) -> dict[str, Any]:
     cfg = config or FeishuConfig.from_env()
-    if not cfg.webhook_url:
-        return {"ok": False, "text": "FEISHU_WEBHOOK_URL is not configured"}
+    return _send_webhook_payload(
+        {"msg_type": "text", "content": {"text": text}},
+        cfg,
+    )
 
-    try:
-        response = requests.post(
-            cfg.webhook_url,
-            json={"msg_type": "text", "content": {"text": text}},
-            timeout=10,
-        )
-        return {
-            "ok": response.ok,
-            "status_code": response.status_code,
-            "text": response.text,
-        }
-    except requests.RequestException as exc:
-        return {"ok": False, "status_code": None, "text": str(exc)}
+
+def send_post(
+    title: str,
+    lines: list[list[dict[str, str]]],
+    config: FeishuConfig | None = None,
+) -> dict[str, Any]:
+    cfg = config or FeishuConfig.from_env()
+    payload = {
+        "msg_type": "post",
+        "content": {
+            "post": {
+                "zh_cn": {
+                    "title": title,
+                    "content": lines,
+                }
+            }
+        },
+    }
+    return _send_webhook_payload(payload, cfg)
 
 
 def upload_image(image_path: Path, config: FeishuConfig | None = None) -> dict[str, Any]:
@@ -87,22 +103,31 @@ def upload_image(image_path: Path, config: FeishuConfig | None = None) -> dict[s
 
 def send_image(image_key: str, config: FeishuConfig | None = None) -> dict[str, Any]:
     cfg = config or FeishuConfig.from_env()
-    if not cfg.webhook_url:
-        return {"ok": False, "text": "FEISHU_WEBHOOK_URL is not configured"}
+    return _send_webhook_payload(
+        {"msg_type": "image", "content": {"image_key": image_key}},
+        cfg,
+    )
 
-    try:
-        response = requests.post(
-            cfg.webhook_url,
-            json={"msg_type": "image", "content": {"image_key": image_key}},
-            timeout=10,
-        )
-        return {
-            "ok": response.ok,
-            "status_code": response.status_code,
-            "text": response.text,
-        }
-    except requests.RequestException as exc:
-        return {"ok": False, "status_code": None, "text": str(exc)}
+
+def notify_known_face(
+    *,
+    name: str,
+    person_id: str,
+    device_sn: str,
+    event_time: str,
+    event_id: str | int | None,
+    config: FeishuConfig | None = None,
+) -> dict[str, Any]:
+    """Notify Feishu about a successfully matched face."""
+
+    lines = [
+        _text_line("姓名", name),
+        _text_line("人员 ID", person_id),
+        _text_line("设备", device_sn or "unknown"),
+        _text_line("时间", event_time or "unknown"),
+        _text_line("事件 ID", event_id or "unknown"),
+    ]
+    return send_post("人脸识别成功", lines, config)
 
 
 def notify_unknown_face(
@@ -111,19 +136,25 @@ def notify_unknown_face(
     device_sn: str,
     event_time: str,
     event_id: str | int | None,
+    storage_path: str | None = None,
+    view_url: str | None = None,
     config: FeishuConfig | None = None,
 ) -> dict[str, Any]:
-    """Notify Feishu about an unknown face and include an image when possible."""
+    """Notify Feishu about an unknown face and include a link when possible."""
 
     cfg = config or FeishuConfig.from_env()
-    title = "摄像头识别到陌生人"
-    text = (
-        f"{title}\n"
-        f"设备: {device_sn or 'unknown'}\n"
-        f"事件ID: {event_id or 'unknown'}\n"
-        f"时间: {event_time or 'unknown'}"
-    )
-    results: list[dict[str, Any]] = [send_text(text, cfg)]
+    resolved_storage_path = storage_path or (str(image_path) if image_path else "")
+    lines = [
+        _text_line("设备", device_sn or "unknown"),
+        _text_line("时间", event_time or "unknown"),
+        _text_line("事件 ID", event_id or "unknown"),
+    ]
+    if resolved_storage_path:
+        lines.append(_text_line("保存位置", resolved_storage_path))
+    if view_url:
+        lines.append(_link_line("查看图片", view_url))
+
+    results: list[dict[str, Any]] = [send_post("发现未匹配人脸", lines, cfg)]
 
     if image_path and image_path.exists() and cfg.app_id and cfg.app_secret:
         upload_result = upload_image(image_path, cfg)
@@ -137,6 +168,28 @@ def notify_unknown_face(
             )
 
     return {"ok": any(r.get("ok") for r in results), "results": results}
+
+
+def notify_event_error(
+    *,
+    message: str,
+    device_sn: str = "",
+    event_time: str = "",
+    event_id: str | int | None = None,
+    raw_event_path: str = "",
+    config: FeishuConfig | None = None,
+) -> dict[str, Any]:
+    """Notify Feishu about an event handling error without exposing stack traces."""
+
+    lines = [
+        _text_line("问题", message),
+        _text_line("设备", device_sn or "unknown"),
+        _text_line("时间", event_time or "unknown"),
+        _text_line("事件 ID", event_id or "unknown"),
+    ]
+    if raw_event_path:
+        lines.append(_text_line("原始事件", raw_event_path))
+    return send_post("人脸识别事件处理异常", lines, config)
 
 
 def _tenant_access_token(config: FeishuConfig) -> dict[str, Any]:
@@ -157,3 +210,47 @@ def _tenant_access_token(config: FeishuConfig) -> dict[str, Any]:
     except (requests.RequestException, ValueError) as exc:
         return {"ok": False, "status_code": None, "text": str(exc)}
 
+
+def _send_webhook_payload(
+    payload: dict[str, Any],
+    config: FeishuConfig,
+) -> dict[str, Any]:
+    if not config.webhook_url:
+        return {"ok": False, "text": "FEISHU_WEBHOOK_URL is not configured"}
+
+    try:
+        response = requests.post(
+            config.webhook_url,
+            json=_with_signature(payload, config),
+            timeout=10,
+        )
+        return {
+            "ok": response.ok,
+            "status_code": response.status_code,
+            "text": response.text,
+        }
+    except requests.RequestException as exc:
+        return {"ok": False, "status_code": None, "text": str(exc)}
+
+
+def _with_signature(payload: dict[str, Any], config: FeishuConfig) -> dict[str, Any]:
+    if not config.webhook_secret:
+        return dict(payload)
+
+    timestamp = str(int(time.time()))
+    string_to_sign = f"{timestamp}\n{config.webhook_secret}"
+    signature = base64.b64encode(
+        hmac.new(string_to_sign.encode("utf-8"), b"", hashlib.sha256).digest()
+    ).decode("utf-8")
+    signed_payload = dict(payload)
+    signed_payload["timestamp"] = timestamp
+    signed_payload["sign"] = signature
+    return signed_payload
+
+
+def _text_line(label: str, value: Any) -> list[dict[str, str]]:
+    return [{"tag": "text", "text": f"{label}: {value}"}]
+
+
+def _link_line(text: str, href: str) -> list[dict[str, str]]:
+    return [{"tag": "a", "text": text, "href": href}]
