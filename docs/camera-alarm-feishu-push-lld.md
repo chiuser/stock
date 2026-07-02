@@ -2944,6 +2944,99 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
   - 如果 Web 后台可以持久化，则再用浏览器 DevTools 或抓取后台 JS/请求确认 Web 实际调用的额外接口。
   - 如果 Web 后台也不能持久化，则问题可能是固件能力、设备型号授权或当前模式限制，需要厂商文档/后台能力页面进一步确认。
 
+### 23.19 Round 19：真实人脸识别可用性验证
+
+本轮目标：
+
+- 修正验收口径：不再把配置回读值作为唯一阻塞条件，而是以真实识别事件是否产生、服务端是否处理、飞书是否通知作为最终可用性证据。
+- 验证当前摄像头是否已经可以实际识别人脸并向远程服务器推送事件。
+- 如果真实链路已经可用，则停止纠结 `AlgorithmStoreCfg=Unknown`、`RecoRule.Enable=false`、`FaceDetect.Enable=false` 等回读异常，把它们记录为固件表现差异。
+
+本轮技术方案：
+
+- 只读检查远程服务器事件目录：
+  - 统计 `raw` 和 `records` 最新日期的 operator/result 分布。
+  - 如果出现 `FaceReco`、`FaceSnapshot` 或其他人脸相关 operator，抽取字段摘要，确认是否已经被服务端正确解析。
+  - 如果 `records` 出现 known/stranger/parse_error 分支，进一步检查飞书发送状态摘要。
+- 如远程仍只有 heartbeat，则进行一次人工触发验证：
+  - 请用户站到摄像头前 5 到 10 秒。
+  - 在用户触发期间，远程观察 60 到 120 秒 raw/records 是否新增非 heartbeat 事件。
+  - 观察只看 operator、result、feishu.status、图片落盘相对路径等摘要，不展示原始图片/base64。
+- 本轮不改摄像头配置，不改服务端代码，不重试任何 PUT。
+
+本轮范围：
+
+- 允许修改：
+  - `docs/camera-alarm-feishu-push-lld.md`
+- 允许只读访问远程服务器事件目录。
+- 允许只读调用摄像头查询接口，但不以配置回读作为可用性否决条件。
+
+本轮不做：
+
+- 不写 `/System/AlgorithmStoreCfg`。
+- 不写 `/FaceReco/1/RecoRuleList`、`/Pictures/1/FaceDetect`、`/AI/FaceSnapshotCfg`。
+- 不重启远程服务。
+- 不展示 raw payload、图片 base64、摄像头密码、事件 token、飞书秘钥。
+
+通过标准：
+
+- 远程 raw 中出现真实人脸相关事件，并且 records 中产生对应处理结果。
+- 匹配成功事件能进入 known 分支并触发飞书通知。
+- 陌生人事件能进入 stranger 分支，图片能落盘并生成可访问链接或相对存储位置。
+
+失败或继续条件：
+
+- 如果观察窗口内仍只有 heartbeat，说明当前现实链路还没有证明可用，需要继续排查触发条件、摄像头画面/算法、人脸库或 Web 后台模式。
+- 如果出现人脸事件但服务端解析失败，下一轮应按真实 raw 字段修复解析 fixture，而不是继续改摄像头配置。
+- 如果出现人脸事件且飞书通知成功，则本阶段可认为“识别推送链路可用”，后续转入稳定性和字段完善。
+
+风险点：
+
+- 没有人站在摄像头前时，远程只有 heartbeat 不能证明识别不可用。
+- 摄像头可能只在画面质量、距离、光照和角度满足条件时触发人脸事件。
+- 如果真实事件 operator 与文档不同，不能直接丢弃，需要以 raw 摘要为准调整服务端解析。
+
+回滚方式：
+
+- 本轮只读无设备或代码回滚。
+- 文档结论如被后续真实事件推翻，下一轮先修订本节。
+
+验证方式：
+
+- `ssh qypower-prod` 统计 `/var/lib/camera-face-guard/p6s_events/raw/<date>` 与 `records/<date>`。
+- 如需要人工触发，则在触发前后分别记录 raw/records 总数和 operator 分布差异。
+- 如出现真实事件，抽样 records 的 `operator`、`result`、`feishu.status`、`stored_image` 或等价字段摘要。
+
+本轮提交策略：
+
+- 只更新文档时提交类型使用 `docs:`。
+- 暂存前确认不包含 `.env.local`、图片文件、STYD 会员数据、临时备份 XML 和摄像头 raw payload。
+
+本轮第一阶段只读检查结果：
+
+- 远程事件目录最新日期为 `2026-07-02`。
+- `/var/lib/camera-face-guard/p6s_events/raw/2026-07-02`：
+  - `total=175`。
+  - `operators={"heartbeat": 175}`。
+  - `non_heartbeat_samples=[]`。
+- `/var/lib/camera-face-guard/p6s_events/records/2026-07-02`：
+  - `total=175`。
+  - `operators={"heartbeat": 175}`。
+  - `results={"heartbeat": 175}`。
+  - `feishu_status={}`。
+  - `image_fields={}`。
+  - `non_heartbeat_samples=[]`。
+
+第一阶段结论：
+
+- 目前远程历史数据仍没有证明人脸识别事件已经可用。
+- 但“只有 heartbeat”不能直接证明人脸识别不可用，因为无人站在摄像头前、光照/角度不满足、或触发窗口不够，都可能导致没有真实事件。
+- 下一步必须进行人工站位测试：
+  - 用户站到摄像头前 5 到 10 秒。
+  - 站位前后分别统计远程 raw/records 总数和 operator 分布。
+  - 如果新增非 heartbeat 人脸事件，就按真实事件继续验证服务端解析和飞书通知。
+  - 如果仍只有 heartbeat，再回到摄像头触发条件、画面识别框、Web 后台算法页面等方向排查。
+
 ## 24. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`
