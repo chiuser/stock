@@ -1854,6 +1854,108 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
 
 - 本轮完成后单独提交一次，提交信息需说明远程前置初始化计划和实际状态。
 
+### 23.9 Round 09：补充远程发布服务步骤
+
+本轮对应 LLD 修正：
+
+- 原步骤 8 已完成远程前置初始化。
+- 原步骤 9 是配置摄像头 HTTP 推送，但在这之前必须先发布服务器代码并启动远程 Web 服务。
+- 因此本轮补充“远程发布服务”步骤，位于远程前置初始化和摄像头配置之间。
+
+本轮目标：
+
+- 将当前已提交代码发布到 `qypower-prod:/opt/camera-face-guard/`。
+- 将本地真实配置安全写入远程 `/etc/camera-face-guard/app.env`。
+- 在远程创建 `.venv` 并安装 `requirements.txt`。
+- 安装 systemd 服务和 Nginx site。
+- 启动并验证 `camera-face-guard` 服务。
+- 关闭 Uvicorn 与 Nginx access log，避免 `P6S_EVENT_SECRET` 和图片查看 token 出现在 HTTP 访问日志里。
+- 发布后如果曾用旧 `P6S_EVENT_SECRET` 发起过验证请求，需要旋转该 token 并重启服务。
+
+本轮范围：
+
+- 只发布 Git 已提交内容，避免把当前工作区未提交的会员图片、CSV 或临时文件带到远程。
+- 通过临时发布目录和 `rsync --delete` 同步到 `/opt/camera-face-guard/`。
+- 通过 SSH 安全复制 `.env.local` 到远程临时文件，再移动为 `/etc/camera-face-guard/app.env`。
+- 不在终端输出真实 env 值。
+- 不输出、提交或记录任何真实 token；健康检查优先使用不含业务通知的 heartbeat fixture。
+- 不配置摄像头。
+- 不修改本地未跟踪会员数据。
+
+具体执行计划：
+
+1. 本地配置预检：
+   - 只检查 `.env.local` 是否存在。
+   - 只输出缺失的关键配置键，不输出任何真实值。
+   - 关键键包括 `CAMERA_SESSION_SECRET`、`CAMERA_ADMIN_USERNAME`、`CAMERA_ADMIN_PASSWORD`、`P6S_EVENT_SECRET`、`P6S_EVENT_IMAGE_DIR`、`PUBLIC_BASE_URL`、`FEISHU_WEBHOOK_URL`、`FEISHU_WEBHOOK_SECRET`。
+2. 生成干净发布包：
+   - 使用 `git archive HEAD` 生成只包含已提交文件的 tar。
+   - 解压到 `/tmp` 临时目录。
+   - 使用 `rsync -a --delete` 发布到 `qypower-prod:/opt/camera-face-guard/`。
+3. 远程 env：
+   - 使用 `rsync -a .env.local qypower-prod:/tmp/camera-face-guard-app.env`。
+   - 远程执行 `sudo mv`、`sudo chown root:root`、`sudo chmod 640`。
+4. 远程依赖：
+   - `cd /opt/camera-face-guard`。
+   - `python3 -m venv .venv`。
+   - `.venv/bin/pip install -r requirements.txt`。
+5. systemd/Nginx：
+   - 复制 `scripts/qypower-camera.service` 到 `/etc/systemd/system/camera-face-guard.service`。
+   - 复制 `scripts/qypower-nginx.conf` 到 `/etc/nginx/sites-available/camera-face-guard`。
+   - 创建 sites-enabled 软链。
+   - systemd 模板使用 `uvicorn --no-access-log`。
+   - Nginx site 使用 `access_log off`。
+   - 禁用 Nginx 默认站点软链，确保公网 IP 访问进入 camera-face-guard。
+   - `systemctl daemon-reload`。
+   - `systemctl enable --now camera-face-guard`。
+   - `nginx -t`。
+   - `systemctl reload nginx`。
+6. 验证：
+   - `systemctl status camera-face-guard --no-pager`。
+   - `curl GET http://127.0.0.1:8000/camera`，预期 200；不要用 `HEAD` 判断页面健康，因为当前 FastAPI 静态页路由对 `HEAD` 返回 405。
+   - `curl GET http://127.0.0.1/camera`，预期 200。
+   - `curl GET http://82.156.198.180/camera`，预期 200。
+   - 远程执行 `python3 scripts/validate_p6s_event_flow.py`。
+   - 使用远程真实 `/etc/camera-face-guard/app.env` 中的 `P6S_EVENT_SECRET` POST heartbeat fixture 到本机事件入口，预期返回 `heartbeat-Ack`，且不触发飞书通知。
+
+本轮风险：
+
+- `.env.local` 可能缺少远程运行所需键。
+- pip 可能因远程网络问题安装失败。
+- Nginx reload 可能受现有站点配置影响。
+- `rsync --delete` 会删除 `/opt/camera-face-guard/` 中不在 Git 提交里的文件，因此该目录只能作为应用发布目录使用。
+- 如果 access log 未关闭，事件回调 URL 中的 `P6S_EVENT_SECRET` 或图片查看 token 可能进入 systemd/Nginx 日志；本轮必须通过关闭 access log 与旋转 token 规避。
+
+本轮回滚方式：
+
+- 停止远程服务：`sudo systemctl stop camera-face-guard`。
+- 禁用远程服务：`sudo systemctl disable camera-face-guard`。
+- 回滚代码需重新 rsync 上一个 Git 提交的发布包。
+- 如果怀疑 `P6S_EVENT_SECRET` 泄露，重新生成 `.env.local` 与 `/etc/camera-face-guard/app.env` 中的 `P6S_EVENT_SECRET`，重启服务，并同步更新摄像头事件回调路径。
+
+本轮实际执行结果：
+
+- 本地 `.env.local` 已补齐远程服务必需键，预检结果为 15 个关键键全部非空；真实值未输出、未提交。
+- 已使用 `git archive HEAD` 从 `31e0e7e` 生成干净发布包，并通过 `rsync -a --delete` 同步到 `qypower-prod:/opt/camera-face-guard/`。
+- 已将 `.env.local` 同步到远程临时文件，再移动为 `/etc/camera-face-guard/app.env`；远程预检结果为 15 个关键键全部非空。
+- 已在远程 `/opt/camera-face-guard/.venv` 创建虚拟环境，并成功安装 `fastapi`、`uvicorn[standard]`、`requests` 等依赖。
+- 已安装 `/etc/systemd/system/camera-face-guard.service`，服务状态为 `active`，开机状态为 `enabled`。
+- 已安装 `/etc/nginx/sites-available/camera-face-guard` 并启用软链，已删除 `/etc/nginx/sites-enabled/default` 默认站点软链，`nginx -t` 通过并已 reload。
+- 初次用真实事件入口做 heartbeat 验证时发现 Uvicorn access log 会记录完整事件 URL；本轮已按安全修正关闭 Uvicorn 与 Nginx access log，并旋转 `P6S_EVENT_SECRET`。
+- 旋转 token 后，`GET http://127.0.0.1:8000/camera`、`GET http://127.0.0.1/camera`、`GET http://82.156.198.180/camera` 均返回 200。
+- 远程执行 `scripts/validate_p6s_event_flow.py` 通过，输出 `P6S event flow fixtures validated`。
+- 使用远程真实 `P6S_EVENT_SECRET` 经 Nginx POST heartbeat fixture 到 `/api/p6s/events/<secret>`，返回 200 和 `heartbeat-Ack`，且不会触发飞书通知。
+- 重启后的 `journalctl -u camera-face-guard --since=-1min` 只显示服务停止/启动日志，没有新的请求 URL access log。
+- `HEAD /camera` 返回 405 属于当前 FastAPI 静态页路由行为，不作为健康失败；健康检查必须使用 `GET`。
+
+本轮偏差记录：
+
+- 曾有一次远程命令引号传递错误，把虚拟环境误创建到远程 `/home/ubuntu/.venv`；该目录未安装业务依赖，暂不删除，避免未经确认清理用户家目录内容。正式运行使用的是 `/opt/camera-face-guard/.venv`。
+
+本轮提交策略：
+
+- 本轮完成后单独提交一次，提交信息需说明补充了远程发布步骤和实际部署验证结果。
+
 ## 24. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`

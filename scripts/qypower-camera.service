@@ -8,7 +8,8 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/opt/camera-face-guard
 EnvironmentFile=/etc/camera-face-guard/app.env
-ExecStart=/opt/camera-face-guard/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+# Disable access logs because event and image-view URLs contain tokens.
+ExecStart=/opt/camera-face-guard/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log
 Restart=on-failure
 RestartSec=5
 KillMode=control-group

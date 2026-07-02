@@ -100,6 +100,8 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
+`qypower-camera.service` 和 `qypower-nginx.conf` 默认关闭 HTTP access log，因为事件回调 URL 与图片查看 URL 都包含 token。排查业务事件时优先查看 `P6S_EVENT_IMAGE_DIR` 下的事件记录，服务启动异常再看 `journalctl -u camera-face-guard`。
+
 访问：
 
 ```text
