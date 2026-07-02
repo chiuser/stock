@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import tempfile
 from datetime import datetime
@@ -49,6 +50,17 @@ def parse_args() -> argparse.Namespace:
         "--restore",
         type=Path,
         help="Restore a previously saved RecoRuleList XML backup.",
+    )
+    parser.add_argument(
+        "--patch-mode",
+        choices=["elementtree", "raw-text"],
+        default="elementtree",
+        help="How to build the patched XML.",
+    )
+    parser.add_argument(
+        "--print-diff-summary",
+        action="store_true",
+        help="Print a dry-run summary of the planned patch.",
     )
     return parser.parse_args()
 
@@ -118,6 +130,16 @@ def response_status_code(text: str) -> str:
     return child_text(root, "statusCode")
 
 
+def response_message(text: str) -> str:
+    if not text.strip():
+        return ""
+    try:
+        root = ElementTree.fromstring(text.strip())
+    except ElementTree.ParseError:
+        return ""
+    return child_text(root, "message")
+
+
 def backup_xml(xml_text: str, channel_id: int) -> Path:
     backup_dir = Path(tempfile.gettempdir()) / "camera-face-guard-p6s-backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
@@ -147,7 +169,62 @@ def to_xml(root: ElementTree.Element) -> str:
     return '<?xml version="1.0" encoding="UTF-8" ?>\n' + body
 
 
-def compare_non_target_fields(before: list[dict[str, str]], after: list[dict[str, str]]) -> list[str]:
+def raw_text_enable_rules(xml_text: str) -> tuple[str, int, list[str]]:
+    """Patch only the first-level Enable field inside each RecoRule block."""
+
+    rule_pattern = re.compile(r"(<RecoRule\b[^>]*>)(.*?)(</RecoRule>)", re.DOTALL)
+    enable_pattern = re.compile(r"<Enable>\s*false\s*</Enable>", re.IGNORECASE)
+    parts: list[str] = []
+    last_end = 0
+    changed = 0
+    changed_indexes: list[str] = []
+
+    for idx, match in enumerate(rule_pattern.finditer(xml_text)):
+        parts.append(xml_text[last_end : match.start()])
+        prefix, body, suffix = match.groups()
+        patched_body, replacements = enable_pattern.subn(
+            "<Enable>true</Enable>",
+            body,
+            count=1,
+        )
+        if replacements:
+            changed += replacements
+            changed_indexes.append(str(idx))
+        parts.append(prefix + patched_body + suffix)
+        last_end = match.end()
+
+    parts.append(xml_text[last_end:])
+    if not parts or changed == 0:
+        parsed = parse_xml(xml_text)
+        if any(row["enable"].lower() != "true" for row in summarize_rules(parsed)):
+            raise SystemExit("No false first-level RecoRule Enable field was patched")
+    return "".join(parts), changed, changed_indexes
+
+
+def build_patch(
+    xml_text: str,
+    patch_mode: str,
+) -> tuple[str, int, list[str], list[dict[str, str]], list[dict[str, str]]]:
+    before_root = parse_xml(xml_text)
+    before = summarize_rules(before_root)
+    if patch_mode == "raw-text":
+        patched_xml, changed, changed_indexes = raw_text_enable_rules(xml_text)
+        after_root = parse_xml(patched_xml)
+    else:
+        changed = enable_rules(before_root)
+        changed_indexes = [
+            row["index"] for row in before if row["enable"].lower() != "true"
+        ]
+        patched_xml = to_xml(before_root)
+        after_root = parse_xml(patched_xml)
+    after = summarize_rules(after_root)
+    return patched_xml, changed, changed_indexes, before, after
+
+
+def compare_non_target_fields(
+    before: list[dict[str, str]],
+    after: list[dict[str, str]],
+) -> list[str]:
     mismatches = []
     if len(before) != len(after):
         return ["rule_count"]
@@ -158,6 +235,26 @@ def compare_non_target_fields(before: list[dict[str, str]], after: list[dict[str
             if new.get(key) != value:
                 mismatches.append(f"rule[{old['index']}].{key}")
     return mismatches
+
+
+def print_diff_summary(
+    patch_mode: str,
+    changed: int,
+    changed_indexes: list[str],
+    before: list[dict[str, str]],
+    after: list[dict[str, str]],
+) -> None:
+    print_json(
+        "PATCH_DIFF_SUMMARY",
+        {
+            "patch_mode": patch_mode,
+            "changed_rules": changed,
+            "changed_indexes": changed_indexes,
+            "non_target_mismatches": compare_non_target_fields(before, after),
+            "before": before,
+            "after": after,
+        },
+    )
 
 
 def restore_xml(client: P6SCameraClient, path: Path, channel_id: int) -> None:
@@ -192,13 +289,27 @@ def main() -> None:
     before = summarize_rules(root)
     print_json("RECO_RULES_BEFORE", {"rule_count": len(before), "rules": before})
 
+    if args.print_diff_summary or args.apply:
+        patched_xml, changed, changed_indexes, patch_before, patch_after = build_patch(
+            xml_text,
+            args.patch_mode,
+        )
+        print_diff_summary(
+            args.patch_mode,
+            changed,
+            changed_indexes,
+            patch_before,
+            patch_after,
+        )
+        mismatches = compare_non_target_fields(patch_before, patch_after)
+        if mismatches:
+            raise SystemExit("Planned patch changes non-target fields: " + ",".join(mismatches))
+
     if not args.apply:
         return
 
     backup_path = backup_xml(xml_text, args.channel_id)
     print_json("BACKUP", {"path": str(backup_path)})
-    changed = enable_rules(root)
-    patched_xml = to_xml(root)
     write_result = client.set_face_reco_rule_list(
         patched_xml,
         channel_id=args.channel_id,
@@ -211,7 +322,9 @@ def main() -> None:
             "ok": True,
             "http_status_code": write_result.get("status_code"),
             "device_status_code": status_code,
+            "device_message": response_message(write_result.get("text", "")),
             "changed_rules": changed,
+            "patch_mode": args.patch_mode,
         },
     )
     if status_code and status_code != "0":

@@ -2173,6 +2173,101 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
 - 可能原因包括：设备要求特定 XML 格式/字段组合、需要通过后台 UI 或其他关联接口启用规则、`CompareLimit=0` 或 `ControlPersonnelType=OrganizationMember` 组合导致规则被设备回写为禁用、或该固件对该接口有隐藏约束。
 - 下一步需要先定位为什么 PUT 后不持久化，再决定是否通过后台 UI、完整原始 XML 格式、或更小范围接口解决；在此之前不能继续步骤 10 的真实识别通知验证。
 
+### 23.12 Round 12：诊断 RecoRule.Enable 写入不持久化
+
+本轮对应 LLD 修正：
+
+- Round 11 的最小化 XML 写入没有持久化 `RecoRule.Enable=true`。
+- 按停止条件，不能继续盲目重复 PUT。
+- 本轮先增强诊断能力，确认是脚本 XML 序列化问题、设备响应问题，还是规则字段组合问题。
+
+本轮目标：
+
+- 只读采集当前 `/FaceReco/1/RecoRuleList` 完整 XML 的结构摘要。
+- 比对 Round 11 备份 XML、当前 XML、脚本拟写入 XML 的差异。
+- 改造脚本，使其支持两种补丁模式：
+  - `elementtree`：当前模式，解析 XML 后改 `RecoRule/Enable`。
+  - `raw-text`：保留设备原始 XML 字符串，只替换第一个 `<RecoRule ...>` 内的第一层 `<Enable>false</Enable>` 为 `<Enable>true</Enable>`，避免 ElementTree 改写 namespace、Version 属性顺序、空标签和缩进。
+- 脚本在写入后必须打印设备响应摘要：HTTP 状态、`ResponseStatus.statusCode`、`message`、回读摘要、备份路径。
+- 只有在只读差异分析支持“上轮可能是 XML 序列化导致设备忽略”的前提下，才允许执行一次 `raw-text --apply` 受控写入。
+
+本轮范围：
+
+- 允许修改 `scripts/configure_p6s_face_reco_rule.py`。
+- 允许新增脚本内部的差异摘要函数，不新增依赖。
+- 允许对摄像头执行最多一次 PUT `/FaceReco/1/RecoRuleList`，前提是先完成只读差异分析并保存备份。
+- 不修改 HTTP 事件配置。
+- 不修改人脸库、人员资料、人脸抓拍配置。
+- 不进入步骤 10 端到端人脸识别验证，除非本轮能证明 `RecoRule.Enable=true` 已持久化。
+
+具体开发计划：
+
+1. 脚本增强：
+   - 增加 `--patch-mode elementtree|raw-text`，默认仍为 `elementtree`。
+   - 增加 `--print-diff-summary`，输出拟修改字段数量、目标规则索引、非目标字段摘要。
+   - 增加 `raw_text_enable_rules(xml_text)`，只在 `RecoRule` 节点内部替换第一层 `<Enable>false</Enable>`。
+   - 增加 `WRITE_RESULT` 输出，包含 HTTP 状态、设备 `statusCode` 和 `message`。
+2. 只读诊断：
+   - 运行脚本只读审计，确认当前仍为 `Enable=false`。
+   - 运行 `--print-diff-summary --patch-mode raw-text`，确认拟改动只有 `RecoRule.Enable`。
+   - 检查 Round 11 备份 XML 路径存在，可用于回滚。
+3. 受控写入：
+   - 如果只读诊断证明 raw-text 只改一个目标字段，则执行一次 `--apply --patch-mode raw-text`。
+   - 写入后立即 GET 回读。
+   - 如果仍为 false，立即停止，记录设备响应和结论。
+4. 验证：
+   - `python3 -m py_compile scripts/configure_p6s_face_reco_rule.py app/services/p6s_camera.py`。
+   - 暂存区不包含 `.env.local`、XML 备份或 STYD 数据。
+
+本轮风险：
+
+- `raw-text` 替换如果误匹配嵌套 `Enable` 会误改 Trigger 字段，因此必须限定在第一个 `<RecoRule>` 的开始/结束范围内。
+- 设备可能返回 `statusCode=0` 但仍忽略字段；此时不能再继续写，需要考虑 UI 或其他接口。
+- 如果设备回读 XML 自动格式化，不能仅靠文本 diff 判断失败，必须以字段摘要为准。
+
+本轮回滚方式：
+
+- 如写入成功但后续表现异常，使用脚本 `--restore <backup.xml>` 恢复执行前完整 XML。
+- 如写入失败且回读未变化，无需回滚摄像头配置。
+- 本地代码回滚使用 `git revert` 本轮提交。
+
+本轮停止条件：
+
+- raw-text 差异分析显示会改动非目标字段。
+- 设备响应 `ResponseStatus.statusCode` 非 0。
+- raw-text 写入后回读仍为 `RecoRule.Enable=false`。
+- 回读发现 `Trigger.Push.Enable` 或 `Trigger.Snapshot.Enable` 被改坏。
+
+本轮提交策略：
+
+- 本轮完成后单独提交一次，提交信息需说明诊断脚本增强、是否执行 raw-text 受控写入、以及设备回读结论。
+
+本轮实际执行结果：
+
+- 已增强 `scripts/configure_p6s_face_reco_rule.py`：
+  - 新增 `--patch-mode elementtree|raw-text`。
+  - 新增 `--print-diff-summary`。
+  - `raw-text` 模式只在 `<RecoRule>` 范围内替换第一层 `<Enable>false</Enable>`。
+  - 写入时输出 `WRITE_RESULT`，包含 HTTP 状态、设备 `ResponseStatus.statusCode`、设备 message、patch mode 和变更数量。
+- 静态编译通过：`python3 -m py_compile scripts/configure_p6s_face_reco_rule.py app/services/p6s_camera.py`。
+- 只读 raw-text diff-summary 结果：
+  - 目标规则索引为 `0`。
+  - 拟修改数量为 `1`。
+  - `enable` 从 `false` 变为 `true`。
+  - `RecognitionRule`、`CompareLimit`、`ControlPersonnelType`、`Trigger.Push.Enable`、`Trigger.Snapshot.Enable` 等非目标字段无差异。
+- 按本轮计划执行过一次受控写入：`python3 scripts/configure_p6s_face_reco_rule.py --apply --patch-mode raw-text`。
+- 写入前已在系统临时目录保存完整 XML 备份。
+- 设备写入响应：HTTP `200`，设备 `ResponseStatus.statusCode=0`，message 为空。
+- 写入后立即回读，`RecoRule.Enable` 仍为 `false`，触发本轮停止条件：`raw-text 写入后回读仍为 RecoRule.Enable=false`。
+- 本轮未继续重复 PUT，也未进入步骤 10 真机端到端识别验证。
+
+本轮诊断结论：
+
+- `elementtree` 和 `raw-text` 两种补丁模式都无法让 `RecoRule.Enable=true` 持久化。
+- 设备返回 `statusCode=0` 但字段不持久化，说明当前问题不再像是 XML 序列化问题或 HTTP/认证问题。
+- 更可能的方向是：该固件把 `RecoRule.Enable` 作为只读/派生字段、需要通过其他关联字段或 UI 启用、当前规则组合不允许启用，或需要完整后台页面保存流程触发额外接口。
+- 下一步不能继续盲目重试 PUT `/FaceReco/1/RecoRuleList`；需要先通过摄像头 Web 后台操作或浏览器/接口抓包确认 UI 启用规则时实际调用了哪些接口和提交了哪些字段。
+
 ## 24. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`
