@@ -1271,7 +1271,7 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
 | 6 | 开发 | 简化摄像头路由。 | 改造 `app/routers/camera.py`；事件入口只负责鉴权、请求体大小限制、调用服务层和返回 Ack；新增 `GET /api/p6s/event-images/view/{token}`；旧文件名图片接口不再用于飞书链接。 | 路由层不再堆识别业务逻辑；新 token 图片入口通过安全校验；旧公开文件名入口不出现在通知消息中。 |
 | 7 | 验证 | 本地样本验证。 | 新增或准备 `tests/fixtures/p6s_face_reco_known.json`、`tests/fixtures/p6s_face_reco_stranger.json`、`tests/fixtures/p6s_face_reco_missing_image.json`、`tests/fixtures/p6s_heartbeat.json`；运行 `py_compile` 和最小事件处理脚本。 | known 样本生成匹配成功消息；stranger 样本保存图片并生成链接记录；missing image 样本不生成图片链接；heartbeat 返回正确 Ack。 |
 | 8 | 配置 | 远程服务器前置初始化。 | 通过 `ssh qypower-prod` 准备 Ubuntu 依赖、应用目录、事件目录、日志目录、systemd、Nginx 和远程 env 文件。 | `/opt/camera-face-guard`、`/etc/camera-face-guard/app.env`、`/var/lib/camera-face-guard/p6s_events` 权限正确；服务可在远程本机访问。 |
-| 9 | 配置 | 配置摄像头 HTTP 事件推送。 | 配置 `/System/HTTPEventServerConfigV2`：`Host=82.156.198.180`、`Port=80`、`URLPath=/api/p6s/events/{P6S_EVENT_SECRET}`；检查 `/System/AIEventCfg`、`/System/EventPushMode`、`/AI/FaceSnapshotCfg`、`/FaceReco/1/RecoRuleList`。 | `/System/HTTPEventServerTest` 能到达服务器；服务端 raw 目录出现测试事件；日志能看到摄像头请求。 |
+| 9 | 配置 | 配置摄像头 HTTP 事件推送。 | 配置 `/System/HTTPEventServerConfigV2`：`Host=82.156.198.180`、`Port=80`、`URLPath=/api/p6s/events/{P6S_EVENT_SECRET}`；检查 `/System/AIEventCfg`、`/System/EventPushMode`、`/AI/FaceSnapshotCfg`、`/FaceReco/1/RecoRuleList`。 | `/System/HTTPEventServerTest` 能到达服务器；服务端 raw 目录出现测试事件；由于已关闭 access log，摄像头请求以测试返回和 raw 事件文件作为证据。 |
 | 10 | 验证 | 真机端到端验证。 | 分别触发已入库人员和陌生人识别；检查飞书消息、服务器保存目录、图片查看链接、token 过期和重复事件幂等。 | 匹配成功每次通知；陌生人保存图片并可点击查看；同一事件重复投递不会重复通知。 |
 | 11 | 配置/验证 | 回滚和运维确认。 | 验证关闭摄像头 HTTP 推送、停止远程服务、移除飞书 webhook、回滚代码、查看日志和清理事件目录的步骤。 | 出现异常时可以快速停止推送和通知；不影响本地摄像头管理后台继续使用。 |
 
@@ -1955,6 +1955,126 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
 本轮提交策略：
 
 - 本轮完成后单独提交一次，提交信息需说明补充了远程发布步骤和实际部署验证结果。
+
+### 23.10 Round 10：LLD 步骤 9，配置摄像头 HTTP 事件推送
+
+本轮对应 LLD 步骤：
+
+- 步骤 9：配置摄像头 HTTP 事件推送。
+- 配置 `/System/HTTPEventServerConfigV2` 指向 `qypower-prod`。
+- 审计 `/System/EventPushMode`、`/System/AIEventCfg`、`/AI/FaceSnapshotCfg`、`/FaceReco/1/RecoRuleList`。
+- 使用 `/System/HTTPEventServerTest` 做摄像头侧连通性测试。
+
+本轮文档依据：
+
+- `docs/p6scgi-showdoc/01 API/网络配置管理/平台接入/P6SEvent/HTTP/获取HTTP服务器配置信息V2__149226750.md`。
+- `docs/p6scgi-showdoc/01 API/网络配置管理/平台接入/P6SEvent/HTTP/设置HTTP服务器配置信息V2__149226751.md`。
+- `docs/p6scgi-showdoc/01 API/网络配置管理/平台接入/P6SEvent/HTTP/HTTP服务器状态测试__149226754.md`。
+- `docs/p6scgi-showdoc/01 API/未分类/获取人脸识别事件推送模式__149230105.md`。
+- `docs/p6scgi-showdoc/01 API/智能事件配置管理/人脸相关配置管理接口/人脸抓拍配置管理/获取智能人脸抓拍界面配置__149227113.md`。
+- `docs/p6scgi-showdoc/01 API/智能事件配置管理/人脸相关配置管理接口/人脸识别配置管理/获取通道人脸识别规则列表__149227024.md`。
+
+本轮目标：
+
+- 支持摄像头账号为空密码的真实情况，避免把空密码误判为“未配置”。
+- 在 `app/services/p6s_camera.py` 中补齐 P6S HTTP 事件相关 API 封装。
+- 新增一个可重复执行的配置/审计脚本，避免用一次性手工 curl 配置摄像头。
+- 将本地真实摄像头连接配置写入 `.env.local`，不写入 git。
+- 对摄像头写入 HTTP 事件服务器配置：`Enable=true`、`Protocol=http`、`Host=82.156.198.180`、`Port=80`、`URLPath=/api/p6s/events/{P6S_EVENT_SECRET}`、`AuthMode=none`、`CacheEventEnable=true`。
+- 运行 `/System/HTTPEventServerTest`，确认摄像头能访问远程服务。
+- 从远程服务器侧验证测试请求是否产生事件文件或可解释的返回结果。
+
+本轮范围：
+
+- 允许修改 `app/services/p6s_camera.py`，新增摄像头 HTTP 事件配置相关封装。
+- 允许新增 `scripts/configure_p6s_http_events.py`，用于读取 env、生成 XML、写入配置、运行测试和输出脱敏摘要。
+- 允许更新 `README.md`、`DEPLOY.md` 的步骤 9 说明。
+- 允许更新 `.env.local` 的 `P6S_CAMERA_HOST`、`P6S_CAMERA_USERNAME`、`P6S_CAMERA_PASSWORD`，其中真实值不提交。
+- 本轮只审计 `/System/AIEventCfg`、`/AI/FaceSnapshotCfg`、`/FaceReco/1/RecoRuleList`；除非文档和当前返回都明确支持且风险可控，否则不批量改动这些识别规则，避免覆盖之前调好的摄像头识别配置。
+- 不配置摄像头人脸库，不触发真实人员识别验证；这些属于步骤 10。
+
+具体开发计划：
+
+1. 修正摄像头配置识别：
+   - `P6SConfig` 增加 `password_configured` 概念。
+   - `P6S_CAMERA_PASSWORD=` 空值在 key 存在时视为已配置。
+   - `configured()` 判断改为 base url、username、password key 均存在。
+   - `safe_summary()` 不输出密码明文，只区分 `configured`、`blank`、`set`、`missing`。
+2. 增加 HTTP 事件 API 封装：
+   - 摄像头位于局域网地址，`P6SCameraClient` 发起设备请求时必须禁用 `HTTP_PROXY`、`HTTPS_PROXY` 等环境代理，避免本机代理拦截 `192.168.x.x` 请求。
+   - `get_http_event_server_config()`：GET `/System/HTTPEventServerConfigV2`。
+   - `set_http_event_server_config(host, port, url_path, protocol, timeout, cache_event_enable)`：PUT `/System/HTTPEventServerConfigV2`。
+   - `test_http_event_server(test_text)`：POST `/System/HTTPEventServerTest`。
+   - `get_event_push_mode()`：GET `/System/EventPushMode`。
+   - `get_ai_event_cfg()`：GET `/System/AIEventCfg`，若固件不支持则记录为 unsupported。
+   - `get_face_snapshot_cfg()`：GET `/AI/FaceSnapshotCfg`。
+   - `get_face_reco_rule_list(channel_id=1)`：GET `/FaceReco/1/RecoRuleList`。
+3. 新增配置脚本：
+   - 默认读取 `.env.local`，也允许通过 `CAMERA_ENV_FILE` 覆盖。
+   - 默认先做 dry-run/audit，只有传入 `--apply` 才写入 `/System/HTTPEventServerConfigV2`。
+   - 输出必须脱敏：不打印完整 `P6S_EVENT_SECRET`，不打印完整 `URLPath`，不打印摄像头密码。
+   - 写入后重新 GET 配置，确认 Host/Port/Protocol/Enable/AuthMode/CacheEventEnable 匹配；URLPath 只做内部比较，不输出明文。
+   - 运行测试时使用不含密钥的 `Test` 文本。
+4. 本地配置：
+   - `.env.local` 写入当前局域网摄像头地址 `P6S_CAMERA_HOST`。
+   - `.env.local` 写入摄像头账号 `P6S_CAMERA_USERNAME`。
+   - `.env.local` 写入 `P6S_CAMERA_PASSWORD=`，表示空密码。
+5. 验证：
+   - `python3 -m py_compile app/services/p6s_camera.py scripts/configure_p6s_http_events.py`。
+   - 运行脚本 audit，确认摄像头可连接且当前配置可读取。
+   - 运行脚本 `--apply --test`，写入 HTTP 事件配置并执行摄像头测试。
+   - 远程检查 `/var/lib/camera-face-guard/p6s_events/raw/YYYY-MM-DD/` 是否新增测试事件；如果测试事件不是 JSON 导致服务端拒绝，需要记录摄像头返回和远程可观测证据，不盲目重试。
+6. 提交：
+   - 只提交代码、脚本和文档。
+   - 不提交 `.env.local`。
+   - 不提交 STYD 会员图片和报表临时文件。
+
+本轮风险：
+
+- 摄像头当前 IP 可能再次变化，导致连接失败。
+- 本机开发环境可能设置了 HTTP/HTTPS 代理；如果不禁用代理，局域网摄像头请求会被错误发送到代理端口。
+- 空密码如果仍被设备拒绝，需要停下来确认账号状态。
+- `/System/HTTPEventServerTest` 的真实请求体可能不是 JSON；如果远程事件入口返回 400，需记录这个协议差异，不能盲目重试。
+- 关闭 access log 后，不能依赖 Nginx/Uvicorn URL 日志判断请求；需要依赖测试返回、业务事件目录或安全脱敏的应用记录。
+- 写 `/System/HTTPEventServerConfigV2` 会改变摄像头全局 HTTP 事件推送目标；回滚需要关闭 Enable 或恢复旧配置。
+
+本轮回滚方式：
+
+- 将 `/System/HTTPEventServerConfigV2.Enable` 改为 `false`，其他字段保留。
+- 或将脚本审计到的旧配置重新 PUT 回 `/System/HTTPEventServerConfigV2`。
+- 如果测试期间产生错误事件文件，可按日期目录人工删除对应测试文件。
+- 本地回滚代码使用 `git revert` 本轮提交。
+
+本轮停止条件：
+
+- 摄像头连续无法连接，且确认不是本地网络权限问题。
+- 摄像头返回认证失败或空密码不被接受。
+- 写入 `/System/HTTPEventServerConfigV2` 后 GET 返回与写入不一致。
+- `/System/HTTPEventServerTest` 返回无法解释的错误码，且远程侧没有任何可观测证据。
+
+本轮提交策略：
+
+- 本轮完成后单独提交一次，提交信息需说明支持空密码摄像头连接、增加 HTTP 事件配置脚本、完成或阻塞的真机配置验证结论。
+
+本轮实际执行结果：
+
+- 已确认 `.env.local` 原本缺少 `P6S_CAMERA_HOST`、`P6S_CAMERA_USERNAME`、`P6S_CAMERA_PASSWORD`；本轮已按本地真实配置规则写入当前摄像头地址、账号和空密码标记，真实配置未提交。
+- 已修正 `P6SConfig.configured()`，支持 `P6S_CAMERA_PASSWORD=` 空密码场景；后台状态页可显示“空密码”。
+- 已新增 `scripts/configure_p6s_http_events.py`，支持只读审计、`--apply` 写入 HTTP 事件服务器配置、`--test` 调用摄像头测试接口，且输出会脱敏 `P6S_EVENT_SECRET` 和回调路径。
+- 首次审计时发现本机代理环境会劫持局域网请求到 `127.0.0.1:7890`；已在 `P6SCameraClient` 中使用 `requests.Session(trust_env=False)` 禁用环境代理。
+- 只读审计成功连接摄像头，确认空密码认证可用。
+- 写入前 `/System/HTTPEventServerConfigV2` 状态：`Enable=false`、`AuthMode=OAuth`、`CacheEventEnable=false`、`Host` 为空、`URLPath` 为空。
+- 已写入 `/System/HTTPEventServerConfigV2`：`Enable=true`、`Protocol=http`、`Host=82.156.198.180`、`Port=80`、`AuthMode=none`、`CacheEventEnable=true`、`URLPath=/api/p6s/events/<P6S_EVENT_SECRET>`。
+- 写入后重新 GET 校验通过，`URLPath` 与远程 `P6S_EVENT_SECRET` 匹配，输出中只显示脱敏路径。
+- `/System/HTTPEventServerTest` 返回 `StatusCode=0`、`EventID=240`、`Time=20260702T201928+08`。
+- 远程 raw 事件文件数量从 2 增加到 3；新增文件位于 `/var/lib/camera-face-guard/p6s_events/raw/2026-07-02/`，解析后的 payload 为 `operator=heartbeat`，不会触发飞书通知。
+- `/System/AIEventCfg` 在当前固件返回 404，提示 `/System/AIEventCfg` 不支持；后续不再把该接口作为强制配置项。
+- `/AI/FaceSnapshotCfg` 审计结果：`Enable=true`、`Trigger.Push.Enable=true`、`Trigger.Snapshot.Enable=true`、`IsCaptureBackground=true`、`ShowFaceFrame=true`。
+- `/FaceReco/1/RecoRuleList` 审计结果：当前仅 1 条规则，`RecognitionRule=Comparison pass`、`ControlPersonnelType=OrganizationMember`、`Trigger.Push.Enable=true`、`Trigger.Snapshot.Enable=true`，但 `RecoRule.Enable=false`，这会影响后续真实人脸识别事件触发。
+
+本轮遗留问题：
+
+- HTTP 事件推送链路已经打通，但人脸识别规则当前为 `Enable=false`。本轮按照计划只审计不修改识别规则，避免覆盖摄像头既有规则；步骤 10 开始前需要单独设计一轮，读取完整 `/FaceReco/1/RecoRuleList` XML，最小化修改 `RecoRule.Enable=true` 后再做真机识别验证。
 
 ## 24. 参考文档
 

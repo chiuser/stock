@@ -41,6 +41,7 @@ class P6SConfig:
     base_url: str
     username: str
     password: str
+    password_configured: bool
     owner: str
     face_group_id: str
     face_group_name: str
@@ -58,11 +59,13 @@ class P6SConfig:
 
         threshold_raw = os.environ.get("P6S_FACE_GROUP_THRESHOLD", "").strip()
         threshold = int(threshold_raw) if threshold_raw.isdigit() else None
+        password_value = os.environ.get("P6S_CAMERA_PASSWORD")
 
         return cls(
             base_url=base_url,
             username=os.environ.get("P6S_CAMERA_USERNAME", "").strip(),
-            password=os.environ.get("P6S_CAMERA_PASSWORD", "").strip(),
+            password=(password_value or "").strip(),
+            password_configured=password_value is not None,
             owner=os.environ.get("P6S_FACE_OWNER", "").strip(),
             face_group_id=os.environ.get("P6S_FACE_GROUP_ID", "members").strip(),
             face_group_name=os.environ.get("P6S_FACE_GROUP_NAME", "会员人脸库").strip(),
@@ -74,16 +77,23 @@ class P6SConfig:
         )
 
     def configured(self) -> bool:
-        return bool(self.base_url and self.username and self.password)
+        return bool(self.base_url and self.username and self.password_configured)
 
     def safe_summary(self) -> dict[str, Any]:
         parsed = urlparse(self.base_url) if self.base_url else None
+        if not self.password_configured:
+            password_mode = "missing"
+        elif self.password:
+            password_mode = "set"
+        else:
+            password_mode = "blank"
         return {
             "configured": self.configured(),
             "base_url": self.base_url,
             "host": parsed.netloc if parsed else "",
             "username": self.username,
-            "has_password": bool(self.password),
+            "has_password": self.password_configured,
+            "password_mode": password_mode,
             "has_owner": bool(self.owner),
             "face_group_id": self.face_group_id,
             "face_group_name": self.face_group_name,
@@ -119,9 +129,17 @@ def _xml(value: Any) -> str:
     return escape("" if value is None else str(value))
 
 
+def _bool_xml(value: bool) -> str:
+    return "true" if value else "false"
+
+
 class P6SCameraClient:
     def __init__(self, config: P6SConfig | None = None):
         self.config = config or P6SConfig.from_env()
+        self.session = requests.Session()
+        # Camera APIs are usually on a LAN address; ambient proxies can hijack
+        # 192.168.x.x requests and make a healthy camera look unreachable.
+        self.session.trust_env = False
 
     def _request(
         self,
@@ -142,7 +160,7 @@ class P6SCameraClient:
         url = f"{self.config.base_url}{path}"
         headers = {"Content-Type": content_type}
         try:
-            response = requests.request(
+            response = self.session.request(
                 method=method.upper(),
                 url=url,
                 data=body.encode("utf-8") if body is not None else None,
@@ -166,6 +184,64 @@ class P6SCameraClient:
 
     def get_owner(self) -> dict[str, Any]:
         return self._request("GET", "/System/FrontDeviceOwnnerInfo")
+
+    def get_http_event_server_config(self) -> dict[str, Any]:
+        return self._request("GET", "/System/HTTPEventServerConfigV2")
+
+    def set_http_event_server_config(
+        self,
+        host: str,
+        url_path: str,
+        port: int = 80,
+        protocol: str = "http",
+        enable: bool = True,
+        auth_mode: str = "none",
+        timeout_seconds: int = 5,
+        cache_event_enable: bool = True,
+        server_username: str = "",
+        server_password: str = "",
+        device_token: str = "",
+        secret: str = "",
+    ) -> dict[str, Any]:
+        body = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            "<HttpEventServerCfgV2>"
+            f"<Enable>{_bool_xml(enable)}</Enable>"
+            f"<Protocol>{_xml(protocol)}</Protocol>"
+            f"<Host>{_xml(host)}</Host>"
+            f"<URLPath>{_xml(url_path)}</URLPath>"
+            f"<Port>{int(port)}</Port>"
+            f"<UserName>{_xml(server_username)}</UserName>"
+            f"<Password>{_xml(server_password)}</Password>"
+            f"<DataTransfer2ServerTimeout>{int(timeout_seconds)}</DataTransfer2ServerTimeout>"
+            f"<AuthMode>{_xml(auth_mode)}</AuthMode>"
+            f"<DeviceToken>{_xml(device_token)}</DeviceToken>"
+            f"<Secret>{_xml(secret)}</Secret>"
+            f"<CacheEventEnable>{_bool_xml(cache_event_enable)}</CacheEventEnable>"
+            "</HttpEventServerCfgV2>"
+        )
+        return self._request("PUT", "/System/HTTPEventServerConfigV2", body)
+
+    def test_http_event_server(self, test_text: str) -> dict[str, Any]:
+        body = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            "<HTTPEventServerTest>"
+            f"<Test>{_xml(test_text)}</Test>"
+            "</HTTPEventServerTest>"
+        )
+        return self._request("POST", "/System/HTTPEventServerTest", body, timeout=30)
+
+    def get_event_push_mode(self) -> dict[str, Any]:
+        return self._request("GET", "/System/EventPushMode")
+
+    def get_ai_event_cfg(self) -> dict[str, Any]:
+        return self._request("GET", "/System/AIEventCfg")
+
+    def get_face_snapshot_cfg(self) -> dict[str, Any]:
+        return self._request("GET", "/AI/FaceSnapshotCfg")
+
+    def get_face_reco_rule_list(self, channel_id: int = 1) -> dict[str, Any]:
+        return self._request("GET", f"/FaceReco/{int(channel_id)}/RecoRuleList")
 
     def set_owner(self, owner: str) -> dict[str, Any]:
         body = (
@@ -288,4 +364,3 @@ def _safe_template_format(template: str, values: dict[str, Any]) -> str:
     if missing:
         raise ValueError(f"Unsupported P6S_PERSON_XML_TEMPLATE fields: {missing}")
     return template.format(**values)
-

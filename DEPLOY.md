@@ -47,7 +47,7 @@ CAMERA_ADMIN_PASSWORD=请设置后台登录密码
 
 P6S_CAMERA_HOST=http://摄像头IP或域名
 P6S_CAMERA_USERNAME=admin
-P6S_CAMERA_PASSWORD=摄像头密码
+P6S_CAMERA_PASSWORD=摄像头密码，空密码时保留这一行且值为空
 P6S_FACE_OWNER=首次写入Owner后回填这里
 P6S_FACE_GROUP_ID=members
 P6S_FACE_GROUP_NAME=会员人脸库
@@ -102,6 +102,8 @@ sudo systemctl reload nginx
 
 `qypower-camera.service` 和 `qypower-nginx.conf` 默认关闭 HTTP access log，因为事件回调 URL 与图片查看 URL 都包含 token。排查业务事件时优先查看 `P6S_EVENT_IMAGE_DIR` 下的事件记录，服务启动异常再看 `journalctl -u camera-face-guard`。
 
+如果摄像头使用空密码，必须保留 `P6S_CAMERA_PASSWORD=` 这个 key。程序会把 key 存在但值为空识别为“空密码已配置”。
+
 访问：
 
 ```text
@@ -131,13 +133,20 @@ CacheEventEnable=true
 
 如果后续配置域名和 HTTPS，把 `PUBLIC_BASE_URL`、`P6S_EVENT_IMAGE_PUBLIC_BASE_URL` 与摄像头事件地址一起改为 HTTPS 地址。
 
+也可以在本地使用脚本配置和审计摄像头，脚本默认读取 `.env.local` 并输出脱敏摘要：
+
+```bash
+python3 scripts/configure_p6s_http_events.py
+python3 scripts/configure_p6s_http_events.py --apply --test
+```
+
 ## 七、验证
 
 ```bash
 sudo systemctl status camera-face-guard
-curl -I http://127.0.0.1:8000/camera
-curl -I http://127.0.0.1/camera
-curl -I http://82.156.198.180/camera
+curl -sS -o /dev/null -w 'UPSTREAM_GET:%{http_code}\n' http://127.0.0.1:8000/camera
+curl -sS -o /dev/null -w 'NGINX_GET:%{http_code}\n' http://127.0.0.1/camera
+curl -sS -o /dev/null -w 'PUBLIC_GET:%{http_code}\n' http://82.156.198.180/camera
 ```
 
 后台页面内建议按这个顺序验证：

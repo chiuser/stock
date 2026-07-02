@@ -68,7 +68,7 @@ function renderStatus(data) {
   document.getElementById("camera-config").innerHTML = kvHtml([
     ["摄像头地址", camera.base_url],
     ["账号", camera.username],
-    ["密码", camera.has_password ? "已配置" : "未配置"],
+    ["密码", camera.password_mode === "blank" ? "空密码" : (camera.has_password ? "已配置" : "未配置")],
     ["Owner", camera.has_owner ? "已配置" : "未配置"],
     ["脸库 ID", camera.face_group_id],
     ["脸库名称", camera.face_group_name],
@@ -213,4 +213,3 @@ document.addEventListener("DOMContentLoaded", async () => {
     showToast(err.message || "加载失败", "error");
   }
 });
-

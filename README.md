@@ -48,7 +48,7 @@ CAMERA_ADMIN_PASSWORD=请设置后台登录密码
 
 P6S_CAMERA_HOST=http://摄像头IP或域名
 P6S_CAMERA_USERNAME=admin
-P6S_CAMERA_PASSWORD=摄像头密码
+P6S_CAMERA_PASSWORD=摄像头密码，空密码时保留这一行且值为空
 P6S_FACE_OWNER=固定保存的脸库Owner
 P6S_FACE_GROUP_ID=members
 P6S_FACE_GROUP_NAME=会员人脸库
@@ -74,6 +74,8 @@ FEISHU_APP_SECRET=可选，仅内嵌图片时需要
 
 `P6S_FACE_OWNER` 必须长期固定保存。后台首次写入 Owner 后，请把页面返回的 Owner 写回环境变量文件。
 
+如果摄像头使用空密码，必须在 `.env.local` 中保留 `P6S_CAMERA_PASSWORD=` 这个 key。程序会把 key 存在但值为空识别为“空密码已配置”，而不是“未配置”。
+
 事件推送相关配置说明：
 
 - `P6S_EVENT_SECRET`：摄像头事件回调路径 token，事件入口为 `/api/p6s/events/<P6S_EVENT_SECRET>`。
@@ -84,6 +86,15 @@ FEISHU_APP_SECRET=可选，仅内嵌图片时需要
 - `P6S_EVENT_RETENTION_DAYS`：事件图片与记录默认保留天数，首版为 30 天。
 - `P6S_EVENT_IMAGE_PUBLIC_BASE_URL`：飞书中图片查看链接的公网前缀。
 - `FEISHU_WEBHOOK_SECRET`：飞书自定义机器人开启签名校验时必须配置。
+
+摄像头 HTTP 事件推送可用脚本重复配置和审计：
+
+```bash
+python3 scripts/configure_p6s_http_events.py
+python3 scripts/configure_p6s_http_events.py --apply --test
+```
+
+脚本默认读取 `.env.local`，只输出脱敏摘要，不打印完整 `P6S_EVENT_SECRET`、摄像头密码或完整事件回调路径。
 
 ## 事件处理目标
 
