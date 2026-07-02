@@ -96,6 +96,13 @@ python3 scripts/configure_p6s_http_events.py --apply --test
 
 脚本默认读取 `.env.local`，只输出脱敏摘要，不打印完整 `P6S_EVENT_SECRET`、摄像头密码或完整事件回调路径。
 
+人脸识别规则启用使用最小化脚本，脚本会先保存当前完整 XML 备份，然后只修改 `RecoRule/Enable`：
+
+```bash
+python3 scripts/configure_p6s_face_reco_rule.py
+python3 scripts/configure_p6s_face_reco_rule.py --apply
+```
+
 ## 事件处理目标
 
 - 摄像头通过 P6SEvent HTTP V2 推送 `FaceReco` 到远程服务器。

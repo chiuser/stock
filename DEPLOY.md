@@ -140,6 +140,13 @@ python3 scripts/configure_p6s_http_events.py
 python3 scripts/configure_p6s_http_events.py --apply --test
 ```
 
+如果审计发现 `/FaceReco/1/RecoRuleList` 中 `RecoRule.Enable=false`，使用最小化脚本启用识别规则。脚本会先保存当前完整 XML 备份，然后只修改 `RecoRule/Enable`：
+
+```bash
+python3 scripts/configure_p6s_face_reco_rule.py
+python3 scripts/configure_p6s_face_reco_rule.py --apply
+```
+
 ## 七、验证
 
 ```bash

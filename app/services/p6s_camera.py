@@ -243,6 +243,17 @@ class P6SCameraClient:
     def get_face_reco_rule_list(self, channel_id: int = 1) -> dict[str, Any]:
         return self._request("GET", f"/FaceReco/{int(channel_id)}/RecoRuleList")
 
+    def set_face_reco_rule_list(
+        self,
+        xml_text: str,
+        channel_id: int = 1,
+    ) -> dict[str, Any]:
+        return self._request(
+            "PUT",
+            f"/FaceReco/{int(channel_id)}/RecoRuleList",
+            xml_text,
+        )
+
     def set_owner(self, owner: str) -> dict[str, Any]:
         body = (
             '<?xml version="1.0" encoding="utf-8"?>'

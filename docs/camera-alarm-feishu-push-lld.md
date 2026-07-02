@@ -2076,6 +2076,103 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
 
 - HTTP 事件推送链路已经打通，但人脸识别规则当前为 `Enable=false`。本轮按照计划只审计不修改识别规则，避免覆盖摄像头既有规则；步骤 10 开始前需要单独设计一轮，读取完整 `/FaceReco/1/RecoRuleList` XML，最小化修改 `RecoRule.Enable=true` 后再做真机识别验证。
 
+### 23.11 Round 11：步骤 10 前置，最小化启用人脸识别规则
+
+本轮对应 LLD 修正：
+
+- Round 10 已打通 HTTP 事件推送，但审计发现 `/FaceReco/1/RecoRuleList` 中 `RecoRule.Enable=false`。
+- 如果不启用识别规则，步骤 10 的已入库人员和陌生人真机识别事件很可能不会触发。
+- `/FaceReco/1/RecoRuleList` 的 PUT 接口要求提交完整规则 XML，不能只提交局部字段。
+
+本轮文档依据：
+
+- `docs/p6scgi-showdoc/01 API/智能事件配置管理/人脸相关配置管理接口/人脸识别配置管理/获取通道人脸识别规则列表__149227024.md`。
+- `docs/p6scgi-showdoc/01 API/智能事件配置管理/人脸相关配置管理接口/人脸识别配置管理/设置通道人脸识别规则列表__149227025.md`。
+
+本轮目标：
+
+- 新增可重复执行的人脸识别规则审计/最小修改脚本。
+- 脚本执行前保存当前完整 XML 备份，用于回滚。
+- 只把每个 `<RecoRule>` 的第一层 `<Enable>` 改成 `true`。
+- 不修改 `RecognitionRule`、`CompareLimit`、`FaceGroupList`、`ControlPersonnelType`、`Schedule`、`EventTimeSlotList`、`Trigger` 等字段。
+- 写入后重新 GET `/FaceReco/1/RecoRuleList`，确认 `RecoRule.Enable=true`，同时关键字段未被脚本主动改动。
+
+本轮范围：
+
+- 允许修改 `app/services/p6s_camera.py`，新增 `set_face_reco_rule_list(xml_text, channel_id=1)`。
+- 允许新增 `scripts/configure_p6s_face_reco_rule.py`。
+- 允许更新 `README.md`、`DEPLOY.md` 中的识别规则启用说明。
+- 允许对摄像头执行 PUT `/FaceReco/1/RecoRuleList`，但只能使用脚本最小化修改后的完整 XML。
+- 不修改人脸抓拍配置 `/AI/FaceSnapshotCfg`。
+- 不修改 HTTP 事件服务器配置。
+- 不修改人脸库或人员资料。
+
+具体开发计划：
+
+1. 服务封装：
+   - 在 `P6SCameraClient` 中新增 `set_face_reco_rule_list(xml_text, channel_id=1)`。
+   - 继续复用禁用环境代理的 session。
+2. 脚本设计：
+   - 默认读取 `.env.local`，允许 `CAMERA_ENV_FILE` 覆盖。
+   - 默认只读审计，输出 `rule_count`、每条规则的 `Enable`、`RecognitionRule`、`CompareLimit`、`ControlPersonnelType`、`Trigger.Push.Enable`、`Trigger.Snapshot.Enable`。
+   - 只有传入 `--apply` 才写入。
+   - 写入前把完整 XML 保存到 `/private/tmp` 或系统临时目录，不放入 git 工作区。
+   - 修改逻辑只定位 `RecoRule/Enable`；如果缺少该节点则停止，不猜测新建。
+   - 写入后回读并确认所有 `RecoRule/Enable=true`。
+3. 真机配置：
+   - 先运行只读审计确认当前仍为 `Enable=false`。
+   - 运行 `--apply` 写入最小修改。
+   - 再运行只读审计确认 `Enable=true`。
+4. 验证：
+   - `python3 -m py_compile app/services/p6s_camera.py scripts/configure_p6s_face_reco_rule.py`。
+   - 脚本审计和 apply 均成功。
+   - 回读摘要确认 `Trigger.Push.Enable=true` 和 `Trigger.Snapshot.Enable=true` 未被改坏。
+5. 提交：
+   - 只提交代码、脚本和文档。
+   - 不提交 `.env.local`。
+   - 不提交脚本生成的 XML 备份。
+
+本轮风险：
+
+- PUT 完整 XML 时设备可能重写部分字段格式。
+- 当前 `CompareLimit=0` 含义未在真机上完全确认；本轮不修改，避免扩大影响面。
+- 如果当前 XML 缺少第一层 `RecoRule/Enable`，脚本必须停止，不自动创建节点。
+- 如果写入后回读发现非目标字段变化，需要停止并记录差异，不能继续真机识别验证。
+
+本轮回滚方式：
+
+- 使用脚本执行前保存的完整 XML 备份，重新 PUT 到 `/FaceReco/1/RecoRuleList`。
+- 或在脚本中增加后续 `--restore <xml>` 模式后回滚。
+- 本地代码回滚使用 `git revert` 本轮提交。
+
+本轮停止条件：
+
+- 读取 `/FaceReco/1/RecoRuleList` 失败。
+- 解析 XML 失败。
+- XML 中没有可定位的 `RecoRule/Enable`。
+- PUT 后返回非 2xx 或响应 `statusCode` 非 0。
+- PUT 后回读仍有 `RecoRule.Enable=false`。
+
+本轮提交策略：
+
+- 本轮完成后单独提交一次，提交信息需说明最小化启用人脸识别规则、保存备份、回读验证结果。
+
+本轮实际执行结果：
+
+- 已新增 `set_face_reco_rule_list(xml_text, channel_id=1)`，用于 PUT 完整 `/FaceReco/1/RecoRuleList` XML。
+- 已新增 `scripts/configure_p6s_face_reco_rule.py`，支持只读审计、`--apply` 最小化启用、执行前 XML 备份和 `--restore <xml>` 回滚。
+- 静态编译通过：`python3 -m py_compile app/services/p6s_camera.py scripts/configure_p6s_face_reco_rule.py scripts/configure_p6s_http_events.py`。
+- 只读审计成功，当前规则摘要仍为：`rule_count=1`、`RecoRule.Enable=false`、`RecognitionRule=Comparison pass`、`CompareLimit=0`、`ControlPersonnelType=OrganizationMember`、`Trigger.Push.Enable=true`、`Trigger.Snapshot.Enable=true`。
+- 执行过一次 `python3 scripts/configure_p6s_face_reco_rule.py --apply`。脚本已在系统临时目录保存执行前完整 XML 备份。
+- 写入后立即回读，`RecoRule.Enable` 仍为 `false`，触发本轮停止条件：`PUT 后回读仍有 RecoRule.Enable=false`。
+- 已停止继续写入，没有盲目重试，也没有进入步骤 10 真机识别验证。
+
+本轮阻塞结论：
+
+- 当前设备对 PUT `/FaceReco/1/RecoRuleList` 返回链路没有表现为网络失败或认证失败，但最小化 XML 写入没有持久化 `RecoRule.Enable=true`。
+- 可能原因包括：设备要求特定 XML 格式/字段组合、需要通过后台 UI 或其他关联接口启用规则、`CompareLimit=0` 或 `ControlPersonnelType=OrganizationMember` 组合导致规则被设备回写为禁用、或该固件对该接口有隐藏约束。
+- 下一步需要先定位为什么 PUT 后不持久化，再决定是否通过后台 UI、完整原始 XML 格式、或更小范围接口解决；在此之前不能继续步骤 10 的真实识别通知验证。
+
 ## 24. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`
