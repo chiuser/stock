@@ -1361,6 +1361,77 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
 
 - 本轮完成并验证后单独提交一次，提交信息需说明这是 LLD 步骤 0-1 的配置文档基础整理。
 
+### 23.2 Round 02：LLD 步骤 2
+
+本轮对应 LLD 步骤：
+
+- 步骤 2：开发，建立事件存储层。
+
+本轮目标：
+
+- 新增 `app/services/event_store.py`，把事件与图片落盘能力从路由层拆出。
+- 提供后续 `p6s_events.py`、`image_links.py` 和飞书通知模块可复用的文件系统 API。
+- 建立 `raw`、`records`、`strangers`、`links` 日期目录结构。
+- 实现 dedupe key 生成，作为重复事件幂等处理的基础。
+
+本轮范围：
+
+- 新增 `app/services/event_store.py`。
+- 实现原始事件 JSON 原子落盘。
+- 实现处理记录 JSON 原子落盘。
+- 实现陌生人图片 bytes 原子落盘。
+- 实现事件根目录、日期目录、文件名清洗、图片类型识别、相对路径计算等基础工具。
+- 不改 `app/routers/camera.py` 的现有事件处理逻辑。
+- 不新增 token 图片查看接口。
+- 不改飞书通知逻辑。
+- 不连接摄像头，不连接远程服务器。
+
+具体开发计划：
+
+1. 定义存储配置和数据结构：
+   - `EventStorePaths`：描述当前日期下的 `raw`、`records`、`strangers`、`links` 目录。
+   - `EventIdentity`：保存 `dedupe_key`、`operator`、`serial_number`、`event_id`、`picture_md5`、`received_at`、`event_day` 等基础标识。
+   - `RequestMeta`：保存请求来源、Content-Type、User-Agent、路径等原始请求信息。
+   - `StoredFile` / `StoredImage`：描述已落盘文件和图片元数据。
+2. 实现目录与路径函数：
+   - `event_store_root()` 从 `P6S_EVENT_IMAGE_DIR` 读取根目录。
+   - `ensure_event_store_dirs()` 创建日期目录。
+   - `relative_to_root()` 返回可记录到 JSON 的相对路径。
+3. 实现 dedupe key：
+   - 基础哈希输入为 `serial_number|operator|event_id|picture_md5`。
+   - 如果 `event_id` 或 `picture_md5` 缺失，额外加入 `received_at`，避免不同事件误合并。
+4. 实现原子写入：
+   - JSON 写入使用临时文件 + `replace`。
+   - bytes 写入使用临时文件 + `replace`。
+   - 写入失败时清理临时文件。
+5. 实现事件落盘 API：
+   - `persist_raw_event(payload, request_meta, identity)`。
+   - `write_processing_record(identity, record)`。
+   - `processing_record_exists(identity)`。
+6. 实现陌生人图片落盘 API：
+   - `detect_image_type(image_bytes)` 支持 JPEG/PNG 魔数。
+   - `save_stranger_image(identity, image_bytes, source, expected_md5)`。
+   - 文件名格式为 `{event_time_compact}_{safe_serial}_{safe_event_id}_{md5_8_or_sha8}.{ext}`。
+7. 验证：
+   - `python3 -m py_compile app/services/event_store.py`。
+   - 使用临时目录构造样本 payload，验证 raw、record、stranger 图片按日期目录生成。
+   - 验证缺少 `pictureMd5` 时 dedupe key 会包含 `received_at`。
+   - `git diff --check`。
+
+本轮风险：
+
+- 如果 dedupe key 设计过宽，可能合并不同事件；如果过窄，重复事件无法幂等。
+- 如果路径清洗不严格，后续 token 图片查看会有路径穿越风险。
+
+本轮回滚方式：
+
+- 删除 `app/services/event_store.py`。
+- 删除本节 Round 02 开发执行记录。
+
+本轮提交策略：
+
+- 本轮完成并验证后单独提交一次，提交信息需说明新增文件系统事件存储层，并明确尚未接入路由。
+
 ## 24. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`
