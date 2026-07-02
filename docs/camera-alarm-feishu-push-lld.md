@@ -2339,6 +2339,79 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
 - 下一轮不应继续尝试修改第一层 `RecoRule/Enable`；应进入端到端事件验证，观察真实 `FaceReco` 或 `FaceSnapshot` 推送是否到达远程服务器。
 - 如果下一轮仍没有识别事件，再按新 LLD 单独设计“人脸侦测/抓拍观察增强”配置，重点评估是否需要启用 `/Pictures/1/FaceDetect`，而不是把它混入本轮。
 
+### 23.14 Round 14：步骤 10 真机端到端事件验证
+
+本轮目标：
+
+- 推进步骤 10“真机端到端验证”，用远程服务器上的真实落盘文件证明摄像头是否已经推送识别事件。
+- 验证范围优先覆盖事件入口与分流证据：`raw` 是否新增、`records` 是否新增、是否出现 `known`、`stranger`、`ignored`、`parse_error` 等处理结果。
+- 如果出现陌生人事件，继续验证 `strangers/YYYY-MM-DD` 是否保存图片、`links/YYYY-MM-DD` 是否生成 token 链接记录、飞书消息是否至少具备保存路径和查看链接。
+- 如果出现匹配成功事件，验证 `records` 中是否记录 `result=known`、人员姓名/ID 是否解析成功、飞书发送状态是否为成功或可诊断失败。
+
+本轮范围：
+
+- 只读检查远程服务器 `/var/lib/camera-face-guard/p6s_events` 目录下 `raw`、`records`、`strangers`、`links` 的日期目录和文件数量。
+- 只读抽样查看最新 raw/record 文件，记录 `operator`、`result`、`event_id`、`camera_serial_number`、图片状态、链接状态和飞书状态。
+- 允许运行摄像头 HTTP 配置只读审计脚本，确认事件入口配置仍指向远程服务器。
+- 允许运行远程本机 fixture 验证，确认部署版本仍能处理 known/stranger/heartbeat 样本。
+
+本轮不做：
+
+- 不修改摄像头配置。
+- 不重复 PUT `/FaceReco/1/RecoRuleList`。
+- 不修改飞书 webhook、远程 env 或 systemd/nginx 配置。
+- 不清理远程事件目录。
+- 不把真实事件 token、飞书秘钥、摄像头密码或 raw 中可能出现的人脸图片内容写入文档。
+
+影响面：
+
+- 文档影响：记录步骤 10 当前验证证据和是否可以进入下一步。
+- 代码影响：本轮默认不需要代码改动；如果发现缺少可重复的只读观测能力，可先补充只读脚本并单独说明。
+- 设备影响：本轮预期无设备配置变更。
+- 远程服务影响：只读查询，不重启服务。
+
+风险点：
+
+- 如果当前没有人在摄像头前触发识别，远程目录不会新增 `FaceReco` 事件，这不代表链路一定失败。
+- 真实事件字段可能与 fixture 不一致，需要以 raw 文件为准修订解析逻辑；如遇到字段差异，先记录并更新 LLD，再改代码。
+- 飞书发送结果受机器人配置和网络影响；即使事件处理成功，飞书也可能失败，需要区分事件链路失败和通知链路失败。
+- raw 文件可能包含图片 base64，文档和输出只能记录摘要，不展示图片内容。
+
+回滚方式：
+
+- 本轮只读验证无设备回滚。
+- 如果补充了只读脚本且后续不需要，可删除脚本并回滚对应提交。
+- 如果验证结论不成立，下一轮先修订本节结论再继续。
+
+验证方式：
+
+- 使用 `ssh qypower-prod` 读取远程事件目录摘要，统计最近日期目录的 raw/records/strangers/links 文件数。
+- 抽样最新 raw/record 文件，只输出脱敏摘要：`operator`、`result`、`event_id`、`image.status`、`link.expires_at`、`feishu.status`。
+- 运行 `python3 scripts/configure_p6s_http_events.py` 做本地只读审计，确认摄像头 HTTP 推送配置仍启用且指向远程服务器。
+- 若没有真实事件新增，停止并记录“需要人工触发摄像头前人员/陌生人验证”的困难，不盲目改摄像头配置。
+
+本轮验证记录：
+
+- 远程服务状态：`camera-face-guard` 为 `active` 且 `enabled`。
+- 本地只读审计 `/System/HTTPEventServerConfigV2`：`Enable=true`、`Protocol=http`、`Host=82.156.198.180`、`Port=80`、`AuthMode=none`、`CacheEventEnable=true`，`URLPath` 与远程事件入口匹配。
+- 本地只读审计 `/AI/FaceSnapshotCfg`：`Enable=true`、`Trigger.Push.Enable=true`、`Trigger.Snapshot.Enable=true`、`IsCaptureBackground=true`、`ShowFaceFrame=true`。
+- 本地只读审计 `/FaceReco/1/RecoRuleList`：`rule_count=1`、`RecognitionRule=Comparison pass`、`ControlPersonnelType=OrganizationMember`、`Trigger.Push.Enable=true`、`Trigger.Snapshot.Enable=true`，`RecoRule.Enable=false` 按 Round 13 结论不再作为单独阻塞条件。
+- 远程事件目录 `/var/lib/camera-face-guard/p6s_events` 中已有 `raw/2026-07-02` 和 `records/2026-07-02` 文件，证明摄像头能访问公网入口并且服务端能落盘处理。
+- 远程 raw operator 分布：当前抽样统计 `total_raw=60`，`operator_counts={"heartbeat": 60}`；没有出现 `FaceReco`、`FaceSnapshot` 或其他人脸事件。
+- 最新处理记录抽样均为 `operator=heartbeat`、`result=heartbeat`，最近事件时间样本为 `2026-07-02T20:47:48+08:00`。
+- 远程 `strangers` 和 `links` 未出现可用于本轮陌生人链路验证的新增证据。
+- 摄像头端 `/FaceRecognition/QueryRecordCount` 和 `/FaceRecognition/QueryRecordList` 按文档使用 PUT filter 查询，但当前设备均返回 `ResponseStatus.statusCode=16001`，因此不能作为本机识别记录证据来源。
+- 本地运行 `python3 scripts/validate_p6s_event_flow.py` 成功，fixture 覆盖 known、duplicate、stranger、missing image、heartbeat。
+- 远程运行 `cd /opt/camera-face-guard && .venv/bin/python scripts/validate_p6s_event_flow.py` 成功，证明已部署版本对 known/stranger/heartbeat 样本的处理逻辑仍可用。
+
+本轮结论：
+
+- HTTP 推送入口已打通：摄像头正在周期性向远程服务器发送 heartbeat，服务器能够接收、Ack、落盘 raw 和 records。
+- 服务端业务处理不是当前阻塞点：本地和远程 fixture 均能正确处理 known、stranger 和 heartbeat。
+- 步骤 10 尚未完成：当前没有真实 `FaceReco`/`FaceSnapshot` 事件，因此无法验证匹配成功飞书通知、陌生人图片保存、token 图片链接和真实重复事件幂等。
+- 当前困难是“摄像头没有向服务器发送真实人脸事件”，而不是“服务器收不到摄像头请求”。
+- 下一轮需要先设计人脸事件触发诊断，不应盲目重试已有 HTTP 推送配置；优先评估是否需要启用或调整与人脸检测/抓拍观察相关的配置，例如 `/Pictures/1/FaceDetect` 或 Web 后台对应的人脸侦测开关。
+
 ## 24. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`
