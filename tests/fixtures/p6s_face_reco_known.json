@@ -1,0 +1,19 @@
+{
+  "operator": "FaceReco",
+  "deviceInfo": {
+    "serialNumber": "SN-FIXTURE-001"
+  },
+  "info": {
+    "eventId": "known-001",
+    "time": "2026-07-02 10:00:00",
+    "matchNumber": 1,
+    "CaptureImage": {
+      "pictureMd5": "known-fixture-md5"
+    }
+  },
+  "personInfo": {
+    "uniqueId": "3427976339944670",
+    "name": "小明",
+    "personId": 7
+  }
+}

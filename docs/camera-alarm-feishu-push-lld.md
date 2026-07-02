@@ -1717,6 +1717,64 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
 
 - 本轮完成并验证后单独提交一次，提交信息需说明事件入口接入服务层和 token 图片查看路由。
 
+### 23.7 Round 07：LLD 步骤 7
+
+本轮对应 LLD 步骤：
+
+- 步骤 7：验证，本地样本与静态验证。
+
+本轮目标：
+
+- 新增 P6S 事件 fixture，覆盖 known、stranger、missing image、heartbeat。
+- 新增一个无需 pytest 的最小验证脚本，方便本地和远程服务器快速回归事件链路服务层。
+- 将 Round 05/06 中手工执行过的样本验证固化成仓库文件。
+
+本轮范围：
+
+- 新增 `tests/fixtures/p6s_face_reco_known.json`。
+- 新增 `tests/fixtures/p6s_face_reco_stranger.json`。
+- 新增 `tests/fixtures/p6s_face_reco_missing_image.json`。
+- 新增 `tests/fixtures/p6s_heartbeat.json`。
+- 新增 `scripts/validate_p6s_event_flow.py`。
+- 不引入 pytest 或新的第三方依赖。
+- 不发送真实飞书消息。
+- 不连接摄像头，不连接远程服务器。
+
+具体开发计划：
+
+1. Fixture 设计：
+   - known 样本包含 `matchNumber=1` 和 `personInfo`。
+   - stranger 样本包含 `matchNumber=0` 和可解码 JPEG base64。
+   - missing image 样本包含 `matchNumber=0` 但不含图片。
+   - heartbeat 样本包含 `operator=heartbeat`。
+2. 验证脚本：
+   - 使用临时目录作为 `P6S_EVENT_IMAGE_DIR` 根目录。
+   - 调用 `p6s_events.handle_event(..., notify=False)`，避免真实飞书请求。
+   - 验证 known 样本结果为 `known`。
+   - 重复处理同一个 known 样本，验证第二次为 `duplicate`。
+   - 验证 stranger 样本保存图片并生成 token link。
+   - 验证处理记录不包含 token 明文。
+   - 验证 missing image 样本不会生成图片。
+   - 验证 heartbeat 返回 `heartbeat-Ack`。
+3. 验证命令：
+   - `python3 -m py_compile app/main.py app/routers/camera.py app/services/event_store.py app/services/image_links.py app/services/feishu.py app/services/p6s_events.py run.py scripts/validate_p6s_event_flow.py`。
+   - `python3 scripts/validate_p6s_event_flow.py`。
+   - `git diff --check`。
+
+本轮风险：
+
+- 如果 fixture 字段与真实 P6S 样本偏差太大，验证只能覆盖服务层通用逻辑，不能替代真机验证。
+- 如果脚本依赖真实环境变量，可能误用本地/远程真实配置。
+
+本轮回滚方式：
+
+- 删除新增 fixture 和验证脚本。
+- 删除本节 Round 07 开发执行记录。
+
+本轮提交策略：
+
+- 本轮完成并验证后单独提交一次，提交信息需说明新增 P6S 事件 fixture 和本地验证脚本。
+
 ## 24. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`

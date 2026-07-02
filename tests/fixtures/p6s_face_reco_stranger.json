@@ -1,0 +1,15 @@
+{
+  "operator": "FaceReco",
+  "deviceInfo": {
+    "serialNumber": "SN-FIXTURE-001"
+  },
+  "info": {
+    "eventId": "stranger-001",
+    "time": "2026-07-02 10:05:00",
+    "matchNumber": 0,
+    "CaptureImage": {
+      "picture": "data:image/jpeg;base64,/9j/4GZpeHR1cmU=",
+      "pictureMd5": "stranger-fixture-md5"
+    }
+  }
+}

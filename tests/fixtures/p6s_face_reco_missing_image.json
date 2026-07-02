@@ -1,0 +1,11 @@
+{
+  "operator": "FaceReco",
+  "deviceInfo": {
+    "serialNumber": "SN-FIXTURE-001"
+  },
+  "info": {
+    "eventId": "missing-image-001",
+    "time": "2026-07-02 10:10:00",
+    "matchNumber": 0
+  }
+}
