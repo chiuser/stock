@@ -2412,6 +2412,132 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
 - 当前困难是“摄像头没有向服务器发送真实人脸事件”，而不是“服务器收不到摄像头请求”。
 - 下一轮需要先设计人脸事件触发诊断，不应盲目重试已有 HTTP 推送配置；优先评估是否需要启用或调整与人脸检测/抓拍观察相关的配置，例如 `/Pictures/1/FaceDetect` 或 Web 后台对应的人脸侦测开关。
 
+### 23.15 Round 15：人脸事件触发链路只读诊断
+
+本轮目标：
+
+- 针对 Round 14 的阻塞点，定位为什么摄像头只向远程服务器发送 heartbeat，而没有发送真实 `FaceReco` 或 `FaceSnapshot` 事件。
+- 用只读证据区分三类可能性：事件能力未启用、检测/识别开关未启用、识别发生但没有进入 HTTP 推送。
+- 为下一轮是否需要受控启用 `/Pictures/1/FaceDetect`、调整 `/AI/FaceSnapshotCfg` 或补充其他识别事件开关提供明确依据。
+
+本轮范围：
+
+- 只读查阅离线 ShowDoc 和摄像头 Web 前端脚本，定位人脸侦测、人脸抓拍、人脸识别、事件联动推送各自对应的接口和字段。
+- 只读读取当前摄像头配置摘要，覆盖 `/FaceReco/1/BaseConfig`、`/AI/FaceSnapshotCfg`、`/FaceReco/1/RecoRuleList`、`/Pictures/1/FaceDetect`、`/System/HTTPEventServerConfigV2`、`/System/DeviceCap` 等已知相关接口。
+- 只读复核远程事件目录最新 raw/records 的 operator 分布，确认是否仍只有 heartbeat。
+- 允许新增一个只读诊断脚本，但脚本必须默认不写设备、不输出密钥、不输出图片 base64，仅输出脱敏摘要。
+
+本轮不做：
+
+- 不修改摄像头配置。
+- 不启用 `/Pictures/1/FaceDetect`。
+- 不修改人脸库、识别规则、抓拍规则、HTTP 推送 URL 或远程服务配置。
+- 不删除远程事件目录和本地备份文件。
+- 不把摄像头密码、事件 token、飞书秘钥、图片 base64 或完整 raw payload 写入文档。
+
+影响面：
+
+- 文档影响：追加本轮诊断计划、证据和结论。
+- 代码影响：如果现有脚本不足以稳定输出摘要，可新增或增强只读诊断脚本；运行时服务逻辑不变。
+- 设备影响：本轮只读，预期无设备配置变化。
+- 远程服务影响：只读查询远程落盘文件，预期不重启服务。
+
+风险点：
+
+- 摄像头 Web 后台脚本可能经过压缩或动态拼接，单靠关键词不一定能完整还原 UI 行为。
+- `/Pictures/1/FaceDetect` 可能是普通人脸侦测事件，与人脸识别不是同一条链路；不能因为它为 false 就直接断定必须开启。
+- 设备部分接口可能返回 `16001` 或空 XML，需要把“接口不支持”和“配置关闭”分开记录。
+- 如果读取 raw 文件时误输出图片字段，可能泄露隐私；所有 raw 检查只能做字段级摘要。
+
+回滚方式：
+
+- 本轮只读诊断无设备回滚。
+- 新增的只读脚本如判断不需要，可通过后续提交删除或 `git revert` 本轮提交回滚。
+- 文档结论如后续被真机验证推翻，下一轮先修订本节再继续。
+
+验证方式：
+
+- 使用 `rg` 在 `docs/p6scgi-showdoc` 中检索 `FaceDetect`、`FaceSnapshot`、`FaceReco`、`HTTPEventServer`、`Trigger.Push` 等关键词，并记录命中的接口路径和关键字段。
+- 读取摄像头 Web 后台脚本中人脸识别、人脸抓拍、人脸侦测页面对应的接口调用，确认 UI 实际依赖哪些开关。
+- 运行只读配置审计命令，输出当前相关接口的脱敏摘要。
+- 使用 `ssh qypower-prod` 统计远程 raw operator 分布，确认是否仍没有真实人脸事件。
+- 如果所有证据仍指向“缺少触发开关但不确定写哪一个”，停止并在结论中说明困难；下一轮再单独设计受控配置变更。
+
+本轮执行步骤：
+
+1. 文档与前端接口检索：
+   - 检索离线 ShowDoc 中普通人脸侦测、人脸抓拍、人脸识别和 HTTP 事件推送接口。
+   - 检索摄像头 Web 前端脚本中 `FaceDetect`、`FaceSnapshot`、`Facerecognition` 相关调用。
+2. 当前配置只读审计：
+   - 读取 `/FaceReco/1/BaseConfig`，确认 `EnableRecognition`。
+   - 读取 `/AI/FaceSnapshotCfg`，确认抓拍启用、抓拍联动和推送联动。
+   - 读取 `/FaceReco/1/RecoRuleList`，确认识别规则、布控人员类型、推送联动和抓拍联动。
+   - 读取 `/Pictures/1/FaceDetect`，确认普通人脸侦测是否开启及联动方式。
+   - 读取 `/System/HTTPEventServerConfigV2`，确认 HTTP 入口仍启用。
+   - 读取 `/System/DeviceCap`，确认本机声明的人脸识别/人脸侦测能力。
+3. 远程事件只读复核：
+   - 统计最近日期 raw operator 分布。
+   - 抽样最新 records 的 `operator`、`result`、`event_id`、`feishu.status`。
+4. 结论归档：
+   - 如果能明确某个开关关闭且文档/Web UI 都证明它是事件推送必要条件，只记录下一轮受控写入计划，不在本轮写入。
+   - 如果证据显示配置已开启但仍无事件，记录需要人工在画面前触发和抓包/日志的困难。
+   - 如果发现服务端解析遗漏了真实事件字段，先更新 LLD，再进入代码修复。
+
+本轮停止条件：
+
+- 需要修改任何摄像头配置。
+- 需要读取或展示完整图片/base64。
+- 远程 raw 中出现未见过的真实人脸事件但字段与 fixture 不一致；此时先记录 raw 字段摘要并停止，避免误解析。
+- 发现已有 LLD 与实际代码或配置严重不一致，需要先修订 LLD。
+
+本轮提交策略：
+
+- 如果只产生文档诊断结论，提交类型使用 `docs:`。
+- 如果新增只读诊断脚本，提交类型使用 `chore:`，并在提交信息中强调默认只读和脱敏输出。
+- 暂存前必须确认不包含 `.env.local`、远程事件 raw 文件、图片文件和 STYD 会员数据。
+
+本轮实际执行结果：
+
+- 离线 ShowDoc 复核：
+  - `/FaceReco/ChannelID/BaseConfig` 的 `EnableRecognition` 字段是“配置-智能分析-人脸识别-人脸识别-启用人脸识别”。
+  - `/AI/FaceSnapshotCfg` 的 `Enable` 字段是“配置-智能分析-人脸识别-人脸抓拍-启用人脸抓拍”，其 `Trigger.Push.Enable` 是“推送告警”，`Trigger.Snapshot.Enable` 是“SD卡抓图”。
+  - `/FaceReco/ChannelID/RecoRuleList` 的 `Trigger.Push.Enable` 是人脸识别规则联动推送，`Trigger.Snapshot.Enable` 是人脸识别规则联动 SD 卡抓图。
+  - `/Pictures/ChannelID/FaceDetect` 属于“配置-普通事件-人脸侦测”，字段受 `DeviceCap-FaceDetect-Support` 能力限制；它有独立 `Enable`、`Trigger.Push.Enable`、`Trigger.Snapshot.Enable` 和布防计划。
+  - HTTP 事件文档中 `FaceReco`、`FaceSnapshot` 只描述 POST 事件格式、断电重传和响应间隔重传，没有说明额外必须打开哪个配置开关。
+- Web 前端脚本复核：
+  - `FaceCapture.js` 中 `getFaceRecoBaseConfig()` 读取 `/FaceReco/1/BaseConfig`，并把 `EnableRecognition` 绑定到人脸识别页“启用人脸识别”开关。
+  - `FaceCapture.js` 中 `setFaceRecoBaseConfig()` PUT `/FaceReco/1/BaseConfig`，只改 `FaceBaseConfig/EnableRecognition`。
+  - `FaceCapture.js` 中 `getAlarmLink()` 读取 `/FaceReco/1/RecoRuleList`，绑定布控人员、布控时间和联动方式。
+  - `FaceCapture.js` 中 `saveAlarmContronl()` PUT `/FaceReco/1/RecoRuleList`，修改的是 `ControlPersonnelType`、`Schedule` 和 `Trigger` 下的联动字段。
+  - `FaceCapture.js` 中 `getfacetime()` 与 `setfacetronic()` 使用 `/AI/FaceSnapshotCfg` 管理人脸抓拍页配置。
+  - 在已采集的人脸识别/人脸抓拍 Web 前端脚本中未发现 `/Pictures/1/FaceDetect` 调用，说明它不是该页面的主配置接口。
+- 当前摄像头只读配置复核：
+  - `/FaceReco/1/BaseConfig`：`EnableRecognition=true`、`OpenDoorMode=0`、`OverlayHumanBox=0`、`Senstive=0`、`SyncPictureOpt=0`。
+  - `/AI/FaceSnapshotCfg`：`Enable=true`、`Trigger.Push.Enable=true`、`Trigger.Snapshot.Enable=true`、`IsCaptureBackground=true`、`ShowFaceFrame=true`、`Schedule.AllDay=true`。
+  - `/FaceReco/1/RecoRuleList`：`rule_count=1`、`RecoRule.Enable=false`、`RecognitionRule=Comparison pass`、`CompareLimit=0`、`ControlPersonnelType=OrganizationMember`、`Trigger.Push.Enable=true`、`Trigger.Snapshot.Enable=true`。
+  - `/Pictures/1/FaceDetect`：`Enable=false`、`EnableOverlay=false`、`Senstive=0`、`Trigger.Push.Enable=true`、`Trigger.Snapshot.Enable=true`、`Trigger.Record.Enable=true`、`Trigger.BeepAlert.Enable=true`、`Trigger.LightAlarm.Enable=true`、`Schedule.AllDay=true`。
+  - `/System/HTTPEventServerConfigV2`：`Enable=true`、`Protocol=http`、`Host=82.156.198.180`、`Port=80`、`AuthMode=none`、`CacheEventEnable=true`，`URLPath` 与远程事件入口匹配。
+  - `/System/DeviceCap`：`FunctionListAboutChannel/Channel/FaceReco=true`、`FaceSnap=true`，且 `DeviceCap-FaceDetect-Support=true`。
+- 远程事件只读复核：
+  - `/var/lib/camera-face-guard/p6s_events/raw/2026-07-02` 当前 `total_raw=102`。
+  - raw 文件是信封结构，顶层字段为 `dedupe_key`、`payload`、`received_at`、`request`、`version`；事件 operator 位于 `payload.operator`。
+  - `raw_payload_operator_counts={"heartbeat": 102}`。
+  - `/var/lib/camera-face-guard/p6s_events/records/2026-07-02` 当前 `total_records=102`。
+  - `record_operator_counts={"heartbeat": 102}`，`record_result_counts={"heartbeat": 102}`。
+  - 最新抽样 records 仍均为 `operator=heartbeat`、`result=heartbeat`，未出现 `FaceReco` 或 `FaceSnapshot`。
+
+本轮结论：
+
+- HTTP 推送链路仍然是通的，摄像头持续向远程服务器发送 heartbeat，服务端持续落盘处理。
+- 人脸识别页面对应的主链路配置从文档、Web 前端和真机读数看均已启用：`EnableRecognition=true`、`AIFaceSnapshotCfg.Enable=true`、`AIFaceSnapshotCfg.Trigger.Push=true`、`RecoRule.Trigger.Push=true`。
+- `RecoRule.Enable=false` 仍存在，但前两轮已经证明它无法通过 `/FaceReco/1/RecoRuleList` 持久化，且 Web 前端不把它作为启用人脸识别的 UI 开关；本轮不再把它作为唯一阻塞条件。
+- 当前唯一明显关闭的相关开关是 `/Pictures/1/FaceDetect.Enable=false`，但文档和 Web 前端均显示它属于“普通事件-人脸侦测”，不是人脸识别页或人脸抓拍页的主配置接口。
+- 因此，本轮证据不足以安全断言“必须直接启用 `/Pictures/1/FaceDetect`”；继续写设备配置会变成盲改，触发本轮停止条件。
+- 当前困难复述：服务端和 HTTP 入口已经被证明可用，但摄像头没有产生真实 `FaceReco` 或 `FaceSnapshot` 事件；只读证据无法确认原因是普通人脸侦测关闭、算法没有检测到人脸、识别规则未实际生效，还是需要 Web 后台某个隐藏流程触发。
+- 下一轮如果继续，应单独写 LLD 计划，二选一推进：
+  - 方案 A：受控启用 `/Pictures/1/FaceDetect.Enable=true` 并保持现有 `Trigger.Push/Snapshot=true`，写入前备份完整 XML，写入后观察是否出现 `FaceDetect`、`FaceSnapshot` 或 `FaceReco` 事件。
+  - 方案 B：通过 Web 后台人工操作或浏览器抓包确认普通人脸侦测开关与人脸识别/抓拍页面之间是否有关联，再决定是否写入。
+
 ## 24. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`
