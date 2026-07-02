@@ -2538,6 +2538,88 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
   - 方案 A：受控启用 `/Pictures/1/FaceDetect.Enable=true` 并保持现有 `Trigger.Push/Snapshot=true`，写入前备份完整 XML，写入后观察是否出现 `FaceDetect`、`FaceSnapshot` 或 `FaceReco` 事件。
   - 方案 B：通过 Web 后台人工操作或浏览器抓包确认普通人脸侦测开关与人脸识别/抓拍页面之间是否有关联，再决定是否写入。
 
+### 23.16 Round 16：受控启用普通人脸侦测并观察真实事件
+
+本轮目标：
+
+- 基于 Round 15 的结论，执行一次受控实验：启用 `/Pictures/1/FaceDetect.Enable=true`，观察摄像头是否开始向远程服务器推送真实人脸相关事件。
+- 判断普通事件“人脸侦测”是否是当前固件触发 `FaceSnapshot`、`FaceReco` 或其他人脸事件的前置条件。
+- 如果启用后仍只有 heartbeat，停止并记录困难，不继续连环改动其他识别/抓拍配置。
+
+本轮技术方案：
+
+- 新增 `P6SCameraClient.get_face_detect(channel_id=1)` 与 `set_face_detect(xml_text, channel_id=1)`，只封装 `/Pictures/{ChannelID}/FaceDetect` 的 GET/PUT。
+- 新增脚本 `scripts/configure_p6s_face_detect.py`：
+  - 默认只读审计当前 `FaceDetect` 摘要。
+  - `--print-diff-summary` 输出拟修改字段，确认只会把顶层 `FaceDetect/Enable` 从 `false` 改为 `true`。
+  - `--apply` 才执行真实 PUT。
+  - 写入前保存完整 XML 备份到系统临时目录，不进入 git。
+  - 写入后立即 GET 回读，确认 `Enable=true` 且 `Trigger.Push/Snapshot/Record/BeepAlert/LightAlarm` 等已有联动字段没有被改坏。
+  - 支持 `--restore <backup.xml>` 回滚完整 XML。
+- 远程观察使用只读 SSH 统计 `/var/lib/camera-face-guard/p6s_events/raw` 与 `records` 中最新日期的 operator/result 分布。
+- 观察窗口首轮设置为 90 秒，避免长时间等待；如果 90 秒后仍只有 heartbeat，本轮停止，不继续扩大配置改动。
+
+本轮范围：
+
+- 允许修改本地代码：
+  - `app/services/p6s_camera.py`
+  - `scripts/configure_p6s_face_detect.py`
+  - `docs/camera-alarm-feishu-push-lld.md`
+- 允许对摄像头执行最多一次 PUT `/Pictures/1/FaceDetect`，且只能在 diff-summary 证明仅修改顶层 `Enable=false -> true` 后执行。
+- 允许读取远程事件目录摘要，但不读取或展示图片 base64。
+
+本轮不做：
+
+- 不修改 `/AI/FaceSnapshotCfg`。
+- 不修改 `/FaceReco/1/BaseConfig`。
+- 不修改 `/FaceReco/1/RecoRuleList`。
+- 不修改 HTTP 事件服务器配置、飞书配置、远程 systemd/nginx 配置。
+- 不清理远程事件目录。
+- 不把摄像头密码、事件 token、飞书秘钥、raw payload、图片 base64 写入文档或 git。
+
+影响面：
+
+- 设备影响：普通事件“人脸侦测”会被启用；当前设备已有 `Trigger.Push/Snapshot/Record/BeepAlert/LightAlarm=true`，启用后可能产生普通人脸侦测告警、SD 卡抓图、录像或灯光/蜂鸣联动。
+- 远程影响：如果设备开始推送事件，远程 raw/records 会新增非 heartbeat 记录；服务端对非 `FaceReco` 事件会按现有逻辑记录为 ignored 或后续可诊断结果。
+- 代码影响：新增一个运维诊断脚本和两个摄像头客户端方法，不改变 FastAPI 运行时事件处理逻辑。
+- 文档影响：记录本轮实验计划、执行结果和是否需要继续进入真实端到端验证。
+
+风险点：
+
+- `/Pictures/1/FaceDetect` 是普通事件链路，启用后可能只产生 `FaceDetect` 或其他普通事件，未必会产生 `FaceReco`。
+- 如果设备 PUT 返回成功但回读不持久化，不能继续重试；要记录与前几轮 `RecoRule.Enable` 类似的固件行为。
+- 如果启用后远程出现新 operator，而服务端当前把它归类为 ignored，本轮只记录摘要；是否支持该 operator 需要下一轮 LLD 单独设计。
+- 如果启用后产生大量事件，不能直接清理目录；应先记录数量和 operator 分布，再决定是否回滚。
+
+回滚方式：
+
+- 使用脚本写入前生成的完整 XML 备份执行 `--restore <backup.xml>`。
+- 或再次运行脚本支持的受控写入把 `FaceDetect/Enable` 改回 `false`，但优先使用完整 XML 备份。
+- 本地代码使用 `git revert` 本轮提交回滚。
+
+验证方式：
+
+- `python3 -m py_compile app/services/p6s_camera.py scripts/configure_p6s_face_detect.py`。
+- `python3 scripts/configure_p6s_face_detect.py --print-diff-summary`，确认 `non_target_mismatches=[]` 且 `changed_fields=["Enable"]`。
+- `python3 scripts/configure_p6s_face_detect.py --apply`，确认设备 HTTP 成功、设备 `statusCode` 为 `0` 或响应为空且 GET 回读 `Enable=true`。
+- 等待 90 秒后通过 `ssh qypower-prod` 统计远程 raw/records operator 分布。
+- 如果出现 `FaceReco` 或 `FaceSnapshot`，进入下一轮步骤 10 真机端到端验证；如果只出现普通事件或仍只有 heartbeat，记录结论并停止。
+
+本轮停止条件：
+
+- diff-summary 显示会修改顶层 `Enable` 以外字段。
+- 读取或解析 `/Pictures/1/FaceDetect` 失败。
+- PUT 返回 HTTP 非 2xx 或设备 `ResponseStatus.statusCode` 非 0。
+- 写入后回读 `Enable` 仍不是 `true`。
+- 写入后回读发现原本已启用的 Push/Snapshot/Record/BeepAlert/LightAlarm 被改坏。
+- 远程出现未知真实事件但字段与服务端 fixture 不一致；先记录摘要，不直接改解析逻辑。
+
+本轮提交策略：
+
+- 先提交 LLD + 脚本 + 客户端方法，提交信息说明这是受控 FaceDetect 实验工具。
+- 如果执行真机写入和观察后只更新文档结论，再单独提交 `docs:`；如果脚本和实验结果在同一轮完成且 diff 简洁，也可以一次提交，但提交信息必须写清楚设备配置实际变化。
+- 暂存前确认不包含 `.env.local`、临时备份 XML、远程 raw 文件、图片文件或 STYD 会员数据。
+
 ## 24. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`

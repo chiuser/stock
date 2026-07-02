@@ -240,6 +240,20 @@ class P6SCameraClient:
     def get_face_snapshot_cfg(self) -> dict[str, Any]:
         return self._request("GET", "/AI/FaceSnapshotCfg")
 
+    def get_face_detect(self, channel_id: int = 1) -> dict[str, Any]:
+        return self._request("GET", f"/Pictures/{int(channel_id)}/FaceDetect")
+
+    def set_face_detect(
+        self,
+        xml_text: str,
+        channel_id: int = 1,
+    ) -> dict[str, Any]:
+        return self._request(
+            "PUT",
+            f"/Pictures/{int(channel_id)}/FaceDetect",
+            xml_text,
+        )
+
     def get_face_reco_rule_list(self, channel_id: int = 1) -> dict[str, Any]:
         return self._request("GET", f"/FaceReco/{int(channel_id)}/RecoRuleList")
 
