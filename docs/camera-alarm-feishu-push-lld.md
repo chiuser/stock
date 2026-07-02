@@ -2893,6 +2893,57 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
 - 执行真机写入后，如果只更新 LLD 结论，再单独提交 `docs:`。
 - 暂存前确认不包含 `.env.local`、图片文件、STYD 会员数据、临时备份 XML 和摄像头 raw payload。
 
+本轮工具提交记录：
+
+- 已新增 `P6SCameraClient.get_algorithm_store_cfg()` 和 `set_algorithm_store_cfg(xml_text)`。
+- 已新增 `P6SCameraClient.get_face_reco_base_config(channel_id=1)`，用于写入后复核人脸识别总开关。
+- 已新增 `scripts/configure_p6s_algorithm_store.py`：
+  - 默认只读。
+  - 支持 `--print-diff-summary`。
+  - 支持 `--apply` 写入。
+  - 支持 `--restore <backup.xml>` 使用完整 XML 备份回滚。
+  - 写入后会回读 `AlgorithmType`，并在成功持久化后复核人脸识别、人脸抓拍、识别规则和普通人脸侦测摘要。
+  - 输出只包含配置摘要、差异摘要和设备响应摘要，不输出密码、事件 token、图片 base64 或 raw payload。
+- 本地语法验证通过：`python3 -m py_compile app/services/p6s_camera.py scripts/configure_p6s_algorithm_store.py`。
+- dry-run 验证通过：
+  - `ALGORITHM_STORE_BEFORE.algorithm_type=Unknown`。
+  - `PATCH_DIFF_SUMMARY.changed_fields=["AlgorithmType"]`。
+  - `PATCH_DIFF_SUMMARY.changed_count=1`。
+  - `PATCH_DIFF_SUMMARY.non_target_mismatches=[]`。
+  - `PATCH_DIFF_SUMMARY.after.algorithm_type=FaceRecognition`。
+- 工具与计划已提交：`6129a0a chore: 增加P6S算法仓库受控切换工具`。
+
+本轮真机执行结果：
+
+- 按计划执行过一次 `python3 scripts/configure_p6s_algorithm_store.py --apply`。
+- 写入前状态：
+  - `AlgorithmType=Unknown`。
+  - XML 根节点为 `AlgorithmStoreCfg`，`Version=1.0`。
+- 写入前已保存完整 XML 备份，路径位于系统临时目录：`camera-face-guard-p6s-backups/algorithm_store_20260702214211.xml`。
+- 设备写入响应：
+  - HTTP 状态：`200`。
+  - 设备 `ResponseStatus.statusCode=0`。
+  - 设备 message 为空。
+- 写入后立即 GET 回读：
+  - `AlgorithmType=Unknown`。
+- 触发本轮停止条件：写入后回读不是 `FaceRecognition`。
+- 因为算法模式没有持久化，本轮没有进入子配置派生复核，也没有继续观察真实人脸事件。
+
+本轮结论：
+
+- `/System/AlgorithmStoreCfg` 与此前 `/FaceReco/1/RecoRuleList`、`/Pictures/1/FaceDetect` 的关键启用字段表现一致：设备接受 PUT，并返回成功状态，但目标字段不持久化。
+- 当前阻塞已经从“找不到该写哪个子配置”推进为更明确的问题：当前固件或设备状态不允许通过这些 CGI 接口持久化上层算法模式。
+- 结合 Round 17 的 `AICap.AlgorithmWarehouse.support=false`，合理推断存在以下可能：
+  - 当前固件虽然暴露 `/System/AlgorithmStoreCfg`，但算法仓库写入能力被关闭或只读。
+  - 设备的 Web UI 可能通过额外接口、会话态、授权态、重启流程或厂商云端能力激活后才允许切换算法。
+  - 当前设备能力模型中 `FaceReco.support=true` 只表示人脸识别功能存在，不等于算法仓库页面可通过 CGI 直接切换。
+- 本轮已经按停止条件中断，没有继续尝试其他 XML 写法、没有重试 PUT、没有改 `/System/AIWorkMode`、没有改人脸子配置。
+- 下一步不应继续盲目写 API。建议先做人机结合验证：
+  - 通过摄像头 Web 后台手动找到“算法仓库/算法商场/人脸识别”页面，尝试切换到人脸识别并保存。
+  - 保存后立即由脚本只读查询 `/System/AlgorithmStoreCfg` 是否变化。
+  - 如果 Web 后台可以持久化，则再用浏览器 DevTools 或抓取后台 JS/请求确认 Web 实际调用的额外接口。
+  - 如果 Web 后台也不能持久化，则问题可能是固件能力、设备型号授权或当前模式限制，需要厂商文档/后台能力页面进一步确认。
+
 ## 24. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`
