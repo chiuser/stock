@@ -1775,6 +1775,85 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
 
 - 本轮完成并验证后单独提交一次，提交信息需说明新增 P6S 事件 fixture 和本地验证脚本。
 
+### 23.8 Round 08：LLD 步骤 8
+
+本轮对应 LLD 步骤：
+
+- 步骤 8：配置，远程服务器前置初始化。
+
+本轮目标：
+
+- 在 `qypower-prod` 上准备应用目录、配置目录、日志目录和事件目录。
+- 确认远程服务器具备 Python venv 和 Nginx 基础运行环境。
+- 为后续发布代码、配置 systemd/Nginx 和摄像头 HTTP 推送做准备。
+
+本轮范围：
+
+- 通过 `ssh qypower-prod` 进行只读预检。
+- 如预检通过，执行 Ubuntu 包和目录初始化。
+- 设置 `/opt/camera-face-guard`、`/etc/camera-face-guard`、`/var/log/camera-face-guard`、`/var/lib/camera-face-guard/p6s_events` 的基础权限。
+- 不上传代码。
+- 不启动或重启服务。
+- 不写入真实 `/etc/camera-face-guard/app.env` 内容，避免误把本地开发配置写到远程。
+- 不配置摄像头。
+
+具体配置计划：
+
+1. 只读预检：
+   - `ssh qypower-prod whoami`。
+   - `ssh qypower-prod uname -a`。
+   - `ssh qypower-prod python3 --version`。
+   - `ssh qypower-prod nginx -v`，允许未安装。
+   - `ssh qypower-prod sudo -n true`，确认 sudo 是否可非交互执行。
+2. 初始化依赖：
+   - `sudo apt update`。
+   - `sudo apt install -y python3-venv nginx`。
+3. 初始化目录：
+   - `sudo mkdir -p /opt/camera-face-guard /etc/camera-face-guard /var/log/camera-face-guard /var/lib/camera-face-guard/p6s_events`。
+   - `sudo chown -R ubuntu:ubuntu /opt/camera-face-guard /var/log/camera-face-guard /var/lib/camera-face-guard`。
+   - `sudo chmod 750 /etc/camera-face-guard`。
+4. 验证：
+   - `ls -ld` 确认四个目录存在。
+   - `python3 -m venv --help` 可用。
+   - `nginx -v` 可用。
+5. 提交：
+   - 本轮如果只产生 LLD 执行记录，则提交 LLD 记录。
+
+实际执行结果：
+
+- 远程 SSH 预检通过，登录用户为 `ubuntu`。
+- 远程系统为 Ubuntu，内核 `6.8.0-117-generic`。
+- 远程 Python 为 `Python 3.12.3`。
+- 远程 Nginx 为 `nginx/1.24.0 (Ubuntu)`。
+- `sudo -n true` 通过，可非交互执行 sudo。
+- `sudo apt update` 成功，当前有 `117` 个系统包可升级；本轮未做系统升级，避免扩大变更范围。
+- `python3-venv` 和 `nginx` 已是最新可用版本，本轮未新增安装包。
+- 已创建并验证目录：
+  - `/opt/camera-face-guard`，owner 为 `ubuntu:ubuntu`。
+  - `/etc/camera-face-guard`，owner 为 `root:root`，权限为 `750`。
+  - `/var/log/camera-face-guard`，owner 为 `ubuntu:ubuntu`。
+  - `/var/lib/camera-face-guard`，owner 为 `ubuntu:ubuntu`。
+  - `/var/lib/camera-face-guard/p6s_events`，owner 为 `ubuntu:ubuntu`。
+- 已验证 `python3 -m venv --help` 可用。
+- 已验证 `nginx -v` 可用。
+- `/etc/camera-face-guard/app.env` 当前不存在；本轮按计划不写真实 env，避免误用本地开发配置。
+- 本轮未上传代码、未安装 systemd 服务、未修改 Nginx site、未启动服务、未配置摄像头。
+
+本轮风险：
+
+- 远程 sudo 如果需要交互密码，自动初始化会失败。
+- 远程系统用户如果不是 `ubuntu`，目录 owner 需要调整。
+- 写入真实 env 文件前必须再次确认配置来源，避免本地开发配置污染远程。
+
+本轮回滚方式：
+
+- 删除远程初始化目录需谨慎，只能在确认未存放用户数据后执行。
+- 本轮不会上传代码或启动服务，因此失败时主要回滚 LLD Round 08 记录。
+
+本轮提交策略：
+
+- 本轮完成后单独提交一次，提交信息需说明远程前置初始化计划和实际状态。
+
 ## 24. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`
