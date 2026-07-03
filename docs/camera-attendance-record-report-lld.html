@@ -1,0 +1,1329 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>摄像头入场记录、日报与飞书去重 LLD</title>
+  <style>
+    :root {
+      --bg: #eef1e8;
+      --paper: #fffdf5;
+      --paper-2: rgba(255, 253, 245, .84);
+      --ink: #20251f;
+      --muted: #657064;
+      --line: #d9d1c2;
+      --brand: #1d6957;
+      --brand-2: #a8662f;
+      --good: #246f4f;
+      --warn: #9c5b22;
+      --danger: #9f3f35;
+      --soft: #e6f1e8;
+      --soft-warn: #f7ead8;
+      --shadow: 0 24px 70px rgba(45, 43, 34, .13);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.72;
+      background:
+        radial-gradient(circle at 10% 0%, rgba(29, 105, 87, .16), transparent 30rem),
+        radial-gradient(circle at 90% 8%, rgba(168, 102, 47, .16), transparent 26rem),
+        linear-gradient(135deg, #edf5eb 0%, var(--bg) 48%, #f3e4d2 100%);
+    }
+
+    .shell {
+      width: min(1200px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 42px 0 78px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.35fr .8fr;
+      gap: 22px;
+      align-items: stretch;
+      margin-bottom: 22px;
+    }
+
+    .hero-card,
+    .panel {
+      border: 1px solid rgba(32, 37, 31, .08);
+      border-radius: 30px;
+      background: var(--paper-2);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(16px);
+    }
+
+    .hero-card { padding: 38px; }
+    .panel { padding: 28px; margin-top: 18px; }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 13px;
+      border-radius: 999px;
+      color: #174a3e;
+      background: rgba(29, 105, 87, .12);
+      font-size: 13px;
+      font-weight: 850;
+      letter-spacing: .02em;
+    }
+
+    h1 {
+      margin: 18px 0 14px;
+      font-size: clamp(32px, 5vw, 56px);
+      line-height: 1.04;
+      letter-spacing: -.045em;
+    }
+
+    h2 {
+      margin: 0 0 16px;
+      font-size: 25px;
+      line-height: 1.25;
+      letter-spacing: -.025em;
+    }
+
+    h3 { margin: 22px 0 10px; font-size: 18px; }
+    h4 { margin: 18px 0 8px; font-size: 15px; color: var(--brand); }
+
+    .lead {
+      margin: 0;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    .meta {
+      display: grid;
+      gap: 12px;
+      padding: 26px;
+    }
+
+    .meta-item {
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, .52);
+      border: 1px solid rgba(32, 37, 31, .07);
+    }
+
+    .meta-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .meta-value {
+      margin-top: 4px;
+      font-weight: 800;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      padding: 18px;
+      border-radius: 22px;
+      border: 1px solid rgba(32, 37, 31, .08);
+      background: rgba(255, 255, 255, .52);
+    }
+
+    .tag {
+      display: inline-flex;
+      padding: 4px 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 850;
+      color: #174a3e;
+      background: rgba(29, 105, 87, .12);
+    }
+
+    .tag.good { color: var(--good); background: var(--soft); }
+    .tag.warn { color: var(--warn); background: var(--soft-warn); }
+    .tag.danger { color: var(--danger); background: rgba(159, 63, 53, .10); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, .58);
+    }
+
+    th,
+    td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      color: #174a3e;
+      font-size: 13px;
+      background: rgba(29, 105, 87, .10);
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    code {
+      padding: 2px 6px;
+      border: 1px solid rgba(32, 37, 31, .08);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, .72);
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: .92em;
+    }
+
+    pre {
+      overflow: auto;
+      padding: 18px;
+      border-radius: 18px;
+      color: #f7f1e6;
+      background: #1f2b25;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06);
+    }
+
+    pre code {
+      padding: 0;
+      border: 0;
+      color: inherit;
+      background: transparent;
+      font-size: 13px;
+      white-space: pre;
+    }
+
+    .callout {
+      padding: 16px 18px;
+      border-left: 5px solid var(--brand);
+      border-radius: 18px;
+      background: rgba(29, 105, 87, .09);
+    }
+
+    .callout.warn {
+      border-left-color: var(--warn);
+      background: rgba(168, 102, 47, .11);
+    }
+
+    .callout.danger {
+      border-left-color: var(--danger);
+      background: rgba(159, 63, 53, .10);
+    }
+
+    .flow {
+      display: grid;
+      gap: 12px;
+      counter-reset: step;
+    }
+
+    .step {
+      position: relative;
+      padding: 14px 16px 14px 54px;
+      border-radius: 18px;
+      border: 1px solid rgba(32, 37, 31, .08);
+      background: rgba(255, 255, 255, .54);
+    }
+
+    .step::before {
+      counter-increment: step;
+      content: counter(step);
+      position: absolute;
+      left: 16px;
+      top: 16px;
+      width: 26px;
+      height: 26px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      color: #fff;
+      background: var(--brand);
+      font-size: 13px;
+      font-weight: 850;
+    }
+
+    .mono-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    @media (max-width: 900px) {
+      .hero,
+      .grid,
+      .cards {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-card,
+      .panel,
+      .meta {
+        padding: 22px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div class="hero-card">
+        <span class="eyebrow">Camera Face Guard / LLD</span>
+        <h1>入场记录、日报与飞书去重</h1>
+        <p class="lead">基于 <code>camera-attendance-record-report-plan.html</code> 的代码级设计文档。本 LLD 只覆盖本期需求：每条人脸识别入场落库、非陌生人 2 小时提醒去重、陌生人每次提醒、每天 22:00 写库并发送飞书日报、PostgreSQL + Alembic 迁移管理。</p>
+      </div>
+      <aside class="hero-card meta">
+        <div class="meta-item">
+          <div class="meta-label">状态</div>
+          <div class="meta-value">待 Review，未开发</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">数据维护</div>
+          <div class="meta-value">Alembic + PostgreSQL</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">摄像头边界</div>
+          <div class="meta-value">不写摄像头配置、不改脸库</div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="panel">
+      <h2>1. 设计边界</h2>
+      <div class="grid">
+        <div class="callout">
+          <strong>本期实现</strong>
+          <ul>
+            <li>所有真实 <code>FaceReco</code> 事件写入 <code>attendance_events</code>。</li>
+            <li>会员、教练、员工、已匹配但未知分组、陌生人五类身份均可记录。</li>
+            <li>会员、教练、员工和未知已匹配身份按同一人 2 小时内不重复飞书提醒。</li>
+            <li>陌生人每次识别都保存图片、生成 token 链接并发送飞书。</li>
+            <li>每天 22:00 按日期统计日报，写入 <code>daily_attendance_reports</code>，并发送飞书日报。</li>
+            <li>日报标题固定为“每日入场情况统计”，内容按照日报快照字段组织。</li>
+          </ul>
+        </div>
+        <div class="callout warn">
+          <strong>本期不实现</strong>
+          <ul>
+            <li>不做人脸向量、陌生人聚类或“同一陌生人”合并。</li>
+            <li>不自动回填历史 raw JSON。</li>
+            <li>不做复杂 BI 看板；首版只提供日报 JSON、快照和飞书日报。</li>
+            <li>不改变摄像头抓拍、识别、推送、脸库、阈值等任何设备侧配置。</li>
+          </ul>
+        </div>
+      </div>
+      <div class="callout danger" style="margin-top: 16px;">
+        <strong>稳定性硬约束：</strong>摄像头 HTTP 回调必须尽快返回 Ack。PostgreSQL 异常不能导致摄像头回调 500，也不能阻塞已有 raw JSON 落盘、图片保存和当前飞书通知链路。DB 不可用时采用 fail-open：保留现有文件落盘和飞书发送能力，但本次无法执行 2 小时 DB 去重。
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>2. 代码组织</h2>
+      <table>
+        <thead>
+          <tr><th>路径</th><th>类型</th><th>职责</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>requirements.txt</code></td><td>依赖</td><td>新增 <code>SQLAlchemy</code>、<code>alembic</code>、<code>psycopg[binary]</code>。应用 DB 访问使用 SQLAlchemy Core，不引入 ORM 实体关系。</td></tr>
+          <tr><td><code>alembic.ini</code></td><td>迁移配置</td><td>Alembic 基础配置。真实连接串不写入文件，由 <code>DATABASE_URL</code> 注入。</td></tr>
+          <tr><td><code>alembic/env.py</code></td><td>迁移入口</td><td>读取 <code>DATABASE_URL</code>，执行在线迁移；本项目首版不依赖 ORM metadata。</td></tr>
+          <tr><td><code>alembic/script.py.mako</code></td><td>迁移模板</td><td>标准 Alembic 版本文件模板。</td></tr>
+          <tr><td><code>alembic/versions/20260703_0001_create_attendance_tables.py</code></td><td>迁移版本</td><td>创建入场记录、人员、陌生人、通知、日报快照表和索引。</td></tr>
+          <tr><td><code>app/db/__init__.py</code></td><td>包入口</td><td>导出 DB 配置、连接和仓储方法。</td></tr>
+          <tr><td><code>app/db/config.py</code></td><td>配置</td><td>读取 <code>DATABASE_URL</code>、<code>ATTENDANCE_DB_ENABLED</code>、<code>ATTENDANCE_NOTIFY_DEDUP_ENABLED</code>、连接超时和去重窗口配置。</td></tr>
+          <tr><td><code>app/db/session.py</code></td><td>连接</td><td>创建 SQLAlchemy <code>Engine</code>，提供 <code>get_engine()</code>、<code>transaction()</code>。</td></tr>
+          <tr><td><code>app/db/attendance_repo.py</code></td><td>仓储</td><td>封装本需求所有 SQL：人员 upsert、陌生人 insert、入场 insert、重复投递更新、通知记录、日报查询和日报快照。</td></tr>
+          <tr><td><code>app/services/attendance.py</code></td><td>领域服务</td><td>把 <code>p6s_events</code> 的解析结果转成 DB 记录，计算 2 小时去重策略。</td></tr>
+          <tr><td><code>app/services/reports.py</code></td><td>报表服务</td><td>按日期生成日报 JSON，写入 <code>daily_attendance_reports</code>，构建“每日入场情况统计”飞书消息。</td></tr>
+          <tr><td><code>app/services/report_scheduler.py</code></td><td>定时服务</td><td>服务内轻量调度，每天 22:00 触发当天日报生成、写库和飞书发送。</td></tr>
+          <tr><td><code>app/services/p6s_events.py</code></td><td>现有事件流</td><td>在 known/stranger/parse_error 分支中调用 <code>attendance.py</code>；保留现有 raw、record、image、link、Feishu、Ack 逻辑。</td></tr>
+          <tr><td><code>app/services/feishu.py</code></td><td>现有通知</td><td>继续负责构建和发送飞书消息；发送结果由事件服务写入 DB 通知表。</td></tr>
+          <tr><td><code>app/routers/attendance.py</code></td><td>新增 API</td><td>日报查询、日报快照生成、入场事件查询。所有接口要求管理员登录。</td></tr>
+          <tr><td><code>app/main.py</code></td><td>路由与生命周期</td><td>挂载 <code>attendance.router</code>；在 FastAPI lifespan 中启动和停止日报定时任务。</td></tr>
+          <tr><td><code>scripts/validate_attendance_flow.py</code></td><td>验证脚本</td><td>使用 fixture + 临时 PostgreSQL 或测试库验证 DB 写入、2 小时去重、陌生人每次提醒和日报聚合。</td></tr>
+          <tr><td><code>scripts/generate_attendance_report.py</code></td><td>运维脚本</td><td>手动生成某天日报 JSON，可选 <code>--save-snapshot</code> 写入快照表，可选 <code>--send-feishu</code> 发送日报。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>3. 运行配置</h2>
+      <table>
+        <thead>
+          <tr><th>配置项</th><th>默认值</th><th>说明</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>DATABASE_URL</code></td><td>无</td><td>PostgreSQL 连接串。真实值只允许放在本地 <code>.env.local</code> 或远程 env，不写入 git。</td></tr>
+          <tr><td><code>ATTENDANCE_DB_ENABLED</code></td><td><code>true</code></td><td>是否启用入场事件写库。只控制 DB 写入，不控制提醒去重。</td></tr>
+          <tr><td><code>ATTENDANCE_NOTIFY_DEDUP_ENABLED</code></td><td><code>true</code></td><td>是否启用非陌生人 2 小时提醒去重。关闭后仍写库，但非陌生人每次都通知。</td></tr>
+          <tr><td><code>ATTENDANCE_NOTIFY_DEDUP_WINDOW_SECONDS</code></td><td><code>7200</code></td><td>非陌生人提醒去重窗口，仅当 <code>ATTENDANCE_NOTIFY_DEDUP_ENABLED=true</code> 时生效。</td></tr>
+          <tr><td><code>ATTENDANCE_REPORT_TIMEZONE</code></td><td><code>Asia/Shanghai</code></td><td>日报按自然日统计时使用的时区。</td></tr>
+          <tr><td><code>ATTENDANCE_DAILY_REPORT_ENABLED</code></td><td><code>true</code></td><td>是否启用每天 22:00 自动日报。开发测试可设为 <code>false</code>。</td></tr>
+          <tr><td><code>ATTENDANCE_DAILY_REPORT_TIME</code></td><td><code>22:00</code></td><td>自动日报触发时间，使用 <code>ATTENDANCE_REPORT_TIMEZONE</code>。</td></tr>
+          <tr><td><code>ATTENDANCE_DAILY_REPORT_TITLE</code></td><td><code>每日入场情况统计</code></td><td>飞书日报标题。</td></tr>
+          <tr><td><code>ATTENDANCE_DB_CONNECT_TIMEOUT_SECONDS</code></td><td><code>3</code></td><td>DB 连接超时。回调路径不能长时间卡住。</td></tr>
+          <tr><td><code>ATTENDANCE_SQL_ECHO</code></td><td><code>false</code></td><td>仅本地调试使用；生产禁止开启，避免日志过多。</td></tr>
+        </tbody>
+      </table>
+      <h3>3.1 连接串格式</h3>
+      <pre><code># 推荐 SQLAlchemy + psycopg3 格式
+DATABASE_URL=postgresql+psycopg://camera_face_guard:&lt;password&gt;@127.0.0.1:5432/camera_face_guard
+
+# 如果传入 postgresql://，app/db/config.py 可自动兼容，不要求用户手动加 +psycopg。
+DATABASE_URL=postgresql://camera_face_guard:&lt;password&gt;@127.0.0.1:5432/camera_face_guard</code></pre>
+    </section>
+
+    <section class="panel">
+      <h2>4. Alembic 迁移设计</h2>
+      <div class="cards">
+        <div class="card">
+          <span class="tag good">迁移原则</span>
+          <p>所有表结构、索引、约束都由 Alembic 版本文件管理。禁止在应用启动时自动建表，避免线上不可控变更。</p>
+        </div>
+        <div class="card">
+          <span class="tag">上线命令</span>
+          <p>部署后由运维脚本或手工执行 <code>alembic upgrade head</code>。迁移必须先于开启 <code>ATTENDANCE_DB_ENABLED=true</code>。</p>
+        </div>
+        <div class="card">
+          <span class="tag warn">回滚原则</span>
+          <p>代码回滚不自动删表。只有明确要回滚表结构时，才执行 <code>alembic downgrade -1</code>，且需要先备份数据。</p>
+        </div>
+      </div>
+
+      <h3>4.1 alembic/env.py 核心逻辑</h3>
+      <pre><code>from __future__ import annotations
+
+import os
+from logging.config import fileConfig
+
+from alembic import context
+from sqlalchemy import engine_from_config, pool
+
+config = context.config
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+target_metadata = None
+
+def database_url() -&gt; str:
+    url = os.environ.get("DATABASE_URL", "").strip()
+    if not url:
+        raise RuntimeError("DATABASE_URL is required for Alembic migrations")
+    if url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return url
+
+def run_migrations_online() -&gt; None:
+    section = config.get_section(config.config_ini_section) or {}
+    section["sqlalchemy.url"] = database_url()
+    connectable = engine_from_config(
+        section,
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+    with connectable.connect() as connection:
+        context.configure(connection=connection, target_metadata=target_metadata)
+        with context.begin_transaction():
+            context.run_migrations()
+
+run_migrations_online()</code></pre>
+
+      <h3>4.2 首个迁移版本</h3>
+      <p>版本文件：<code>alembic/versions/20260703_0001_create_attendance_tables.py</code>。使用 <code>op.create_table</code> 和 <code>op.create_index</code>，不要写散落的裸 SQL 建表脚本。</p>
+      <pre><code>revision = "20260703_0001"
+down_revision = None
+branch_labels = None
+depends_on = None
+
+def upgrade() -&gt; None:
+    # create members/coaches/staff/strangers/attendance_events/
+    # feishu_notifications/daily_attendance_reports
+    # create indexes listed in section 5
+
+def downgrade() -&gt; None:
+    # drop indexes first, then drop tables in reverse dependency order
+    # daily_attendance_reports -&gt; feishu_notifications -&gt;
+    # attendance_events -&gt; strangers/staff/coaches/members</code></pre>
+    </section>
+
+    <section class="panel">
+      <h2>5. 数据库结构</h2>
+      <p>LLD 以技术方案 DDL 为基础，补充 <code>updated_at</code>、<code>unknown_known_entries</code>、通知尝试时间、DB 错误隔离所需字段。日报页面主展示仍只突出会员、教练、员工、陌生人四类。</p>
+
+      <h3>5.1 DDL</h3>
+      <pre><code>create table members (
+  member_id text primary key,
+  name text not null,
+  face_group_id text,
+  camera_person_id integer,
+  is_active boolean not null default true,
+  last_seen_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table coaches (
+  coach_id text primary key,
+  name text not null,
+  face_group_id text,
+  camera_person_id integer,
+  is_active boolean not null default true,
+  last_seen_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table staff (
+  staff_id text primary key,
+  name text not null,
+  face_group_id text,
+  camera_person_id integer,
+  is_active boolean not null default true,
+  last_seen_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table strangers (
+  stranger_id bigserial primary key,
+  first_seen_at timestamptz not null,
+  image_path text,
+  image_url text,
+  image_token_hash text,
+  created_at timestamptz not null default now()
+);
+
+create table attendance_events (
+  event_id bigserial primary key,
+  event_dedupe_key text not null unique,
+  camera_serial_number text,
+  camera_event_id text,
+  event_time timestamptz not null,
+  received_at timestamptz not null default now(),
+  person_type text not null check (
+    person_type in ('member', 'coach', 'staff', 'stranger', 'unknown_known')
+  ),
+  person_ref_id text,
+  person_name text,
+  face_group_id text,
+  face_group_name text,
+  match_number integer,
+  image_source text,
+  image_path text,
+  image_url text,
+  raw_event_path text,
+  delivery_count integer not null default 1,
+  should_notify boolean not null,
+  notification_suppressed boolean not null default false,
+  suppressed_reason text,
+  dedupe_reference_event_id bigint references attendance_events(event_id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table feishu_notifications (
+  notification_id bigserial primary key,
+  attendance_event_id bigint not null references attendance_events(event_id),
+  should_send boolean not null,
+  send_status text not null check (send_status in ('pending', 'sent', 'suppressed', 'failed')),
+  title text,
+  suppressed_reason text,
+  response_status_code integer,
+  response_text text,
+  sent_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table daily_attendance_reports (
+  report_date date primary key,
+  member_entries integer not null,
+  coach_entries integer not null,
+  staff_entries integer not null,
+  stranger_entries integer not null,
+  unknown_known_entries integer not null default 0,
+  notification_sent_count integer not null,
+  notification_suppressed_count integer not null,
+  stranger_items jsonb not null default '[]'::jsonb,
+  generated_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);</code></pre>
+
+      <h3>5.2 索引</h3>
+      <pre><code>create index idx_attendance_events_time
+  on attendance_events (event_time);
+
+create index idx_attendance_events_person_window
+  on attendance_events (person_type, person_ref_id, event_time desc)
+  where person_type &lt;&gt; 'stranger'
+    and should_notify = true
+    and notification_suppressed = false;
+
+create index idx_attendance_events_report
+  on attendance_events (event_time, person_type);
+
+create index idx_attendance_events_camera
+  on attendance_events (camera_serial_number, camera_event_id);
+
+create index idx_feishu_notifications_event
+  on feishu_notifications (attendance_event_id);
+
+create index idx_strangers_first_seen
+  on strangers (first_seen_at);</code></pre>
+
+      <h3>5.3 字段约定</h3>
+      <table>
+        <thead>
+          <tr><th>字段</th><th>约定</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>person_type</code></td><td><code>member</code>、<code>coach</code>、<code>staff</code> 来自本地 GroupID2 映射；匹配成功但无法映射时为 <code>unknown_known</code>；未匹配为 <code>stranger</code>。</td></tr>
+          <tr><td><code>person_ref_id</code></td><td>已知人员使用 FaceUUID；陌生人使用 <code>stranger_id</code> 转字符串；解析错误但属于已匹配未知身份时使用 <code>unknown:&lt;event_dedupe_key&gt;</code>。</td></tr>
+          <tr><td><code>delivery_count</code></td><td>同一 <code>event_dedupe_key</code> 被摄像头重复投递时自增。重复投递不产生新的入场统计。</td></tr>
+          <tr><td><code>should_notify</code></td><td>策略层计算结果，不代表飞书一定发送成功。发送结果看 <code>feishu_notifications.send_status</code>。</td></tr>
+          <tr><td><code>image_token_hash</code></td><td>沿用现有 token 链接机制，不保存 token 明文。若当前 <code>image_links</code> 模块不暴露 hash，则该字段可为空。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>6. 领域对象</h2>
+      <p>不引入 ORM model。服务层用 dataclass 传递明确字段，仓储层用 SQLAlchemy <code>text()</code> 执行 SQL。</p>
+      <pre><code>from dataclasses import dataclass
+from datetime import datetime
+
+@dataclass(frozen=True)
+class AttendancePerson:
+    person_type: str
+    person_ref_id: str
+    name: str
+    camera_person_id: int | None
+    face_group_id: str
+    face_group_name: str
+
+@dataclass(frozen=True)
+class AttendanceImage:
+    source: str
+    path: str
+    url: str
+    token_hash: str | None
+
+@dataclass(frozen=True)
+class AttendanceEventDraft:
+    event_dedupe_key: str
+    camera_serial_number: str
+    camera_event_id: str
+    event_time: datetime
+    received_at: datetime
+    person: AttendancePerson
+    match_number: int | None
+    image: AttendanceImage | None
+    raw_event_path: str
+
+@dataclass(frozen=True)
+class NotifyDecision:
+    should_notify: bool
+    suppressed: bool
+    suppressed_reason: str
+    reference_event_id: int | None
+
+@dataclass(frozen=True)
+class AttendanceInsertResult:
+    event_id: int
+    inserted: bool
+    delivery_count: int
+    notify_decision: NotifyDecision</code></pre>
+    </section>
+
+    <section class="panel">
+      <h2>7. 事件流接入</h2>
+      <h3>7.1 总流程</h3>
+      <div class="flow">
+        <div class="step"><code>camera.py</code> 接收 <code>/api/p6s/events/{secret}</code>，校验 secret 和 body 大小。</div>
+        <div class="step"><code>p6s_events.handle_event()</code> 生成 <code>EventIdentity</code> 并先落 raw JSON。</div>
+        <div class="step">如果是 heartbeat 或非 <code>FaceReco</code>，保持现有逻辑，不写入入场表。</div>
+        <div class="step">如果是重复投递，尝试执行 <code>attendance_repo.increment_delivery_count()</code>，然后返回现有 Ack，不发飞书。</div>
+        <div class="step">如果是已知人员，解析 <code>MatchedPerson</code> 和角色，构造 <code>AttendanceEventDraft</code>。</div>
+        <div class="step">如果是陌生人，先保存图片、创建 token 链接，再构造 <code>AttendanceEventDraft</code>。</div>
+        <div class="step"><code>attendance.record_event()</code> 在事务中 upsert 人员、按独立开关决定是否计算 2 小时去重、插入入场事件。</div>
+        <div class="step">如果 <code>should_notify=true</code>，调用现有 <code>feishu.py</code> 发送；如果被抑制，则不调用飞书。</div>
+        <div class="step">写入 <code>feishu_notifications</code>：发送成功、失败或 suppressed 都要有记录。</div>
+        <div class="step">写现有 processing record，返回摄像头 Ack。</div>
+      </div>
+
+      <h3>7.2 known 分支改造点</h3>
+      <pre><code>def _handle_known_face(...):
+    person = _parse_matched_person(person_info_value)
+    draft = attendance.build_known_draft(
+        identity=identity,
+        raw_file=raw_file,
+        person=person,
+        match_number=match_number,
+    )
+
+    db_result = attendance.safe_record_event(draft)
+    should_send = notify and _notify_known_enabled() and db_result.should_notify
+
+    if should_send:
+        feishu_result = _safe_notify(feishu.notify_known_face, ...)
+    else:
+        feishu_result = _notification_skipped(db_result.suppressed_reason)
+
+    attendance.safe_record_notification(db_result.event_id, feishu_result, ...)
+    write_processing_record(...)</code></pre>
+
+      <h3>7.3 stranger 分支改造点</h3>
+      <pre><code>def _handle_stranger(...):
+    stored_image = event_store.save_stranger_image(...)
+    created_link = image_links.create_image_link(...)
+
+    draft = attendance.build_stranger_draft(
+        identity=identity,
+        raw_file=raw_file,
+        stored_image=stored_image,
+        created_link=created_link,
+        match_number=match_number,
+    )
+    db_result = attendance.safe_record_event(draft)
+
+    # 陌生人每次都应提醒，除非 notify=false 或 DB 完全不可用时沿用现有行为。
+    feishu_result = _notify_unknown(...)
+    attendance.safe_record_notification(db_result.event_id, feishu_result, ...)</code></pre>
+
+      <h3>7.4 DB 异常降级</h3>
+      <pre><code>try:
+    db_result = attendance.record_event(draft)
+except AttendanceDbUnavailable as exc:
+    # 不抛给 FastAPI，不影响摄像头 Ack。
+    # 保持旧逻辑：known 按现有策略发送；stranger 按现有策略发送。
+    db_result = AttendanceFallbackResult(
+        enabled=False,
+        should_notify=True,
+        error_type=type(exc).__name__,
+    )</code></pre>
+
+      <h3>7.5 写库开关与去重开关</h3>
+      <p><code>ATTENDANCE_DB_ENABLED</code> 和 <code>ATTENDANCE_NOTIFY_DEDUP_ENABLED</code> 必须分离。前者只决定是否写入 PostgreSQL；后者只决定非陌生人是否执行 2 小时提醒去重。</p>
+      <pre><code>if not settings.attendance_db_enabled:
+    # 不写 attendance_events，不查询去重窗口。
+    # 保持旧行为：known/stranger 按事件本身发送飞书。
+    return AttendanceFallbackResult(should_notify=True)
+
+with transaction() as conn:
+    upsert_person_or_insert_stranger(conn, draft)
+
+    if draft.person.person_type == "stranger":
+        decision = NotifyDecision(should_notify=True, suppressed=False)
+    elif not settings.attendance_notify_dedup_enabled:
+        # 仍写库，但不做 2 小时提醒抑制。
+        decision = NotifyDecision(should_notify=True, suppressed=False)
+    else:
+        # 只有这里才查询 2 小时窗口和 advisory lock。
+        decision = compute_known_person_dedup_decision(conn, draft)
+
+    return insert_attendance_event(conn, draft, decision)</code></pre>
+    </section>
+
+    <section class="panel">
+      <h2>8. 仓储函数与 SQL</h2>
+      <h3>8.1 upsert 已知人员</h3>
+      <p>根据 <code>person_type</code> 选择目标表，三个 SQL 结构一致。仓储层使用白名单分发表名，禁止把表名作为用户输入拼接。</p>
+      <pre><code>insert into staff (
+  staff_id, name, face_group_id, camera_person_id, is_active, last_seen_at, updated_at
+) values (
+  :person_ref_id, :name, :face_group_id, :camera_person_id, true, :event_time, now()
+)
+on conflict (staff_id) do update set
+  name = excluded.name,
+  face_group_id = excluded.face_group_id,
+  camera_person_id = excluded.camera_person_id,
+  last_seen_at = greatest(coalesce(staff.last_seen_at, excluded.last_seen_at), excluded.last_seen_at),
+  updated_at = now();</code></pre>
+
+      <h3>8.2 insert 陌生人</h3>
+      <pre><code>insert into strangers (
+  first_seen_at, image_path, image_url, image_token_hash
+) values (
+  :event_time, :image_path, :image_url, :image_token_hash
+)
+returning stranger_id;</code></pre>
+
+      <h3>8.3 同一人员去重锁</h3>
+      <p>为了避免并发回调同时判断“过去 2 小时没有提醒”导致重复发飞书，只有当 <code>ATTENDANCE_NOTIFY_DEDUP_ENABLED=true</code> 且人员不是陌生人时，才对同一人员加 PostgreSQL 事务级 advisory lock。关闭提醒去重时不需要执行此 SQL。</p>
+      <pre><code>select pg_advisory_xact_lock(
+  hashtext(:person_type || ':' || coalesce(:person_ref_id, ''))
+);</code></pre>
+
+      <h3>8.4 查询 2 小时内最近一次已提醒事件</h3>
+      <p>仅当 <code>ATTENDANCE_NOTIFY_DEDUP_ENABLED=true</code> 时执行。</p>
+      <pre><code>select event_id, event_time
+from attendance_events
+where person_type = :person_type
+  and person_ref_id = :person_ref_id
+  and person_type &lt;&gt; 'stranger'
+  and should_notify = true
+  and notification_suppressed = false
+  and event_time &gt;= (:event_time - (:window_seconds * interval '1 second'))
+  and event_time &lt; :event_time
+order by event_time desc
+limit 1;</code></pre>
+
+      <h3>8.5 插入入场事件</h3>
+      <pre><code>insert into attendance_events (
+  event_dedupe_key,
+  camera_serial_number,
+  camera_event_id,
+  event_time,
+  received_at,
+  person_type,
+  person_ref_id,
+  person_name,
+  face_group_id,
+  face_group_name,
+  match_number,
+  image_source,
+  image_path,
+  image_url,
+  raw_event_path,
+  should_notify,
+  notification_suppressed,
+  suppressed_reason,
+  dedupe_reference_event_id
+) values (
+  :event_dedupe_key,
+  :camera_serial_number,
+  :camera_event_id,
+  :event_time,
+  :received_at,
+  :person_type,
+  :person_ref_id,
+  :person_name,
+  :face_group_id,
+  :face_group_name,
+  :match_number,
+  :image_source,
+  :image_path,
+  :image_url,
+  :raw_event_path,
+  :should_notify,
+  :notification_suppressed,
+  :suppressed_reason,
+  :dedupe_reference_event_id
+)
+on conflict (event_dedupe_key) do nothing
+returning event_id;</code></pre>
+
+      <h3>8.6 重复投递更新</h3>
+      <pre><code>update attendance_events
+set delivery_count = delivery_count + 1,
+    updated_at = now()
+where event_dedupe_key = :event_dedupe_key
+returning event_id, delivery_count;</code></pre>
+
+      <h3>8.7 写入飞书通知记录</h3>
+      <pre><code>insert into feishu_notifications (
+  attendance_event_id,
+  should_send,
+  send_status,
+  title,
+  suppressed_reason,
+  response_status_code,
+  response_text,
+  sent_at
+) values (
+  :attendance_event_id,
+  :should_send,
+  :send_status,
+  :title,
+  :suppressed_reason,
+  :response_status_code,
+  :response_text,
+  :sent_at
+)
+returning notification_id;</code></pre>
+
+      <h3>8.8 日报聚合 SQL</h3>
+      <pre><code>select
+  count(*) filter (where person_type = 'member') as member_entries,
+  count(*) filter (where person_type = 'coach') as coach_entries,
+  count(*) filter (where person_type = 'staff') as staff_entries,
+  count(*) filter (where person_type = 'stranger') as stranger_entries,
+  count(*) filter (where person_type = 'unknown_known') as unknown_known_entries,
+  count(*) filter (where should_notify = true) as notification_should_send_count,
+  count(*) filter (
+    where exists (
+      select 1
+      from feishu_notifications n
+      where n.attendance_event_id = attendance_events.event_id
+        and n.send_status = 'sent'
+    )
+  ) as notification_sent_count,
+  count(*) filter (where notification_suppressed = true) as notification_suppressed_count
+from attendance_events
+where event_time &gt;= :day_start
+  and event_time &lt; :day_end;</code></pre>
+
+      <h3>8.9 陌生人照片明细 SQL</h3>
+      <pre><code>select
+  event_id,
+  event_time,
+  camera_serial_number,
+  camera_event_id,
+  image_url,
+  image_path
+from attendance_events
+where person_type = 'stranger'
+  and event_time &gt;= :day_start
+  and event_time &lt; :day_end
+order by event_time asc, event_id asc;</code></pre>
+
+      <h3>8.10 日报快照 upsert</h3>
+      <pre><code>insert into daily_attendance_reports (
+  report_date,
+  member_entries,
+  coach_entries,
+  staff_entries,
+  stranger_entries,
+  unknown_known_entries,
+  notification_sent_count,
+  notification_suppressed_count,
+  stranger_items,
+  generated_at,
+  updated_at
+) values (
+  :report_date,
+  :member_entries,
+  :coach_entries,
+  :staff_entries,
+  :stranger_entries,
+  :unknown_known_entries,
+  :notification_sent_count,
+  :notification_suppressed_count,
+  cast(:stranger_items as jsonb),
+  now(),
+  now()
+)
+on conflict (report_date) do update set
+  member_entries = excluded.member_entries,
+  coach_entries = excluded.coach_entries,
+  staff_entries = excluded.staff_entries,
+  stranger_entries = excluded.stranger_entries,
+  unknown_known_entries = excluded.unknown_known_entries,
+  notification_sent_count = excluded.notification_sent_count,
+  notification_suppressed_count = excluded.notification_suppressed_count,
+  stranger_items = excluded.stranger_items,
+  generated_at = now(),
+  updated_at = now();</code></pre>
+
+      <h3>8.11 入场事件列表 SQL</h3>
+      <pre><code>select
+  event_id,
+  event_time,
+  person_type,
+  person_ref_id,
+  person_name,
+  camera_serial_number,
+  camera_event_id,
+  should_notify,
+  notification_suppressed,
+  suppressed_reason,
+  image_url
+from attendance_events
+where event_time &gt;= :day_start
+  and event_time &lt; :day_end
+  and (:person_type is null or person_type = :person_type)
+order by event_time desc, event_id desc
+limit :limit
+offset :offset;</code></pre>
+    </section>
+
+    <section class="panel">
+      <h2>9. 提醒决策</h2>
+      <table>
+        <thead>
+          <tr><th>场景</th><th>DB 记录</th><th>飞书行为</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>会员/教练/员工首次或 2 小时外识别</td><td><code>should_notify=true</code>、<code>notification_suppressed=false</code></td><td>发送对应标题：会员/教练/员工入场提醒。</td></tr>
+          <tr><td>会员/教练/员工 2 小时内重复识别</td><td><code>should_notify=false</code>、<code>notification_suppressed=true</code>、<code>suppressed_reason=known_person_2h_window</code></td><td>不发送飞书，写 <code>feishu_notifications.send_status=suppressed</code>。</td></tr>
+          <tr><td><code>ATTENDANCE_NOTIFY_DEDUP_ENABLED=false</code></td><td>仍写入 <code>attendance_events</code>；非陌生人重复识别也保持 <code>should_notify=true</code>、<code>notification_suppressed=false</code></td><td>非陌生人每次都发送飞书。此开关不影响 <code>ATTENDANCE_DB_ENABLED</code>。</td></tr>
+          <tr><td>匹配成功但无法映射分组</td><td><code>person_type=unknown_known</code>，同样执行 2 小时去重</td><td>2 小时外发送“人员入场提醒”。</td></tr>
+          <tr><td>陌生人</td><td>每次写 <code>strangers</code> 和 <code>attendance_events</code>，<code>should_notify=true</code></td><td>每次发送“发现陌生人入场”，包含图片查看链接。</td></tr>
+          <tr><td>摄像头重复投递同一 dedupe key</td><td>不新增入场，只自增 <code>delivery_count</code></td><td>不重复发送。</td></tr>
+          <tr><td><code>ATTENDANCE_DB_ENABLED=false</code></td><td>不写 DB，也不查询去重窗口</td><td>fail-open，沿用现有飞书发送行为；这个开关只影响写库，不代表去重策略开关。</td></tr>
+          <tr><td>DB 不可用</td><td>不写 DB，processing record 记录 DB 错误摘要</td><td>fail-open，沿用现有飞书发送行为；此时无法依赖 DB 执行 2 小时去重。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>10. API 设计</h2>
+      <p>新增接口全部放在 <code>app/routers/attendance.py</code>，并使用现有 <code>require_admin</code> 鉴权。首版只返回 JSON，不做页面。</p>
+
+      <h3>10.1 查询日报</h3>
+      <table>
+        <tbody>
+          <tr><th>方法</th><td><code>GET</code></td></tr>
+          <tr><th>路径</th><td><code>/api/attendance/reports/daily</code></td></tr>
+          <tr><th>Query</th><td><code>date=YYYY-MM-DD</code>，不传则默认今天；<code>include_events=false</code> 可选。</td></tr>
+          <tr><th>鉴权</th><td>管理员登录。</td></tr>
+        </tbody>
+      </table>
+      <pre><code>{
+  "date": "2026-07-03",
+  "timezone": "Asia/Shanghai",
+  "summary": {
+    "member_entries": 12,
+    "coach_entries": 3,
+    "staff_entries": 2,
+    "stranger_entries": 4,
+    "unknown_known_entries": 1,
+    "notification_sent_count": 8,
+    "notification_suppressed_count": 14
+  },
+  "strangers": [
+    {
+      "event_id": 101,
+      "event_time": "2026-07-03T10:43:40+08:00",
+      "camera_serial_number": "I20F11AAA3D5133BCF1A1AE",
+      "camera_event_id": "13",
+      "image_url": "http://82.156.198.180/api/p6s/event-images/view/&lt;token&gt;",
+      "image_path": "/var/lib/camera-face-guard/p6s_events/strangers/2026-07-03/a.jpg"
+    }
+  ]
+}</code></pre>
+
+      <h3>10.2 生成日报快照</h3>
+      <table>
+        <tbody>
+          <tr><th>方法</th><td><code>POST</code></td></tr>
+          <tr><th>路径</th><td><code>/api/attendance/reports/daily/{report_date}/snapshot</code></td></tr>
+          <tr><th>行为</th><td>手动补跑指定日期日报，实时聚合当天数据，upsert 到 <code>daily_attendance_reports</code>。默认不发送飞书，避免人工补跑造成重复日报。</td></tr>
+          <tr><th>Body</th><td><code>{"send_feishu": false}</code>；仅在明确补发日报时传 <code>true</code>。</td></tr>
+          <tr><th>鉴权</th><td>管理员登录。</td></tr>
+        </tbody>
+      </table>
+
+      <h3>10.3 查询入场事件</h3>
+      <table>
+        <tbody>
+          <tr><th>方法</th><td><code>GET</code></td></tr>
+          <tr><th>路径</th><td><code>/api/attendance/events</code></td></tr>
+          <tr><th>Query</th><td><code>date=YYYY-MM-DD</code>、<code>person_type=member|coach|staff|stranger|unknown_known</code>、<code>limit</code>、<code>offset</code>。</td></tr>
+          <tr><th>用途</th><td>运维和验证。对外 UI 不直接暴露内部状态枚举。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>11. 报告服务</h2>
+      <h3>11.1 日期边界</h3>
+      <p>日报按 <code>ATTENDANCE_REPORT_TIMEZONE</code> 计算自然日边界。服务层把日期转换为带时区的 <code>day_start</code> 和 <code>day_end</code>，SQL 只做范围查询，避免依赖 PostgreSQL session timezone。</p>
+      <pre><code>def day_range(report_date: date, timezone_name: str) -&gt; tuple[datetime, datetime]:
+    tz = ZoneInfo(timezone_name)
+    start = datetime.combine(report_date, time.min, tzinfo=tz)
+    end = start + timedelta(days=1)
+    return start, end</code></pre>
+
+      <h3>11.2 日报生成函数</h3>
+      <pre><code>def generate_daily_report(
+    report_date: date,
+    *,
+    save_snapshot: bool,
+    send_feishu: bool,
+) -&gt; DailyReportResult:
+    summary = attendance_repo.fetch_daily_summary(day_start, day_end)
+    strangers = attendance_repo.fetch_daily_strangers(day_start, day_end)
+    snapshot = attendance_repo.upsert_daily_report(summary, strangers)
+    feishu_result = None
+    if send_feishu:
+        payload = build_daily_report_post(snapshot)
+        feishu_result = feishu.send_post_payload(payload)
+    return DailyReportResult(snapshot=snapshot, feishu=feishu_result)</code></pre>
+
+      <h3>11.3 飞书日报消息</h3>
+      <p>飞书日报标题固定为 <code>每日入场情况统计</code>。正文只使用 <code>daily_attendance_reports</code> 已写入字段组织，不重新查询实时事件，确保“写库内容”和“发送内容”一致。</p>
+      <pre><code>{
+  "msg_type": "post",
+  "content": {
+    "post": {
+      "zh_cn": {
+        "title": "每日入场情况统计",
+        "content": [
+          [{"tag": "text", "text": "报告日期：2026-07-03"}],
+          [{"tag": "text", "text": "会员入场次数：12"}],
+          [{"tag": "text", "text": "教练入场次数：3"}],
+          [{"tag": "text", "text": "员工入场次数：2"}],
+          [{"tag": "text", "text": "陌生人入场次数：4"}],
+          [{"tag": "text", "text": "未知身份入场次数：1"}],
+          [{"tag": "text", "text": "实际发送飞书数量：8"}],
+          [{"tag": "text", "text": "去重抑制数量：14"}],
+          [{"tag": "text", "text": "陌生人照片："}],
+          [{"tag": "a", "text": "10:43:40 查看图片", "href": "http://82.156.198.180/api/p6s/event-images/view/&lt;token&gt;"}]
+        ]
+      }
+    }
+  }
+}</code></pre>
+
+      <h3>11.4 22:00 定时调度</h3>
+      <p>首版使用服务内轻量调度，避免额外引入定时框架。当前部署为单实例服务时不会重复发送。如果未来服务改成多实例，需要改成 systemd timer、cron 或独立 worker，并使用 DB 锁保证单次执行。</p>
+      <pre><code>async def daily_report_loop(stop_event: asyncio.Event) -&gt; None:
+    while not stop_event.is_set():
+        next_run = compute_next_run_time(
+            time_text=os.environ.get("ATTENDANCE_DAILY_REPORT_TIME", "22:00"),
+            timezone_name=os.environ.get("ATTENDANCE_REPORT_TIMEZONE", "Asia/Shanghai"),
+        )
+        await wait_until(next_run, stop_event)
+        if stop_event.is_set():
+            break
+        report_date = next_run.date()
+        await asyncio.to_thread(
+            reports.generate_daily_report,
+            report_date,
+            save_snapshot=True,
+            send_feishu=True,
+        )</code></pre>
+
+      <h3>11.5 脚本</h3>
+      <pre><code># 只打印 JSON
+python3 scripts/generate_attendance_report.py --date 2026-07-03
+
+# 同时保存 daily_attendance_reports 快照
+python3 scripts/generate_attendance_report.py --date 2026-07-03 --save-snapshot
+
+# 补发飞书日报，标题为“每日入场情况统计”
+python3 scripts/generate_attendance_report.py --date 2026-07-03 --save-snapshot --send-feishu</code></pre>
+    </section>
+
+    <section class="panel">
+      <h2>12. 开发步骤</h2>
+      <div class="callout danger">
+        <strong>开发边界：</strong>本阶段只开发服务器代码、数据库迁移、接口、脚本和验证用例。不得调用摄像头写接口，不得修改摄像头抓拍、识别、推送、脸库或阈值配置。
+      </div>
+
+      <h3>12.1 阶段化任务清单</h3>
+      <table>
+        <thead>
+          <tr><th>阶段</th><th>开发任务</th><th>涉及文件</th><th>完成标准</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1. 依赖与迁移骨架</td>
+            <td>新增 <code>SQLAlchemy</code>、<code>alembic</code>、<code>psycopg[binary]</code>；创建 Alembic 目录、配置文件和版本模板。</td>
+            <td><code>requirements.txt</code>、<code>alembic.ini</code>、<code>alembic/env.py</code>、<code>alembic/script.py.mako</code></td>
+            <td><code>alembic current</code> 能读取 <code>DATABASE_URL</code> 并连接数据库；配置文件不包含真实密码。</td>
+          </tr>
+          <tr>
+            <td>2. 首个数据库迁移</td>
+            <td>用 Alembic 创建 7 张表和索引：人员、陌生人、入场事件、飞书通知、日报快照。</td>
+            <td><code>alembic/versions/20260703_0001_create_attendance_tables.py</code></td>
+            <td><code>alembic upgrade head</code> 后表、约束和索引与第 5 章一致；<code>alembic downgrade -1</code> 可反向删除。</td>
+          </tr>
+          <tr>
+            <td>3. DB 配置与连接层</td>
+            <td>实现 DB 配置读取、连接池、事务 helper；明确拆分写库开关和去重开关。</td>
+            <td><code>app/db/__init__.py</code>、<code>app/db/config.py</code>、<code>app/db/session.py</code></td>
+            <td><code>ATTENDANCE_DB_ENABLED</code> 只控制写库；<code>ATTENDANCE_NOTIFY_DEDUP_ENABLED</code> 只控制 2 小时提醒去重。</td>
+          </tr>
+          <tr>
+            <td>4. 仓储层 SQL</td>
+            <td>实现本 LLD 第 8 章全部 SQL：upsert 人员、insert 陌生人、去重查询、入场插入、重复投递更新、通知记录、日报聚合、日报快照。</td>
+            <td><code>app/db/attendance_repo.py</code></td>
+            <td>仓储函数只接收参数化 SQL；人员表名通过白名单选择；不拼接用户输入。</td>
+          </tr>
+          <tr>
+            <td>5. 人员基础数据导入</td>
+            <td>实现会员、教练、员工 CSV 导入工具；把本地已确认的人脸人员资料写入 PostgreSQL 人员主表，不写摄像头脸库。</td>
+            <td><code>scripts/import_attendance_people.py</code>、<code>app/db/attendance_repo.py</code></td>
+            <td>支持 <code>--dry-run</code> 和 <code>--apply</code>；校验 ID、姓名、分组、重复数据；导入后 <code>members</code>、<code>coaches</code>、<code>staff</code> 数量与 CSV 一致。</td>
+          </tr>
+          <tr>
+            <td>6. 入场领域服务</td>
+            <td>把事件解析结果转换为入场草稿；实现 known、stranger、unknown_known 的写库与提醒决策。</td>
+            <td><code>app/services/attendance.py</code></td>
+            <td>支持三种组合：写库+去重、写库+不去重、不写库；DB 异常 fail-open。</td>
+          </tr>
+          <tr>
+            <td>7. 事件流接入</td>
+            <td>在现有 <code>p6s_events.py</code> 中接入入场服务；重复投递只更新 <code>delivery_count</code>；通知结果写入 DB。</td>
+            <td><code>app/services/p6s_events.py</code>、<code>app/services/feishu.py</code></td>
+            <td>摄像头 Ack 行为保持稳定；DB 失败不导致回调 500；raw JSON、图片和 token 链接逻辑保持兼容。</td>
+          </tr>
+          <tr>
+            <td>8. 日报服务与飞书日报</td>
+            <td>实现日报聚合、快照 upsert、飞书日报 payload 构建，标题固定“每日入场情况统计”。</td>
+            <td><code>app/services/reports.py</code></td>
+            <td>飞书日报正文只使用 <code>daily_attendance_reports</code> 快照字段组织，不二次查询实时事件。</td>
+          </tr>
+          <tr>
+            <td>9. API 与脚本</td>
+            <td>实现日报查询、日报快照生成、入场事件查询接口；实现手动日报脚本。</td>
+            <td><code>app/routers/attendance.py</code>、<code>app/main.py</code>、<code>scripts/generate_attendance_report.py</code></td>
+            <td>接口全部使用 <code>require_admin</code>；脚本支持 <code>--save-snapshot</code> 和 <code>--send-feishu</code>。</td>
+          </tr>
+          <tr>
+            <td>10. 22:00 定时任务</td>
+            <td>实现服务内轻量调度；每天 22:00 按统计时区生成当日报告、写库、发飞书。</td>
+            <td><code>app/services/report_scheduler.py</code>、<code>app/main.py</code></td>
+            <td><code>ATTENDANCE_DAILY_REPORT_ENABLED=false</code> 可关闭；服务停止时定时任务可干净退出。</td>
+          </tr>
+          <tr>
+            <td>11. 验证与部署准备</td>
+            <td>补充 fixture、验证脚本、部署前检查和远程迁移步骤。</td>
+            <td><code>tests/fixtures/*</code>、<code>scripts/validate_attendance_flow.py</code>、部署文档或脚本</td>
+            <td>本地验证通过后再部署；远程先执行 Alembic，再开启 DB 写入和日报配置。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>12.2 建议执行顺序</h3>
+      <div class="flow">
+        <div class="step">先完成依赖、Alembic 骨架和首个迁移，确保数据库结构可重复创建和回滚。</div>
+        <div class="step">再完成 DB 配置、连接层和仓储 SQL，用脚本级验证证明 SQL 行为正确。</div>
+        <div class="step">导入会员、教练、员工基础人员表，先 dry-run 校验 CSV，再 apply 写入 PostgreSQL。</div>
+        <div class="step">实现 <code>attendance.py</code>，重点验证 <code>ATTENDANCE_DB_ENABLED</code> 与 <code>ATTENDANCE_NOTIFY_DEDUP_ENABLED</code> 的组合语义。</div>
+        <div class="step">接入 <code>p6s_events.py</code>，保持摄像头 Ack、raw 落盘、陌生人图片和 token 链接兼容。</div>
+        <div class="step">实现日报服务、日报 API 和手动脚本，先手动生成快照，再发送飞书日报。</div>
+        <div class="step">最后接入 22:00 定时调度，并补齐启停、关闭开关和异常日志。</div>
+        <div class="step">所有本地 fixture 和 DB 验证通过后，才执行远程 Alembic 迁移和服务部署。</div>
+      </div>
+
+      <h3>12.3 每阶段提交建议</h3>
+      <table>
+        <thead>
+          <tr><th>提交</th><th>建议内容</th><th>原因</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Commit 1</td><td>依赖、Alembic 骨架、首个迁移。</td><td>表结构可单独 review 和回滚。</td></tr>
+          <tr><td>Commit 2</td><td>DB 配置、连接、仓储 SQL、人员导入工具和仓储验证。</td><td>先确认数据层和基础人员表正确，再接事件流。</td></tr>
+          <tr><td>Commit 3</td><td>入场领域服务和事件流接入。</td><td>核心行为变更集中 review。</td></tr>
+          <tr><td>Commit 4</td><td>日报服务、API、脚本和 22:00 调度。</td><td>日报链路独立验证。</td></tr>
+          <tr><td>Commit 5</td><td>验证脚本、部署文档和远程迁移说明。</td><td>交付上线操作依据。</td></tr>
+        </tbody>
+      </table>
+
+      <h3>12.4 本轮实际开发推进步骤</h3>
+      <table>
+        <thead>
+          <tr><th>顺序</th><th>执行内容</th><th>开发/配置任务</th><th>阶段验证</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>0</td>
+            <td>边界确认</td>
+            <td>每次开发前复读 <code>AGENTS.md</code> 和本 LLD；确认本轮只做服务器端、PostgreSQL、飞书和报表逻辑。</td>
+            <td>确认不会调用摄像头写接口，不修改摄像头配置、脸库、识别阈值、抓拍和推送配置。</td>
+          </tr>
+          <tr>
+            <td>1</td>
+            <td>数据库迁移基础</td>
+            <td>新增依赖；创建 Alembic 配置；实现首个迁移，包含 7 张表、约束和索引。</td>
+            <td>运行 <code>python3 -m py_compile</code>；在指定 <code>DATABASE_URL</code> 的环境中执行 <code>alembic upgrade head</code> 和必要的 <code>alembic downgrade -1</code> 验证。</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td>DB 配置和仓储层</td>
+            <td>实现 <code>app/db/config.py</code>、<code>app/db/session.py</code>、<code>app/db/attendance_repo.py</code>；封装第 8 章 SQL。</td>
+            <td>验证 <code>ATTENDANCE_DB_ENABLED</code> 只控制写库，<code>ATTENDANCE_NOTIFY_DEDUP_ENABLED</code> 只控制 2 小时去重。</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td>人员基础表导入</td>
+            <td>实现 <code>scripts/import_attendance_people.py</code>，从会员、教练、员工 CSV 导入 <code>members</code>、<code>coaches</code>、<code>staff</code>。</td>
+            <td>先执行 <code>--dry-run</code> 校验 ID、姓名、分组和重复项；确认后再 <code>--apply</code> 写库；导入报告不得包含密钥。</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td>入场事件业务逻辑</td>
+            <td>实现 <code>app/services/attendance.py</code>：记录每条识别事件、陌生人每次提醒、非陌生人按开关执行 2 小时去重。</td>
+            <td>使用 fixture 覆盖会员、教练、员工、未知已匹配、陌生人、重复投递、DB 异常降级。</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td>接入摄像头回调事件流</td>
+            <td>在 <code>p6s_events.py</code> 接入入场服务；在 <code>feishu.py</code> 记录发送、抑制和失败结果。</td>
+            <td>验证摄像头回调 Ack 不受 DB 异常影响；陌生人图片保存和 token 链接保持现有行为。</td>
+          </tr>
+          <tr>
+            <td>6</td>
+            <td>日报、API 和定时任务</td>
+            <td>实现日报聚合、日报快照、日报飞书模板、管理 API、手动脚本和每天 22:00 调度。</td>
+            <td>手动脚本能生成指定日期快照；飞书标题固定为“每日入场情况统计”；调度可用 <code>ATTENDANCE_DAILY_REPORT_ENABLED=false</code> 关闭。</td>
+          </tr>
+          <tr>
+            <td>7</td>
+            <td>上线前验证和部署准备</td>
+            <td>补齐验证脚本、部署说明和远程迁移步骤；明确先迁移数据库，再开启 DB 写入和日报配置。</td>
+            <td>本地验证全部通过；远程部署前检查环境变量、Alembic 状态、服务启动和飞书 webhook 连通性。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>13. 验证计划</h2>
+      <table>
+        <thead>
+          <tr><th>类型</th><th>命令/动作</th><th>验收标准</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>迁移检查</td><td><code>DATABASE_URL=... alembic upgrade head</code></td><td>7 张表和索引创建成功。</td></tr>
+          <tr><td>静态检查</td><td><code>python3 -m py_compile app/db/*.py app/services/*.py app/routers/*.py scripts/*.py</code></td><td>无语法错误。</td></tr>
+          <tr><td>fixture 事件</td><td><code>python3 scripts/validate_attendance_flow.py</code></td><td>五类事件均写入 DB；陌生人生成图片链接；重复投递不新增入场。</td></tr>
+          <tr><td>2 小时去重</td><td>同一会员构造两条间隔 10 分钟事件</td><td>两条 <code>attendance_events</code> 均存在，第二条 <code>notification_suppressed=true</code>。</td></tr>
+          <tr><td>去重关闭</td><td><code>ATTENDANCE_DB_ENABLED=true</code> 且 <code>ATTENDANCE_NOTIFY_DEDUP_ENABLED=false</code>，同一会员构造两条间隔 10 分钟事件</td><td>两条都写入 <code>attendance_events</code>，两条都 <code>should_notify=true</code>，两条都记录飞书发送。</td></tr>
+          <tr><td>写库关闭</td><td><code>ATTENDANCE_DB_ENABLED=false</code> 且 <code>ATTENDANCE_NOTIFY_DEDUP_ENABLED=true</code></td><td>不访问 DB、不做 2 小时查询，事件按旧逻辑发送飞书并正常 Ack。</td></tr>
+          <tr><td>陌生人每次提醒</td><td>构造两条不同陌生人事件</td><td>两条都 <code>should_notify=true</code>，日报列出两个图片链接。</td></tr>
+          <tr><td>日报接口</td><td><code>GET /api/attendance/reports/daily?date=YYYY-MM-DD</code></td><td>数量与 SQL 聚合一致。</td></tr>
+          <tr><td>日报写库</td><td><code>python3 scripts/generate_attendance_report.py --date YYYY-MM-DD --save-snapshot</code></td><td><code>daily_attendance_reports</code> 中存在对应日期快照。</td></tr>
+          <tr><td>日报飞书</td><td><code>--send-feishu</code> 或模拟 22:00 定时触发</td><td>飞书收到标题“每日入场情况统计”，正文数据来自日报快照字段。</td></tr>
+          <tr><td>DB 故障降级</td><td>关闭 DB 或使用无效 <code>DATABASE_URL</code></td><td>摄像头回调仍返回 Ack，raw JSON 仍落盘，日志/record 中出现 DB 错误摘要。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>14. 回滚与运维</h2>
+      <div class="grid">
+        <div class="callout">
+          <strong>代码回滚</strong>
+          <p>如果新逻辑异常，先设置 <code>ATTENDANCE_DB_ENABLED=false</code> 并重启服务，让事件流回到文件落盘 + 飞书通知模式。不要立即删表。</p>
+        </div>
+        <div class="callout warn">
+          <strong>表结构回滚</strong>
+          <p>只有确认不需要保留入场数据时，才执行 <code>alembic downgrade -1</code>。生产降级前必须先 <code>pg_dump</code>。</p>
+        </div>
+      </div>
+      <div class="callout warn" style="margin-top: 16px;">
+        <strong>日报回滚：</strong>如果 22:00 自动日报异常，先设置 <code>ATTENDANCE_DAILY_REPORT_ENABLED=false</code> 并重启服务，保留手动脚本用于补跑。已经发送到飞书的日报不自动撤回。
+      </div>
+      <h3>14.1 运维命令</h3>
+      <pre><code># 查看迁移状态
+DATABASE_URL=... alembic current
+
+# 升级到最新
+DATABASE_URL=... alembic upgrade head
+
+# 生成当前库备份
+pg_dump "$DATABASE_URL" --format=custom --file=/tmp/camera_face_guard_$(date +%Y%m%d_%H%M%S).dump
+
+# 临时关闭 DB 写入
+ATTENDANCE_DB_ENABLED=false</code></pre>
+    </section>
+  </main>
+</body>
+</html>
