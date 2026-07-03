@@ -68,10 +68,22 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 PY_FILES=(
+  app/db/__init__.py
+  app/db/attendance_repo.py
+  app/db/config.py
+  app/db/session.py
+  app/routers/attendance.py
   app/services/p6s_events.py
+  app/services/attendance.py
   app/services/feishu.py
+  app/services/reports.py
+  app/services/report_scheduler.py
+  app/main.py
   app/routers/camera.py
   scripts/cleanup_p6s_event_store.py
+  scripts/generate_attendance_report.py
+  scripts/import_attendance_people.py
+  scripts/validate_attendance_flow.py
   scripts/validate_p6s_event_flow.py
 )
 
@@ -164,14 +176,51 @@ fi
 
 if [[ "$SKIP_REMOTE_CHECK" -eq 0 ]]; then
   .venv/bin/python -m py_compile \
+    app/db/__init__.py \
+    app/db/attendance_repo.py \
+    app/db/config.py \
+    app/db/session.py \
+    app/routers/attendance.py \
+    app/routers/camera.py \
+    app/services/attendance.py \
     app/services/p6s_events.py \
     app/services/feishu.py \
-    app/routers/camera.py \
+    app/services/reports.py \
+    app/services/report_scheduler.py \
+    app/main.py \
     scripts/cleanup_p6s_event_store.py \
+    scripts/generate_attendance_report.py \
+    scripts/import_attendance_people.py \
+    scripts/validate_attendance_flow.py \
     scripts/validate_p6s_event_flow.py
   .venv/bin/python scripts/validate_p6s_event_flow.py
 else
   printf '[remote] skipping remote checks before restart\n'
+fi
+
+DATABASE_URL="$(
+  .venv/bin/python - <<'PY'
+from pathlib import Path
+
+env_path = Path("/etc/camera-face-guard/app.env")
+if env_path.exists():
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        if key.strip() == "DATABASE_URL":
+            print(value.strip().strip('"').strip("'"))
+            break
+PY
+)"
+export DATABASE_URL
+
+if [[ -n "$DATABASE_URL" ]]; then
+  printf '[remote] running alembic upgrade head\n'
+  .venv/bin/alembic upgrade head
+else
+  printf '[remote] DATABASE_URL is not configured; skipping alembic migration\n'
 fi
 
 if [[ "$SKIP_RESTART" -eq 0 ]]; then

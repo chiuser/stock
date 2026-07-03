@@ -74,6 +74,17 @@ FEISHU_WEBHOOK_URL=
 FEISHU_WEBHOOK_SECRET=
 FEISHU_APP_ID=
 FEISHU_APP_SECRET=
+
+DATABASE_URL=postgresql+psycopg://camera_face_guard:数据库密码@127.0.0.1:5432/camera_face_guard
+ATTENDANCE_DB_ENABLED=true
+ATTENDANCE_NOTIFY_DEDUP_ENABLED=true
+ATTENDANCE_NOTIFY_DEDUP_WINDOW_SECONDS=7200
+ATTENDANCE_REPORT_TIMEZONE=Asia/Shanghai
+ATTENDANCE_DAILY_REPORT_ENABLED=true
+ATTENDANCE_DAILY_REPORT_TIME=22:00
+ATTENDANCE_DAILY_REPORT_TITLE=每日入场情况统计
+ATTENDANCE_DB_CONNECT_TIMEOUT_SECONDS=3
+ATTENDANCE_SQL_ECHO=false
 ```
 
 配置说明：
@@ -85,6 +96,8 @@ FEISHU_APP_SECRET=
 - `P6S_EVENT_IMAGE_LINK_TTL_SECONDS=86400` 表示飞书里的图片查看链接有效期为 24 小时。
 - `P6S_EVENT_RETENTION_DAYS=30` 表示服务器事件图片和处理记录默认保留 30 天。
 - `FEISHU_WEBHOOK_URL` 和 `FEISHU_WEBHOOK_SECRET` 写真实值时只能写在远程 env 文件中，不能提交到仓库。
+- `ATTENDANCE_DB_ENABLED` 只控制是否写入 PostgreSQL；`ATTENDANCE_NOTIFY_DEDUP_ENABLED` 只控制非陌生人 2 小时提醒去重。两者不要混用。
+- `ATTENDANCE_DAILY_REPORT_TIME=22:00` 表示每天晚上 22:00 生成日报快照并发送标题为“每日入场情况统计”的飞书日报。
 
 保护环境变量文件：
 
@@ -116,7 +129,40 @@ sudo systemctl reload nginx
 http://服务器公网IP/camera
 ```
 
-## 六、摄像头事件配置
+## 六、PostgreSQL 与入场表迁移
+
+服务器需要先准备 PostgreSQL 数据库，再开启 `ATTENDANCE_DB_ENABLED=true`：
+
+```bash
+sudo apt install -y postgresql
+sudo -u postgres psql
+```
+
+在 `psql` 中创建用户和库，密码请使用随机长字符串，随后写入 `/etc/camera-face-guard/app.env` 的 `DATABASE_URL`：
+
+```sql
+create user camera_face_guard with password '请替换为随机密码';
+create database camera_face_guard owner camera_face_guard;
+\q
+```
+
+部署脚本会在远程 `/etc/camera-face-guard/app.env` 中发现 `DATABASE_URL` 后执行：
+
+```bash
+cd /opt/camera-face-guard
+.venv/bin/alembic upgrade head
+```
+
+也可以手工执行同一命令。迁移完成后，可运行数据库验证：
+
+```bash
+cd /opt/camera-face-guard
+.venv/bin/python scripts/validate_attendance_flow.py --env-file /etc/camera-face-guard/app.env
+```
+
+验证脚本会写入 `p6s-validation-*` 临时数据，验证 2 小时去重、关闭去重、陌生人记录和日报聚合，然后自动清理。
+
+## 七、摄像头事件配置
 
 在 P6S 摄像头事件上报配置 `/System/HTTPEventServerConfigV2` 中填写：
 
@@ -153,7 +199,7 @@ python3 scripts/configure_p6s_face_reco_rule.py
 python3 scripts/configure_p6s_face_reco_rule.py --apply
 ```
 
-## 七、验证
+## 八、验证
 
 ```bash
 sudo systemctl status camera-face-guard
@@ -182,6 +228,14 @@ curl -sS -o /dev/null -w 'PUBLIC_GET:%{http_code}\n' http://82.156.198.180/camer
 5. 点击飞书图片链接，确认能通过 `/api/p6s/event-images/view/<token>` 查看图片。
 6. 重复投递同一事件时，不应重复发送飞书通知。
 
+入场数据库和日报链路建议按这个顺序验证：
+
+1. `DATABASE_URL=... .venv/bin/alembic current` 确认迁移版本为 `20260703_0001`。
+2. `.venv/bin/python scripts/import_attendance_people.py --env-file /etc/camera-face-guard/app.env` 先 dry-run。
+3. 确认会员 244、教练 15、员工 4 后，再执行 `--apply` 写入人员基础表。
+4. `.venv/bin/python scripts/validate_attendance_flow.py --env-file /etc/camera-face-guard/app.env` 验证写库、去重和日报聚合。
+5. 真实识别后查询 `/api/attendance/reports/daily?date=YYYY-MM-DD` 验证当天统计。
+
 事件目录清理不自动启用。需要手动清理过期事件时，先 dry-run，再 apply：
 
 ```bash
@@ -189,7 +243,7 @@ python3 scripts/cleanup_p6s_event_store.py
 python3 scripts/cleanup_p6s_event_store.py --apply
 ```
 
-## 八、常见问题
+## 九、常见问题
 
 ### 登录提示密钥未配置
 
