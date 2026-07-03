@@ -310,7 +310,8 @@
             <li>所有真实 <code>FaceReco</code> 事件写入 <code>attendance_events</code>。</li>
             <li>会员、教练、员工、已匹配但未知分组、陌生人五类身份均可记录。</li>
             <li>会员、教练、员工和未知已匹配身份按同一人 2 小时内不重复飞书提醒。</li>
-            <li>陌生人每次识别都保存图片、生成 token 链接并发送飞书。</li>
+            <li>所有 <code>FaceReco</code> 事件都尽量保存图片并生成 token 链接，覆盖会员、教练、员工、未知已匹配身份和陌生人。</li>
+            <li>陌生人每次识别都发送飞书；非陌生人仍按 2 小时去重策略决定是否发送飞书。</li>
             <li>每天 22:00 按日期统计日报，写入 <code>daily_attendance_reports</code>，并发送飞书日报。</li>
             <li>日报标题固定为“每日入场情况统计”，内容按照日报快照字段组织。</li>
           </ul>
@@ -594,7 +595,7 @@ create index idx_strangers_first_seen
           <tr><td><code>person_ref_id</code></td><td>已知人员使用 FaceUUID；陌生人使用 <code>stranger_id</code> 转字符串；解析错误但属于已匹配未知身份时使用 <code>unknown:&lt;event_dedupe_key&gt;</code>。</td></tr>
           <tr><td><code>delivery_count</code></td><td>同一 <code>event_dedupe_key</code> 被摄像头重复投递时自增。重复投递不产生新的入场统计。</td></tr>
           <tr><td><code>should_notify</code></td><td>策略层计算结果，不代表飞书一定发送成功。发送结果看 <code>feishu_notifications.send_status</code>。</td></tr>
-          <tr><td><code>image_token_hash</code></td><td>沿用现有 token 链接机制，不保存 token 明文。若当前 <code>image_links</code> 模块不暴露 hash，则该字段可为空。</td></tr>
+          <tr><td><code>image_token_hash</code></td><td>沿用现有 token 链接机制，不保存 token 明文。所有 <code>FaceReco</code> 事件只要成功提取图片，都应写入 <code>image_path</code>、<code>image_url</code> 和 token hash。</td></tr>
         </tbody>
       </table>
     </section>
@@ -656,8 +657,9 @@ class AttendanceInsertResult:
         <div class="step"><code>p6s_events.handle_event()</code> 生成 <code>EventIdentity</code> 并先落 raw JSON。</div>
         <div class="step">如果是 heartbeat 或非 <code>FaceReco</code>，保持现有逻辑，不写入入场表。</div>
         <div class="step">如果是重复投递，尝试执行 <code>attendance_repo.increment_delivery_count()</code>，然后返回现有 Ack，不发飞书。</div>
-        <div class="step">如果是已知人员，解析 <code>MatchedPerson</code> 和角色，构造 <code>AttendanceEventDraft</code>。</div>
-        <div class="step">如果是陌生人，先保存图片、创建 token 链接，再构造 <code>AttendanceEventDraft</code>。</div>
+        <div class="step">所有 <code>FaceReco</code> 分支先尝试从 <code>CaptureImage</code>、<code>BackgroundImage</code> 或 <code>recognizeImage</code> 保存图片、创建 token 链接。</div>
+        <div class="step">如果是已知人员，解析 <code>MatchedPerson</code> 和角色，并带上图片信息构造 <code>AttendanceEventDraft</code>。</div>
+        <div class="step">如果是陌生人，构造 <code>AttendanceEventDraft</code> 时同样带上图片路径和 token 链接。</div>
         <div class="step"><code>attendance.record_event()</code> 在事务中 upsert 人员、按独立开关决定是否计算 2 小时去重、插入入场事件。</div>
         <div class="step">如果 <code>should_notify=true</code>，调用现有 <code>feishu.py</code> 发送；如果被抑制，则不调用飞书。</div>
         <div class="step">写入 <code>feishu_notifications</code>：发送成功、失败或 suppressed 都要有记录。</div>
@@ -957,10 +959,10 @@ offset :offset;</code></pre>
           <tr><th>场景</th><th>DB 记录</th><th>飞书行为</th></tr>
         </thead>
         <tbody>
-          <tr><td>会员/教练/员工首次或 2 小时外识别</td><td><code>should_notify=true</code>、<code>notification_suppressed=false</code></td><td>发送对应标题：会员/教练/员工入场提醒。</td></tr>
-          <tr><td>会员/教练/员工 2 小时内重复识别</td><td><code>should_notify=false</code>、<code>notification_suppressed=true</code>、<code>suppressed_reason=known_person_2h_window</code></td><td>不发送飞书，写 <code>feishu_notifications.send_status=suppressed</code>。</td></tr>
+          <tr><td>会员/教练/员工首次或 2 小时外识别</td><td><code>should_notify=true</code>、<code>notification_suppressed=false</code>，同时写入图片路径和 token 链接</td><td>发送对应标题：会员/教练/员工入场提醒，并包含“查看图片”链接。</td></tr>
+          <tr><td>会员/教练/员工 2 小时内重复识别</td><td><code>should_notify=false</code>、<code>notification_suppressed=true</code>、<code>suppressed_reason=known_person_2h_window</code>，仍写入图片路径和 token 链接</td><td>不发送飞书，写 <code>feishu_notifications.send_status=suppressed</code>。</td></tr>
           <tr><td><code>ATTENDANCE_NOTIFY_DEDUP_ENABLED=false</code></td><td>仍写入 <code>attendance_events</code>；非陌生人重复识别也保持 <code>should_notify=true</code>、<code>notification_suppressed=false</code></td><td>非陌生人每次都发送飞书。此开关不影响 <code>ATTENDANCE_DB_ENABLED</code>。</td></tr>
-          <tr><td>匹配成功但无法映射分组</td><td><code>person_type=unknown_known</code>，同样执行 2 小时去重</td><td>2 小时外发送“人员入场提醒”。</td></tr>
+          <tr><td>匹配成功但无法映射分组</td><td><code>person_type=unknown_known</code>，同样执行 2 小时去重，并写入图片路径和链接</td><td>2 小时外发送“人员入场提醒”，并包含“查看图片”链接。</td></tr>
           <tr><td>陌生人</td><td>每次写 <code>strangers</code> 和 <code>attendance_events</code>，<code>should_notify=true</code></td><td>每次发送“发现陌生人入场”，包含图片查看链接。</td></tr>
           <tr><td>摄像头重复投递同一 dedupe key</td><td>不新增入场，只自增 <code>delivery_count</code></td><td>不重复发送。</td></tr>
           <tr><td><code>ATTENDANCE_DB_ENABLED=false</code></td><td>不写 DB，也不查询去重窗口</td><td>fail-open，沿用现有飞书发送行为；这个开关只影响写库，不代表去重策略开关。</td></tr>
@@ -1283,7 +1285,7 @@ python3 scripts/generate_attendance_report.py --date 2026-07-03 --save-snapshot 
         <tbody>
           <tr><td>迁移检查</td><td><code>DATABASE_URL=... alembic upgrade head</code></td><td>7 张表和索引创建成功。</td></tr>
           <tr><td>静态检查</td><td><code>python3 -m py_compile app/db/*.py app/services/*.py app/routers/*.py scripts/*.py</code></td><td>无语法错误。</td></tr>
-          <tr><td>fixture 事件</td><td><code>python3 scripts/validate_attendance_flow.py</code></td><td>五类事件均写入 DB；陌生人生成图片链接；重复投递不新增入场。</td></tr>
+          <tr><td>fixture 事件</td><td><code>python3 scripts/validate_attendance_flow.py</code></td><td>五类事件均写入 DB；所有携带图片的 <code>FaceReco</code> 事件生成图片链接；重复投递不新增入场。</td></tr>
           <tr><td>2 小时去重</td><td>同一会员构造两条间隔 10 分钟事件</td><td>两条 <code>attendance_events</code> 均存在，第二条 <code>notification_suppressed=true</code>。</td></tr>
           <tr><td>去重关闭</td><td><code>ATTENDANCE_DB_ENABLED=true</code> 且 <code>ATTENDANCE_NOTIFY_DEDUP_ENABLED=false</code>，同一会员构造两条间隔 10 分钟事件</td><td>两条都写入 <code>attendance_events</code>，两条都 <code>should_notify=true</code>，两条都记录飞书发送。</td></tr>
           <tr><td>写库关闭</td><td><code>ATTENDANCE_DB_ENABLED=false</code> 且 <code>ATTENDANCE_NOTIFY_DEDUP_ENABLED=true</code></td><td>不访问 DB、不做 2 小时查询，事件按旧逻辑发送飞书并正常 Ack。</td></tr>

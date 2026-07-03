@@ -2,7 +2,7 @@
 
 The script is intentionally local-only: it never talks to the camera, Feishu,
 or the remote server. By default it prints a dry-run report; pass --apply to
-delete expired day directories under raw/, records/, strangers/, and links/.
+delete expired day directories under raw/, records/, faces/, strangers/, and links/.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.services import event_store
 
-EVENT_SUBDIRS = ("raw", "records", "strangers", "links")
+EVENT_SUBDIRS = ("raw", "records", "faces", "strangers", "links")
 DAY_FORMAT = "%Y-%m-%d"
 
 

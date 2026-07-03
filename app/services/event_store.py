@@ -50,6 +50,7 @@ class EventStorePaths:
     day: str
     raw_dir: Path
     records_dir: Path
+    faces_dir: Path
     strangers_dir: Path
     links_dir: Path
 
@@ -129,12 +130,14 @@ def ensure_event_store_dirs(
         day=event_day,
         raw_dir=store_root / "raw" / event_day,
         records_dir=store_root / "records" / event_day,
+        faces_dir=store_root / "faces" / event_day,
         strangers_dir=store_root / "strangers" / event_day,
         links_dir=store_root / "links" / event_day,
     )
     for directory in (
         paths.raw_dir,
         paths.records_dir,
+        paths.faces_dir,
         paths.strangers_dir,
         paths.links_dir,
     ):
@@ -273,6 +276,27 @@ def save_stranger_image(
     root: Path | str | None = None,
     max_bytes: int | None = None,
 ) -> StoredImage:
+    return save_face_image(
+        identity,
+        image_bytes,
+        source=source,
+        expected_md5=expected_md5,
+        root=root,
+        max_bytes=max_bytes,
+        category="strangers",
+    )
+
+
+def save_face_image(
+    identity: EventIdentity,
+    image_bytes: bytes,
+    *,
+    source: str,
+    expected_md5: str | None = None,
+    root: Path | str | None = None,
+    max_bytes: int | None = None,
+    category: str = "faces",
+) -> StoredImage:
     byte_limit = max_bytes if max_bytes is not None else _max_image_bytes()
     if not image_bytes:
         raise UnsupportedImageTypeError("image is empty")
@@ -284,13 +308,14 @@ def save_stranger_image(
     expected = (expected_md5 or identity.picture_md5 or "").strip().lower()
     md5_ok = actual_md5 == expected if expected else None
     paths = ensure_event_store_dirs(day=identity.event_day, root=root)
-    filename = _stranger_image_filename(
+    target_dir = _image_target_dir(paths, category)
+    filename = _face_image_filename(
         identity=identity,
         image_md5=expected or actual_md5,
         fallback_hash=hashlib.sha256(image_bytes).hexdigest(),
         extension=extension,
     )
-    path = paths.strangers_dir / filename
+    path = target_dir / filename
     _atomic_write_bytes(path, image_bytes)
     return StoredImage(
         path=path,
@@ -301,6 +326,14 @@ def save_stranger_image(
         md5_ok=md5_ok,
         source=source,
     )
+
+
+def _image_target_dir(paths: EventStorePaths, category: str) -> Path:
+    if category == "faces":
+        return paths.faces_dir
+    if category == "strangers":
+        return paths.strangers_dir
+    raise EventStoreError(f"unsupported face image category: {category}")
 
 
 def detect_image_type(image_bytes: bytes) -> tuple[str, str]:
@@ -336,7 +369,7 @@ def _stored_file(path: Path, *, root: Path) -> StoredFile:
     )
 
 
-def _stranger_image_filename(
+def _face_image_filename(
     *,
     identity: EventIdentity,
     image_md5: str,

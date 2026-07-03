@@ -126,6 +126,8 @@ def notify_known_face(
     event_id: str | int | None,
     role_name: str = "",
     title: str = "",
+    storage_path: str | None = None,
+    view_url: str | None = None,
     config: FeishuConfig | None = None,
 ) -> dict[str, Any]:
     """Notify Feishu about a successfully matched face."""
@@ -140,6 +142,8 @@ def notify_known_face(
             event_id=event_id,
             role_name=role_name,
             title=title,
+            storage_path=storage_path,
+            view_url=view_url,
         ),
         cfg,
     )
@@ -154,6 +158,8 @@ def build_known_face_post(
     event_id: str | int | None,
     role_name: str = "",
     title: str = "",
+    storage_path: str | None = None,
+    view_url: str | None = None,
 ) -> dict[str, Any]:
     """Build the post payload for a successfully matched face."""
 
@@ -167,6 +173,10 @@ def build_known_face_post(
     if role_name:
         # Put the user-facing role at the end so existing field order stays stable.
         lines.append(_text_line("身份类型", role_name))
+    if storage_path:
+        lines.append(_text_line("保存位置", storage_path))
+    if view_url:
+        lines.append(_link_line("查看图片", view_url))
     return build_post_payload(title or "人员入场提醒", lines)
 
 
@@ -239,6 +249,8 @@ def notify_event_error(
     event_time: str = "",
     event_id: str | int | None = None,
     raw_event_path: str = "",
+    storage_path: str | None = None,
+    view_url: str | None = None,
     config: FeishuConfig | None = None,
 ) -> dict[str, Any]:
     """Notify Feishu about an event handling error without exposing stack traces."""
@@ -251,6 +263,8 @@ def notify_event_error(
             event_time=event_time,
             event_id=event_id,
             raw_event_path=raw_event_path,
+            storage_path=storage_path,
+            view_url=view_url,
         ),
         cfg,
     )
@@ -263,6 +277,8 @@ def build_event_error_post(
     event_time: str = "",
     event_id: str | int | None = None,
     raw_event_path: str = "",
+    storage_path: str | None = None,
+    view_url: str | None = None,
 ) -> dict[str, Any]:
     """Build the post payload for an event handling error."""
 
@@ -274,6 +290,10 @@ def build_event_error_post(
     ]
     if raw_event_path:
         lines.append(_text_line("原始事件", raw_event_path))
+    if storage_path:
+        lines.append(_text_line("保存位置", storage_path))
+    if view_url:
+        lines.append(_link_line("查看图片", view_url))
     return build_post_payload("人脸识别事件处理异常", lines)
 
 

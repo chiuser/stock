@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import os
 import subprocess
@@ -23,6 +24,13 @@ FIXTURE_DIR = PROJECT_ROOT / "tests" / "fixtures"
 def load_fixture(name: str) -> dict:
     with (FIXTURE_DIR / name).open(encoding="utf-8") as f:
         return json.load(f)
+
+
+def with_capture_image(payload: dict) -> dict:
+    payload_copy = copy.deepcopy(payload)
+    image_source = load_fixture("p6s_face_reco_stranger.json")["info"]["CaptureImage"]
+    payload_copy.setdefault("info", {})["CaptureImage"] = image_source
+    return payload_copy
 
 
 @contextmanager
@@ -59,7 +67,7 @@ async def validate() -> None:
             path="/api/p6s/events/test-secret",
         )
 
-        known = load_fixture("p6s_face_reco_known.json")
+        known = with_capture_image(load_fixture("p6s_face_reco_known.json"))
         known_result = await p6s_events.handle_event(
             known,
             request_meta=request_meta,
@@ -69,6 +77,15 @@ async def validate() -> None:
         assert known_result.result == "known"
         assert known_result.ack["operator"] == "FaceReco-Ack"
         assert known_result.ack["info"]["uniqueId"] == "3427976339944670"
+        assert known_result.image is not None
+        assert known_result.link is not None
+        assert "/faces/" in str(known_result.image.path)
+        assert known_result.record_file is not None
+        known_record_text = known_result.record_file.path.read_text(encoding="utf-8")
+        known_record = json.loads(known_record_text)
+        assert known_record["image"]["status"] == "saved"
+        assert known_record["link"] is not None
+        assert known_result.link.token not in known_record_text
 
         for fixture, role, role_name, title in (
             ("p6s_face_reco_member.json", "members", "会员", "会员入场提醒"),
@@ -149,10 +166,17 @@ def validate_feishu_payloads() -> None:
         event_id="member-001",
         role_name="会员",
         title="会员入场提醒",
+        storage_path="/var/lib/camera-face-guard/p6s_events/faces/2026-07-02/member.jpg",
+        view_url="http://example.test/api/p6s/event-images/view/member-token",
     )
     assert _post_title(known_payload) == "会员入场提醒"
     assert any(
         item.get("text") == "身份类型: 会员"
+        for line in _post_lines(known_payload)
+        for item in line
+    )
+    assert any(
+        item.get("tag") == "a" and item.get("text") == "查看图片"
         for line in _post_lines(known_payload)
         for item in line
     )

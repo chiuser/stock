@@ -40,6 +40,15 @@ class DecodedEventImage:
 
 
 @dataclass(frozen=True)
+class SavedFaceRecoImage:
+    stored_image: event_store.StoredImage | None
+    created_link: image_links.CreatedImageLink | None
+    image_record: dict[str, Any]
+    link_record: dict[str, Any] | None
+    notify_message: str
+
+
+@dataclass(frozen=True)
 class EventHandleResult:
     ack: dict[str, Any]
     result: str
@@ -190,11 +199,19 @@ def _handle_known_face(
     root: Path | str | None,
     notify: bool,
 ) -> EventHandleResult:
+    info = payload.get("info") or {}
     person = _parse_matched_person(person_info_value)
     person_type = attendance.person_type_for_role(person.role.code)
     person_ref_id = None if person.person_id_missing else person.person_id
     if person_type in {"member", "coach", "staff"} and not person_ref_id:
         person_type = "unknown_known"
+    face_image = _save_face_reco_image(
+        info,
+        identity=identity,
+        root=root,
+        category="faces",
+        error_prefix="已匹配人脸图片",
+    )
     draft = attendance.build_known_draft(
         identity=identity,
         raw_file=raw_file,
@@ -205,9 +222,17 @@ def _handle_known_face(
         face_group_id=person.role.group_id,
         face_group_name=person.role.group_name,
         match_number=match_number,
+        stored_image=face_image.stored_image,
+        image_url=face_image.created_link.view_url if face_image.created_link else None,
+        token_hash=face_image.created_link.token_hash if face_image.created_link else None,
+        image_source=face_image.image_record.get("source", ""),
     )
     db_result = attendance.safe_record_event(draft)
-    ack = _face_reco_ack(payload, matched_person=person, stored_image="")
+    ack = _face_reco_ack(
+        payload,
+        matched_person=person,
+        stored_image=str(face_image.stored_image.path) if face_image.stored_image else "",
+    )
     feishu_result = _notification_skipped("known notification disabled")
     should_send = notify and _notify_known_enabled() and db_result.should_notify
     skip_reason = db_result.suppressed_reason
@@ -221,6 +246,8 @@ def _handle_known_face(
             event_id=identity.event_id,
             role_name=person.role.name if person.role.code != "unknown" else "",
             title=person.role.notification_title,
+            storage_path=str(face_image.stored_image.path) if face_image.stored_image else "",
+            view_url=face_image.created_link.view_url if face_image.created_link else "",
         )
     else:
         skip_reason = skip_reason or ("notify disabled" if not notify else "known notification disabled")
@@ -250,8 +277,8 @@ def _handle_known_face(
                 "person_group_name": person.role.group_name,
                 "notification_title": person.role.notification_title,
             },
-            "image": {"status": "not_saved"},
-            "link": None,
+            "image": face_image.image_record,
+            "link": face_image.link_record,
             "feishu": feishu_result,
             "attendance": db_result.to_dict(),
             "attendance_notification": notification_record,
@@ -265,6 +292,8 @@ def _handle_known_face(
         identity=identity,
         raw_file=raw_file,
         record_file=record_file,
+        image=face_image.stored_image,
+        link=face_image.created_link,
         feishu_result=feishu_result,
         attendance_result=db_result.to_dict(),
     )
@@ -281,58 +310,22 @@ def _handle_stranger(
     match_number_missing: bool,
 ) -> EventHandleResult:
     info = payload.get("info") or {}
-    decoded_image, image_status, image_message = _decode_event_image(info)
-    stored_image: event_store.StoredImage | None = None
-    created_link: image_links.CreatedImageLink | None = None
     feishu_result: dict[str, Any]
-    image_record: dict[str, Any]
-    link_record: dict[str, Any] | None = None
-    notify_message = ""
-
-    if decoded_image:
-        try:
-            stored_image = event_store.save_stranger_image(
-                identity,
-                decoded_image.image_bytes,
-                source=decoded_image.source,
-                expected_md5=decoded_image.expected_md5,
-                root=root,
-            )
-            created_link = image_links.create_image_link(
-                record_dedupe_key=identity.dedupe_key,
-                relative_path=stored_image.relative_path,
-                content_type=stored_image.content_type,
-                created_at=identity.received_at,
-                root=root,
-            )
-            image_record = stored_image.to_dict()
-            link_record = _link_to_dict(created_link)
-        except event_store.UnsupportedImageTypeError as exc:
-            image_status = _image_error_status(str(exc))
-            image_record = {
-                "status": image_status,
-                "source": decoded_image.source,
-                "error": str(exc),
-            }
-            notify_message = f"未匹配人脸图片保存失败: {image_status}"
-        except Exception as exc:
-            image_record = {
-                "status": "save_failed",
-                "source": decoded_image.source,
-                "error": type(exc).__name__,
-            }
-            notify_message = "未匹配人脸图片保存或链接生成失败"
-    else:
-        image_record = {"status": image_status, "source": "", "error": image_message}
-        notify_message = f"未匹配人脸图片不可用: {image_status}"
+    face_image = _save_face_reco_image(
+        info,
+        identity=identity,
+        root=root,
+        category="strangers",
+        error_prefix="未匹配人脸图片",
+    )
 
     draft = attendance.build_stranger_draft(
         identity=identity,
         raw_file=raw_file,
-        stored_image=stored_image,
-        image_url=created_link.view_url if created_link else None,
-        token_hash=created_link.token_hash if created_link else None,
-        image_source=image_record.get("source", ""),
+        stored_image=face_image.stored_image,
+        image_url=face_image.created_link.view_url if face_image.created_link else None,
+        token_hash=face_image.created_link.token_hash if face_image.created_link else None,
+        image_source=face_image.image_record.get("source", ""),
         match_number=match_number,
     )
     db_result = attendance.safe_record_event(draft)
@@ -341,20 +334,20 @@ def _handle_stranger(
         feishu_result = _notification_skipped(
             db_result.suppressed_reason or ("notify disabled" if not notify else "attendance notification suppressed")
         )
-    elif stored_image and created_link:
+    elif face_image.stored_image and face_image.created_link:
         feishu_result = _notify_unknown(
             notify=notify,
-            image_path=stored_image.path,
+            image_path=face_image.stored_image.path,
             device_sn=identity.serial_number,
             event_time=identity.event_time,
             event_id=identity.event_id,
-            storage_path=str(stored_image.path),
-            view_url=created_link.view_url,
+            storage_path=str(face_image.stored_image.path),
+            view_url=face_image.created_link.view_url,
         )
     else:
         feishu_result = _notify_error(
             notify=notify,
-            message=notify_message or "未匹配人脸图片不可用",
+            message=face_image.notify_message or "未匹配人脸图片不可用",
             identity=identity,
             raw_event_path=raw_file.path,
         )
@@ -370,7 +363,7 @@ def _handle_stranger(
     ack = _face_reco_ack(
         payload,
         matched_person=None,
-        stored_image=str(stored_image.path) if stored_image else "",
+        stored_image=str(face_image.stored_image.path) if face_image.stored_image else "",
     )
     record_file = _write_record(
         identity,
@@ -378,8 +371,8 @@ def _handle_stranger(
             "result": "stranger",
             "match_number_missing": match_number_missing,
             "matched_person": {"name": "", "id": ""},
-            "image": image_record,
-            "link": link_record,
+            "image": face_image.image_record,
+            "link": face_image.link_record,
             "feishu": feishu_result,
             "attendance": db_result.to_dict(),
             "attendance_notification": notification_record,
@@ -393,8 +386,8 @@ def _handle_stranger(
         identity=identity,
         raw_file=raw_file,
         record_file=record_file,
-        image=stored_image,
-        link=created_link,
+        image=face_image.stored_image,
+        link=face_image.created_link,
         feishu_result=feishu_result,
         attendance_result=db_result.to_dict(),
     )
@@ -410,11 +403,27 @@ def _handle_parse_error(
     message: str,
     match_number: int | None,
 ) -> EventHandleResult:
-    ack = _face_reco_ack(payload, matched_person=None, stored_image="")
+    info = payload.get("info") or {}
+    face_image = _save_face_reco_image(
+        info,
+        identity=identity,
+        root=root,
+        category="faces",
+        error_prefix="人脸识别事件图片",
+    )
+    ack = _face_reco_ack(
+        payload,
+        matched_person=None,
+        stored_image=str(face_image.stored_image.path) if face_image.stored_image else "",
+    )
     draft = attendance.build_parse_error_draft(
         identity=identity,
         raw_file=raw_file,
         match_number=match_number,
+        stored_image=face_image.stored_image,
+        image_url=face_image.created_link.view_url if face_image.created_link else None,
+        token_hash=face_image.created_link.token_hash if face_image.created_link else None,
+        image_source=face_image.image_record.get("source", ""),
     )
     db_result = attendance.safe_record_event(draft)
     should_send = notify and db_result.should_notify
@@ -424,6 +433,8 @@ def _handle_parse_error(
             message=message,
             identity=identity,
             raw_event_path=raw_file.path,
+            storage_path=str(face_image.stored_image.path) if face_image.stored_image else "",
+            view_url=face_image.created_link.view_url if face_image.created_link else "",
         )
     else:
         feishu_result = _notification_skipped(
@@ -442,8 +453,8 @@ def _handle_parse_error(
             "result": "parse_error",
             "error": message,
             "matched_person": {"name": "", "id": ""},
-            "image": {"status": "not_saved"},
-            "link": None,
+            "image": face_image.image_record,
+            "link": face_image.link_record,
             "feishu": feishu_result,
             "attendance": db_result.to_dict(),
             "attendance_notification": notification_record,
@@ -457,6 +468,8 @@ def _handle_parse_error(
         identity=identity,
         raw_file=raw_file,
         record_file=record_file,
+        image=face_image.stored_image,
+        link=face_image.created_link,
         feishu_result=feishu_result,
         attendance_result=db_result.to_dict(),
     )
@@ -660,6 +673,74 @@ def _decode_event_image(info: dict[str, Any]) -> tuple[DecodedEventImage | None,
     return None, "missing", "no image field"
 
 
+def _save_face_reco_image(
+    info: dict[str, Any],
+    *,
+    identity: event_store.EventIdentity,
+    root: Path | str | None,
+    category: str,
+    error_prefix: str,
+) -> SavedFaceRecoImage:
+    decoded_image, image_status, image_message = _decode_event_image(info)
+    if not decoded_image:
+        return SavedFaceRecoImage(
+            stored_image=None,
+            created_link=None,
+            image_record={"status": image_status, "source": "", "error": image_message},
+            link_record=None,
+            notify_message=f"{error_prefix}不可用: {image_status}",
+        )
+
+    try:
+        stored_image = event_store.save_face_image(
+            identity,
+            decoded_image.image_bytes,
+            source=decoded_image.source,
+            expected_md5=decoded_image.expected_md5,
+            root=root,
+            category=category,
+        )
+        created_link = image_links.create_image_link(
+            record_dedupe_key=identity.dedupe_key,
+            relative_path=stored_image.relative_path,
+            content_type=stored_image.content_type,
+            created_at=identity.received_at,
+            root=root,
+        )
+        return SavedFaceRecoImage(
+            stored_image=stored_image,
+            created_link=created_link,
+            image_record=stored_image.to_dict(),
+            link_record=_link_to_dict(created_link),
+            notify_message="",
+        )
+    except event_store.UnsupportedImageTypeError as exc:
+        image_status = _image_error_status(str(exc))
+        return SavedFaceRecoImage(
+            stored_image=None,
+            created_link=None,
+            image_record={
+                "status": image_status,
+                "source": decoded_image.source,
+                "error": str(exc),
+            },
+            link_record=None,
+            notify_message=f"{error_prefix}保存失败: {image_status}",
+        )
+    except Exception as exc:
+        return SavedFaceRecoImage(
+            stored_image=None,
+            created_link=None,
+            image_record={
+                "status": "save_failed",
+                "source": decoded_image.source,
+                "error": type(exc).__name__,
+            },
+            link_record=None,
+            notify_message=f"{error_prefix}保存或链接生成失败",
+        )
+
+
 def _ack_for_payload(
     payload: dict[str, Any],
     matched_person: MatchedPerson | None,
@@ -793,6 +874,8 @@ def _notify_error(
     message: str,
     identity: event_store.EventIdentity,
     raw_event_path: Path,
+    storage_path: str = "",
+    view_url: str = "",
 ) -> dict[str, Any]:
     if not notify:
         return _notification_skipped("notify disabled")
@@ -803,6 +886,8 @@ def _notify_error(
         event_time=identity.event_time,
         event_id=identity.event_id,
         raw_event_path=str(raw_event_path),
+        storage_path=storage_path,
+        view_url=view_url,
     )
 
 

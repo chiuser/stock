@@ -338,6 +338,10 @@
           <span class="tag warn">陌生人规则</span>
           <p>陌生人不做 2 小时去重。只要识别到陌生人，就保存图片链接、写入记录、发送飞书。</p>
         </div>
+        <div class="card">
+          <span class="tag good">图片规则</span>
+          <p>所有 <code>FaceReco</code> 事件都尽量保存抓拍图并生成 token 图片链接。非陌生人即使被 2 小时去重抑制，也仍然写入图片路径和链接，只是不发送飞书。</p>
+        </div>
       </div>
     </section>
 
@@ -346,7 +350,7 @@
       <div class="flow">
         <div class="step">摄像头向服务器推送 <code>FaceReco</code> 事件，服务端保留现有 raw JSON 落盘能力。</div>
         <div class="step">事件服务解析人员信息、分组、图片字段和 dedupe key。</div>
-        <div class="step">如果是陌生人并且事件携带图片，继续保存图片并生成 token 查看链接。</div>
+        <div class="step">只要 <code>FaceReco</code> 事件携带图片，无论是否匹配成功，都保存图片并生成 token 查看链接。</div>
         <div class="step">服务端写入人员主表；已存在则只更新姓名、分组、最近识别时间等轻量字段。</div>
         <div class="step">服务端写入 <code>attendance_events</code>，记录这次入场、图片、是否重复提醒、是否发送飞书。</div>
         <div class="step">如果启用提醒去重，则根据 2 小时窗口计算是否发送飞书；如果关闭提醒去重，则写库但每次发送飞书。发送结果写入 <code>feishu_notifications</code>。</div>
@@ -445,7 +449,7 @@
           <tr><td><code>face_group_name</code></td><td><code>text</code></td><td>事件中的脸库名称或本地映射名称。</td></tr>
           <tr><td><code>match_number</code></td><td><code>integer</code></td><td>摄像头 matchNumber。</td></tr>
           <tr><td><code>image_source</code></td><td><code>text</code></td><td><code>CaptureImage</code>、<code>BackgroundImage</code>、<code>recognizeImage</code> 等。</td></tr>
-          <tr><td><code>image_path</code></td><td><code>text</code></td><td>本次事件保存的图片路径，主要用于陌生人。</td></tr>
+          <tr><td><code>image_path</code></td><td><code>text</code></td><td>本次事件保存的图片路径，覆盖会员、教练、员工、未知已匹配身份和陌生人。</td></tr>
           <tr><td><code>image_url</code></td><td><code>text</code></td><td>本次事件图片查看链接。</td></tr>
           <tr><td><code>raw_event_path</code></td><td><code>text</code></td><td>现有 raw JSON 文件路径。</td></tr>
           <tr><td><code>is_duplicate_delivery</code></td><td><code>boolean not null default false</code></td><td>是否为摄像头重复投递；重复投递不新增入场，通常只更新投递次数。</td></tr>
@@ -636,6 +640,16 @@ create table daily_attendance_reports (
   notification_suppressed = false
   发送飞书</code></pre>
 
+      <h3>6.3 图片链接全覆盖</h3>
+      <pre><code>所有 FaceReco 事件：
+  如果事件携带 CaptureImage / BackgroundImage / recognizeImage
+  保存图片和 token 链接
+  写入 attendance_events.image_path / image_url
+
+非陌生人：
+  仍按 2 小时窗口决定 should_notify
+  被去重抑制时不发飞书，但记录中仍保留图片链接</code></pre>
+
       <h3>6.3 摄像头重复投递</h3>
       <p>如果相同 <code>event_dedupe_key</code> 再次到达，视为 HTTP 重试或缓存重放，不创建新的入场事件，不重复发送飞书，只更新 <code>delivery_count</code>。这和“2 小时内不重复提醒”是两个概念。</p>
     </section>
@@ -749,7 +763,8 @@ order by event_time;</code></pre>
         <li>表结构上线前先执行迁移脚本；回滚代码时不删除表，避免丢历史入场数据。</li>
         <li>飞书发送失败时，入场记录仍保存，通知表记录 <code>failed</code>，后续是否补发另行设计。</li>
         <li>日报飞书发送失败时，日报快照仍保留；首版只记录失败，不自动补发，避免重复日报。</li>
-        <li>陌生人图片链接仍沿用现有 token 机制，不在 DB 中保存 token 明文。</li>
+        <li>所有 FaceReco 图片链接仍沿用现有 token 机制，不在 DB 中保存 token 明文。</li>
+        <li>图片链接全覆盖不改变非陌生人的 2 小时去重策略；被去重抑制的非陌生人仍写入图片路径和链接，但不发送飞书。</li>
       </ul>
     </section>
   </main>

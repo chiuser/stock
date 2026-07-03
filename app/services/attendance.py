@@ -107,7 +107,17 @@ def build_known_draft(
     face_group_id: str | None,
     face_group_name: str | None,
     match_number: int | None,
+    stored_image: event_store.StoredImage | None = None,
+    image_url: str | None = None,
+    token_hash: str | None = None,
+    image_source: str = "",
 ) -> AttendanceEventDraft:
+    image = _attendance_image(
+        stored_image=stored_image,
+        image_url=image_url,
+        token_hash=token_hash,
+        image_source=image_source,
+    )
     return AttendanceEventDraft(
         event_dedupe_key=identity.dedupe_key,
         camera_serial_number=identity.serial_number,
@@ -123,7 +133,7 @@ def build_known_draft(
             face_group_name=face_group_name,
         ),
         match_number=match_number,
-        image=None,
+        image=image,
         raw_event_path=str(raw_file.path),
     )
 
@@ -171,7 +181,17 @@ def build_parse_error_draft(
     identity: event_store.EventIdentity,
     raw_file: event_store.StoredFile,
     match_number: int | None,
+    stored_image: event_store.StoredImage | None = None,
+    image_url: str | None = None,
+    token_hash: str | None = None,
+    image_source: str = "",
 ) -> AttendanceEventDraft:
+    image = _attendance_image(
+        stored_image=stored_image,
+        image_url=image_url,
+        token_hash=token_hash,
+        image_source=image_source,
+    )
     return AttendanceEventDraft(
         event_dedupe_key=identity.dedupe_key,
         camera_serial_number=identity.serial_number,
@@ -187,7 +207,7 @@ def build_parse_error_draft(
             face_group_name=None,
         ),
         match_number=match_number,
-        image=None,
+        image=image,
         raw_event_path=str(raw_file.path),
     )
 
@@ -334,6 +354,23 @@ def _notify_decision(
             reference_event_id=int(recent["event_id"]),
         )
     return NotifyDecision(should_notify=True, suppressed=False)
+
+
+def _attendance_image(
+    *,
+    stored_image: event_store.StoredImage | None,
+    image_url: str | None,
+    token_hash: str | None,
+    image_source: str,
+) -> AttendanceImage | None:
+    if not (stored_image or image_url or image_source):
+        return None
+    return AttendanceImage(
+        source=image_source,
+        path=str(stored_image.path) if stored_image else None,
+        url=image_url,
+        token_hash=token_hash,
+    )
 
 
 def _attendance_event_values(
