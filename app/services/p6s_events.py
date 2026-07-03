@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.services import event_store, feishu, image_links
+from app.services import attendance, event_store, feishu, image_links
 
 
 @dataclass(frozen=True)
@@ -49,6 +49,7 @@ class EventHandleResult:
     image: event_store.StoredImage | None = None
     link: image_links.CreatedImageLink | None = None
     feishu_result: dict[str, Any] | None = None
+    attendance_result: dict[str, Any] | None = None
     duplicate: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -61,6 +62,7 @@ class EventHandleResult:
             "image": self.image.to_dict() if self.image else None,
             "link": _link_to_dict(self.link) if self.link else None,
             "feishu": self.feishu_result,
+            "attendance": self.attendance_result,
             "ack": self.ack,
         }
 
@@ -81,12 +83,14 @@ async def handle_event(
     )
     duplicate = event_store.processing_record_exists(identity, root=root)
     if duplicate:
+        attendance_result = attendance.safe_increment_delivery_count(identity.dedupe_key)
         return EventHandleResult(
             ack=_ack_for_payload(payload, None, None),
             result="duplicate",
             identity=identity,
             raw_file=raw_file,
             feishu_result=_notification_skipped("duplicate event"),
+            attendance_result=attendance_result,
             duplicate=True,
         )
 
@@ -151,6 +155,7 @@ def _handle_face_reco(
             identity=identity,
             raw_file=raw_file,
             person_info_value=person_info_value,
+            match_number=match_number,
             root=root,
             notify=notify,
         )
@@ -162,6 +167,7 @@ def _handle_face_reco(
             root=root,
             notify=notify,
             message="matchNumber > 0 but personInfo is empty or invalid",
+            match_number=match_number,
         )
     return _handle_stranger(
         payload,
@@ -169,6 +175,7 @@ def _handle_face_reco(
         raw_file=raw_file,
         root=root,
         notify=notify,
+        match_number=match_number,
         match_number_missing=match_number is None,
     )
 
@@ -179,13 +186,32 @@ def _handle_known_face(
     identity: event_store.EventIdentity,
     raw_file: event_store.StoredFile,
     person_info_value: Any,
+    match_number: int | None,
     root: Path | str | None,
     notify: bool,
 ) -> EventHandleResult:
     person = _parse_matched_person(person_info_value)
+    person_type = attendance.person_type_for_role(person.role.code)
+    person_ref_id = None if person.person_id_missing else person.person_id
+    if person_type in {"member", "coach", "staff"} and not person_ref_id:
+        person_type = "unknown_known"
+    draft = attendance.build_known_draft(
+        identity=identity,
+        raw_file=raw_file,
+        person_type=person_type,
+        person_ref_id=person_ref_id,
+        name=person.name,
+        camera_person_id=person.ack_person_id,
+        face_group_id=person.role.group_id,
+        face_group_name=person.role.group_name,
+        match_number=match_number,
+    )
+    db_result = attendance.safe_record_event(draft)
     ack = _face_reco_ack(payload, matched_person=person, stored_image="")
     feishu_result = _notification_skipped("known notification disabled")
-    if notify and _notify_known_enabled():
+    should_send = notify and _notify_known_enabled() and db_result.should_notify
+    skip_reason = db_result.suppressed_reason
+    if should_send:
         feishu_result = _safe_notify(
             feishu.notify_known_face,
             name=person.name,
@@ -196,6 +222,17 @@ def _handle_known_face(
             role_name=person.role.name if person.role.code != "unknown" else "",
             title=person.role.notification_title,
         )
+    else:
+        skip_reason = skip_reason or ("notify disabled" if not notify else "known notification disabled")
+        feishu_result = _notification_skipped(skip_reason)
+
+    notification_record = attendance.safe_record_notification(
+        db_result,
+        feishu_result=feishu_result,
+        should_send=should_send,
+        title=person.role.notification_title,
+        suppressed_reason=None if should_send else skip_reason,
+    )
 
     record_file = _write_record(
         identity,
@@ -216,6 +253,8 @@ def _handle_known_face(
             "image": {"status": "not_saved"},
             "link": None,
             "feishu": feishu_result,
+            "attendance": db_result.to_dict(),
+            "attendance_notification": notification_record,
             "ack": _ack_summary(ack),
         },
         root=root,
@@ -227,6 +266,7 @@ def _handle_known_face(
         raw_file=raw_file,
         record_file=record_file,
         feishu_result=feishu_result,
+        attendance_result=db_result.to_dict(),
     )
 
 
@@ -237,6 +277,7 @@ def _handle_stranger(
     raw_file: event_store.StoredFile,
     root: Path | str | None,
     notify: bool,
+    match_number: int | None,
     match_number_missing: bool,
 ) -> EventHandleResult:
     info = payload.get("info") or {}
@@ -246,6 +287,7 @@ def _handle_stranger(
     feishu_result: dict[str, Any]
     image_record: dict[str, Any]
     link_record: dict[str, Any] | None = None
+    notify_message = ""
 
     if decoded_image:
         try:
@@ -265,15 +307,6 @@ def _handle_stranger(
             )
             image_record = stored_image.to_dict()
             link_record = _link_to_dict(created_link)
-            feishu_result = _notify_unknown(
-                notify=notify,
-                image_path=stored_image.path,
-                device_sn=identity.serial_number,
-                event_time=identity.event_time,
-                event_id=identity.event_id,
-                storage_path=str(stored_image.path),
-                view_url=created_link.view_url,
-            )
         except event_store.UnsupportedImageTypeError as exc:
             image_status = _image_error_status(str(exc))
             image_record = {
@@ -281,32 +314,58 @@ def _handle_stranger(
                 "source": decoded_image.source,
                 "error": str(exc),
             }
-            feishu_result = _notify_error(
-                notify=notify,
-                message=f"未匹配人脸图片保存失败: {image_status}",
-                identity=identity,
-                raw_event_path=raw_file.path,
-            )
+            notify_message = f"未匹配人脸图片保存失败: {image_status}"
         except Exception as exc:
             image_record = {
                 "status": "save_failed",
                 "source": decoded_image.source,
                 "error": type(exc).__name__,
             }
-            feishu_result = _notify_error(
-                notify=notify,
-                message="未匹配人脸图片保存或链接生成失败",
-                identity=identity,
-                raw_event_path=raw_file.path,
-            )
+            notify_message = "未匹配人脸图片保存或链接生成失败"
     else:
         image_record = {"status": image_status, "source": "", "error": image_message}
+        notify_message = f"未匹配人脸图片不可用: {image_status}"
+
+    draft = attendance.build_stranger_draft(
+        identity=identity,
+        raw_file=raw_file,
+        stored_image=stored_image,
+        image_url=created_link.view_url if created_link else None,
+        token_hash=created_link.token_hash if created_link else None,
+        image_source=image_record.get("source", ""),
+        match_number=match_number,
+    )
+    db_result = attendance.safe_record_event(draft)
+    should_send = notify and db_result.should_notify
+    if not should_send:
+        feishu_result = _notification_skipped(
+            db_result.suppressed_reason or ("notify disabled" if not notify else "attendance notification suppressed")
+        )
+    elif stored_image and created_link:
+        feishu_result = _notify_unknown(
+            notify=notify,
+            image_path=stored_image.path,
+            device_sn=identity.serial_number,
+            event_time=identity.event_time,
+            event_id=identity.event_id,
+            storage_path=str(stored_image.path),
+            view_url=created_link.view_url,
+        )
+    else:
         feishu_result = _notify_error(
             notify=notify,
-            message=f"未匹配人脸图片不可用: {image_status}",
+            message=notify_message or "未匹配人脸图片不可用",
             identity=identity,
             raw_event_path=raw_file.path,
         )
+
+    notification_record = attendance.safe_record_notification(
+        db_result,
+        feishu_result=feishu_result,
+        should_send=should_send,
+        title="发现陌生人入场",
+        suppressed_reason=None if should_send else feishu_result.get("reason"),
+    )
 
     ack = _face_reco_ack(
         payload,
@@ -322,6 +381,8 @@ def _handle_stranger(
             "image": image_record,
             "link": link_record,
             "feishu": feishu_result,
+            "attendance": db_result.to_dict(),
+            "attendance_notification": notification_record,
             "ack": _ack_summary(ack),
         },
         root=root,
@@ -335,6 +396,7 @@ def _handle_stranger(
         image=stored_image,
         link=created_link,
         feishu_result=feishu_result,
+        attendance_result=db_result.to_dict(),
     )
 
 
@@ -346,13 +408,33 @@ def _handle_parse_error(
     root: Path | str | None,
     notify: bool,
     message: str,
+    match_number: int | None,
 ) -> EventHandleResult:
     ack = _face_reco_ack(payload, matched_person=None, stored_image="")
-    feishu_result = _notify_error(
-        notify=notify,
-        message=message,
+    draft = attendance.build_parse_error_draft(
         identity=identity,
-        raw_event_path=raw_file.path,
+        raw_file=raw_file,
+        match_number=match_number,
+    )
+    db_result = attendance.safe_record_event(draft)
+    should_send = notify and db_result.should_notify
+    if should_send:
+        feishu_result = _notify_error(
+            notify=notify,
+            message=message,
+            identity=identity,
+            raw_event_path=raw_file.path,
+        )
+    else:
+        feishu_result = _notification_skipped(
+            db_result.suppressed_reason or ("notify disabled" if not notify else "attendance notification suppressed")
+        )
+    notification_record = attendance.safe_record_notification(
+        db_result,
+        feishu_result=feishu_result,
+        should_send=should_send,
+        title="人员入场提醒",
+        suppressed_reason=None if should_send else feishu_result.get("reason"),
     )
     record_file = _write_record(
         identity,
@@ -363,6 +445,8 @@ def _handle_parse_error(
             "image": {"status": "not_saved"},
             "link": None,
             "feishu": feishu_result,
+            "attendance": db_result.to_dict(),
+            "attendance_notification": notification_record,
             "ack": _ack_summary(ack),
         },
         root=root,
@@ -374,6 +458,7 @@ def _handle_parse_error(
         raw_file=raw_file,
         record_file=record_file,
         feishu_result=feishu_result,
+        attendance_result=db_result.to_dict(),
     )
 
 

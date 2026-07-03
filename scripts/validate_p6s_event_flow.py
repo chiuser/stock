@@ -47,6 +47,7 @@ async def validate() -> None:
         "P6S_FACE_GROUP_COACHES_NAME": "教练",
         "P6S_FACE_GROUP_STAFF_ID": "4dcafc2c9fbd4d1fa267ccbf145c8861",
         "P6S_FACE_GROUP_STAFF_NAME": "员工",
+        "ATTENDANCE_DB_ENABLED": "false",
     }
     with patched_env(role_env), tempfile.TemporaryDirectory() as temp_dir:
         root = Path(temp_dir)
