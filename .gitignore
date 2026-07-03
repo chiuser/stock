@@ -10,5 +10,9 @@ __pycache__/
 # Local STYD member exports and face images contain private member data.
 styd_member_ids.txt
 styd_members_*.csv
+teacher.csv
+staff.csv
 styd_member_faces*/
+teacher/
+staff/
 styd_member_sync_runs/

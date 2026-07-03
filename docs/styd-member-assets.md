@@ -183,3 +183,21 @@ into it. Then:
 Prefer moving removed full-face images into the run directory instead of using a
 permanent delete, so the cleanup can be rolled back if the trusted small-face
 set was wrong.
+
+## 10. Build teacher and staff face CSV files
+
+Coach and staff face images can be staged in local `teacher/` and `staff/`
+directories. Generate `teacher.csv` and `staff.csv` from the actual files in
+those directories with these columns:
+
+- `ID`
+- `姓名`
+- `人脸图片名称`
+
+For normal files named `<numeric-id>_<name>.<ext>`, split at the first
+underscore. Ignore non-image files such as `.DS_Store`. If a file does not
+match the normal numeric-id format, keep it in the CSV with an empty `ID` and
+the filename stem as `姓名` so no staged face file silently disappears.
+
+The `teacher/`, `staff/`, `teacher.csv`, and `staff.csv` paths contain local
+private face assets and derived personnel data. Keep them ignored by git.
