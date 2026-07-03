@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -12,12 +13,24 @@ from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from app.routers import auth, camera
+from app.routers import attendance, auth, camera
+from app.services import report_scheduler
 
-app = FastAPI(title="Camera Face Guard", docs_url="/api/docs")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await report_scheduler.start_daily_report_scheduler()
+    try:
+        yield
+    finally:
+        await report_scheduler.stop_daily_report_scheduler()
+
+
+app = FastAPI(title="Camera Face Guard", docs_url="/api/docs", lifespan=lifespan)
 
 app.include_router(auth.router, prefix="/api")
 app.include_router(camera.router, prefix="/api")
+app.include_router(attendance.router, prefix="/api")
 
 _static = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=_static), name="static")
