@@ -6,3 +6,9 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Local STYD member exports and face images contain private member data.
+styd_member_ids.txt
+styd_members_*.csv
+styd_member_faces*/
+styd_member_sync_runs/
