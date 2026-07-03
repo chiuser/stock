@@ -219,7 +219,7 @@ def get_event_image_by_token(token: str):
 
 
 @router.get("/p6s/event-images/{filename}")
-def get_event_image(filename: str):
+def get_event_image(filename: str, _: dict = Depends(require_admin)):
     safe_name = re.sub(r"[^0-9A-Za-z_.-]", "", filename)
     path = _event_dir() / safe_name
     if not path.exists() or not path.is_file():

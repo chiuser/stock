@@ -1,0 +1,20 @@
+{
+  "operator": "FaceReco",
+  "deviceInfo": {
+    "serialNumber": "SN-FIXTURE-001"
+  },
+  "info": {
+    "eventId": "unknown-role-001",
+    "time": "2026-07-02 10:13:00",
+    "matchNumber": 1,
+    "CaptureImage": {
+      "pictureMd5": "unknown-role-fixture-md5"
+    },
+    "personInfo": {
+      "uniqueId": "unknown-role-person",
+      "name": "未知分组人员",
+      "personId": 14,
+      "personType": "unmapped-face-group"
+    }
+  }
+}

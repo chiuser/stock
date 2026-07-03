@@ -13,12 +13,22 @@ from app.services import event_store, feishu, image_links
 
 
 @dataclass(frozen=True)
+class PersonRole:
+    code: str
+    name: str
+    group_id: str
+    group_name: str
+    notification_title: str
+
+
+@dataclass(frozen=True)
 class MatchedPerson:
     name: str
     person_id: str
     ack_person_id: int
     person_name_missing: bool
     person_id_missing: bool
+    role: PersonRole
     raw: dict[str, Any]
 
 
@@ -183,6 +193,8 @@ def _handle_known_face(
             device_sn=identity.serial_number,
             event_time=identity.event_time,
             event_id=identity.event_id,
+            role_name=person.role.name if person.role.code != "unknown" else "",
+            title=person.role.notification_title,
         )
 
     record_file = _write_record(
@@ -195,6 +207,11 @@ def _handle_known_face(
                 "person_id": person.ack_person_id,
                 "person_name_missing": person.person_name_missing,
                 "person_id_missing": person.person_id_missing,
+                "person_role": person.role.code,
+                "person_role_name": person.role.name,
+                "person_group_id": person.role.group_id,
+                "person_group_name": person.role.group_name,
+                "notification_title": person.role.notification_title,
             },
             "image": {"status": "not_saved"},
             "link": None,
@@ -396,8 +413,129 @@ def _parse_matched_person(person_info_value: Any) -> MatchedPerson:
         ack_person_id=ack_person_id,
         person_name_missing=not bool(name),
         person_id_missing=not bool(person_id),
+        role=_resolve_person_role(person_info),
         raw=person_info,
     )
+
+
+def _resolve_person_role(person_info: dict[str, Any]) -> PersonRole:
+    roles = _configured_person_roles()
+    id_candidates = _person_group_id_candidates(person_info)
+    name_candidates = _person_group_name_candidates(person_info)
+
+    for candidate in id_candidates:
+        normalized_candidate = _normalize_group_value(candidate)
+        for role in roles:
+            normalized_group_id = _normalize_group_value(role.group_id)
+            if normalized_group_id and (
+                normalized_candidate == normalized_group_id
+                or (
+                    len(normalized_group_id) >= 16
+                    and normalized_group_id in normalized_candidate
+                )
+            ):
+                return role
+
+    for candidate in name_candidates:
+        normalized_candidate = _normalize_group_value(candidate)
+        for role in roles:
+            normalized_group_name = _normalize_group_value(role.group_name)
+            if normalized_group_name and normalized_candidate == normalized_group_name:
+                return role
+
+    return PersonRole(
+        code="unknown",
+        name="未知身份",
+        group_id=_first_str(*id_candidates),
+        group_name=_first_str(*name_candidates),
+        notification_title="人员入场提醒",
+    )
+
+
+def _configured_person_roles() -> list[PersonRole]:
+    roles: list[PersonRole] = []
+    seen_group_ids: set[str] = set()
+    for code, id_env, name_env, default_name, title in (
+        (
+            "members",
+            "P6S_FACE_GROUP_MEMBERS_ID",
+            "P6S_FACE_GROUP_MEMBERS_NAME",
+            "会员",
+            "会员入场提醒",
+        ),
+        (
+            "coaches",
+            "P6S_FACE_GROUP_COACHES_ID",
+            "P6S_FACE_GROUP_COACHES_NAME",
+            "教练",
+            "教练入场提醒",
+        ),
+        (
+            "staff",
+            "P6S_FACE_GROUP_STAFF_ID",
+            "P6S_FACE_GROUP_STAFF_NAME",
+            "员工",
+            "员工入场提醒",
+        ),
+    ):
+        group_id = os.environ.get(id_env, "").strip()
+        group_name = os.environ.get(name_env, default_name).strip() or default_name
+        if group_id:
+            roles.append(PersonRole(code, group_name, group_id, group_name, title))
+            seen_group_ids.add(_normalize_group_value(group_id))
+
+    legacy_group_id = os.environ.get("P6S_FACE_GROUP_ID", "").strip()
+    normalized_legacy_id = _normalize_group_value(legacy_group_id)
+    if legacy_group_id and normalized_legacy_id not in seen_group_ids:
+        legacy_group_name = (
+            os.environ.get("P6S_FACE_GROUP_NAME", "").strip() or "会员"
+        )
+        roles.append(
+            PersonRole(
+                code="members",
+                name=legacy_group_name,
+                group_id=legacy_group_id,
+                group_name=legacy_group_name,
+                notification_title="会员入场提醒",
+            )
+        )
+    return roles
+
+
+def _person_group_id_candidates(person_info: dict[str, Any]) -> list[str]:
+    return _non_empty_strings(
+        person_info.get("personType"),
+        person_info.get("PersonType"),
+        person_info.get("groupId"),
+        person_info.get("GroupId"),
+        person_info.get("GroupID"),
+        person_info.get("FaceGroupID"),
+        person_info.get("FaceGroupId"),
+        person_info.get("faceGroupId"),
+        person_info.get("faceGroupID"),
+    )
+
+
+def _person_group_name_candidates(person_info: dict[str, Any]) -> list[str]:
+    return _non_empty_strings(
+        person_info.get("groupName"),
+        person_info.get("GroupName"),
+        person_info.get("Group"),
+        person_info.get("group"),
+    )
+
+
+def _non_empty_strings(*values: Any) -> list[str]:
+    strings: list[str] = []
+    for value in values:
+        text = _first_str(value)
+        if text:
+            strings.append(text)
+    return strings
+
+
+def _normalize_group_value(value: str) -> str:
+    return str(value or "").strip().lower()
 
 
 def _first_person_info(person_info_value: Any) -> dict[str, Any] | None:

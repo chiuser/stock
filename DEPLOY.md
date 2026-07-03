@@ -17,14 +17,13 @@ sudo chmod 750 /etc/camera-face-guard
 在本地执行：
 
 ```bash
-rsync -a --delete \
-  --exclude .git \
-  --exclude .venv \
-  --exclude .env.local \
-  ./ qypower-prod:/opt/camera-face-guard/
+scripts/deploy_qypower_prod.sh --dry-run
+scripts/deploy_qypower_prod.sh --skip-deps
 ```
 
-如果需要同步已抓取的会员头像，确认 `styd_member_faces/` 已包含在 rsync 范围内。
+部署脚本会自动执行本地验证、同步代码、远程验证和服务重启。脚本默认排除 `.env*`、`.venv/`、日志、会员图片、CSV、教练/员工图片目录、离线 ShowDoc 镜像等本地数据，避免把真实配置或大体积数据误同步到服务器。
+
+如果需要同步已抓取的会员头像，不要使用默认部署脚本直接带上数据；应单独确认目标目录、数据来源和回滚方式后再执行专门的数据同步。
 
 ## 三、安装依赖
 
@@ -64,6 +63,12 @@ P6S_EVENT_RETENTION_DAYS=30
 P6S_FACE_DIR=/opt/camera-face-guard/styd_member_faces
 PUBLIC_BASE_URL=http://82.156.198.180
 P6S_EVENT_IMAGE_PUBLIC_BASE_URL=http://82.156.198.180/api/p6s/event-images/view
+P6S_FACE_GROUP_MEMBERS_ID=会员脸库GroupID2
+P6S_FACE_GROUP_MEMBERS_NAME=会员
+P6S_FACE_GROUP_COACHES_ID=教练脸库GroupID2
+P6S_FACE_GROUP_COACHES_NAME=教练
+P6S_FACE_GROUP_STAFF_ID=员工脸库GroupID2
+P6S_FACE_GROUP_STAFF_NAME=员工
 
 FEISHU_WEBHOOK_URL=
 FEISHU_WEBHOOK_SECRET=
@@ -76,6 +81,7 @@ FEISHU_APP_SECRET=
 - `P6S_EVENT_SECRET` 会出现在摄像头事件回调路径中，必须足够随机。
 - `P6S_EVENT_IMAGE_LINK_SECRET` 用于图片查看 token，必须和 `P6S_EVENT_SECRET` 使用不同随机值。
 - `P6S_EVENT_NOTIFY_KNOWN_PERSON=true` 表示匹配成功每次都通知。
+- `P6S_FACE_GROUP_MEMBERS_ID`、`P6S_FACE_GROUP_COACHES_ID`、`P6S_FACE_GROUP_STAFF_ID` 用于把匹配成功事件映射为会员、教练、员工，并生成对应飞书标题。
 - `P6S_EVENT_IMAGE_LINK_TTL_SECONDS=86400` 表示飞书里的图片查看链接有效期为 24 小时。
 - `P6S_EVENT_RETENTION_DAYS=30` 表示服务器事件图片和处理记录默认保留 30 天。
 - `FEISHU_WEBHOOK_URL` 和 `FEISHU_WEBHOOK_SECRET` 写真实值时只能写在远程 env 文件中，不能提交到仓库。
@@ -175,6 +181,13 @@ curl -sS -o /dev/null -w 'PUBLIC_GET:%{http_code}\n' http://82.156.198.180/camer
 4. 触发未入库人员识别，确认服务器保存图片到 `strangers/YYYY-MM-DD/`。
 5. 点击飞书图片链接，确认能通过 `/api/p6s/event-images/view/<token>` 查看图片。
 6. 重复投递同一事件时，不应重复发送飞书通知。
+
+事件目录清理不自动启用。需要手动清理过期事件时，先 dry-run，再 apply：
+
+```bash
+python3 scripts/cleanup_p6s_event_store.py
+python3 scripts/cleanup_p6s_event_store.py --apply
+```
 
 ## 八、常见问题
 

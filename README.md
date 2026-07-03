@@ -51,7 +51,13 @@ P6S_CAMERA_USERNAME=admin
 P6S_CAMERA_PASSWORD=摄像头密码，空密码时保留这一行且值为空
 P6S_FACE_OWNER=固定保存的脸库Owner
 P6S_FACE_GROUP_ID=members
-P6S_FACE_GROUP_NAME=会员人脸库
+P6S_FACE_GROUP_NAME=会员
+P6S_FACE_GROUP_MEMBERS_ID=会员脸库GroupID2
+P6S_FACE_GROUP_MEMBERS_NAME=会员
+P6S_FACE_GROUP_COACHES_ID=教练脸库GroupID2
+P6S_FACE_GROUP_COACHES_NAME=教练
+P6S_FACE_GROUP_STAFF_ID=员工脸库GroupID2
+P6S_FACE_GROUP_STAFF_NAME=员工
 P6S_FACE_GROUP_THRESHOLD=
 
 P6S_EVENT_SECRET=摄像头事件回调鉴权token
@@ -79,6 +85,7 @@ FEISHU_APP_SECRET=可选，仅内嵌图片时需要
 事件推送相关配置说明：
 
 - `P6S_EVENT_SECRET`：摄像头事件回调路径 token，事件入口为 `/api/p6s/events/<P6S_EVENT_SECRET>`。
+- `P6S_FACE_GROUP_MEMBERS_ID`、`P6S_FACE_GROUP_COACHES_ID`、`P6S_FACE_GROUP_STAFF_ID`：服务端按这些 `GroupID2` 把识别成功事件映射为会员、教练、员工。
 - `P6S_EVENT_IMAGE_DIR`：服务器保存原始事件、处理记录、陌生人图片和 token 映射的根目录。
 - `P6S_EVENT_IMAGE_LINK_SECRET`：生成和校验图片查看 token 的随机密钥。
 - `P6S_EVENT_IMAGE_LINK_TTL_SECONDS`：图片查看链接有效期，首版为 24 小时。
@@ -106,10 +113,17 @@ python3 scripts/configure_p6s_face_reco_rule.py --apply
 ## 事件处理目标
 
 - 摄像头通过 P6SEvent HTTP V2 推送 `FaceReco` 到远程服务器。
-- 匹配成功：飞书消息包含姓名、人员 ID、摄像头序列号、识别时间和事件 ID；不同识别事件都通知。
+- 匹配成功：飞书消息包含姓名、人员 ID、摄像头序列号、识别时间和事件 ID；不同识别事件都通知。会员、教练、员工分别使用“会员入场提醒”“教练入场提醒”“员工入场提醒”。
 - 未匹配成功：服务器保存人脸抓拍图到 `strangers/YYYY-MM-DD/`，飞书消息包含保存路径和可点击图片链接。
 - 重复投递：只对同一个事件的缓存重放或网络重试做幂等，不按人员维度合并不同事件。
-- 图片查看：飞书链接使用 `/api/p6s/event-images/view/<token>`，服务器校验 token 后返回图片。
+- 图片查看：飞书链接使用 `/api/p6s/event-images/view/<token>`，服务器校验 token 后返回图片；旧的裸文件名图片入口只作为管理员排障入口。
+
+事件存储保留期可用脚本手动清理，默认只 dry-run：
+
+```bash
+python3 scripts/cleanup_p6s_event_store.py
+python3 scripts/cleanup_p6s_event_store.py --apply
+```
 
 ## API 路径
 

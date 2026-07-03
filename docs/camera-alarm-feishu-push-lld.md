@@ -737,7 +737,7 @@ signature = base64.b64encode(
 消息标题：
 
 ```text
-人脸识别成功
+会员入场提醒 / 教练入场提醒 / 员工入场提醒 / 人员入场提醒
 ```
 
 内容：
@@ -747,6 +747,7 @@ signature = base64.b64encode(
 - 摄像头序列号。
 - 识别时间。
 - 事件 ID。
+- 身份类型；仅当服务端可映射到会员、教练或员工时展示。
 
 富文本示例：
 
@@ -756,13 +757,14 @@ signature = base64.b64encode(
   "content": {
     "post": {
       "zh_cn": {
-        "title": "人脸识别成功",
+        "title": "会员入场提醒",
         "content": [
           [{"tag": "text", "text": "姓名：小明"}],
           [{"tag": "text", "text": "人员 ID：3427976339944670"}],
           [{"tag": "text", "text": "摄像头：SN123456"}],
           [{"tag": "text", "text": "识别时间：2026-07-02 18:30:12"}],
-          [{"tag": "text", "text": "事件 ID：42"}]
+          [{"tag": "text", "text": "事件 ID：42"}],
+          [{"tag": "text", "text": "身份类型：会员"}]
         ]
       }
     }
@@ -780,7 +782,7 @@ signature = base64.b64encode(
 消息标题：
 
 ```text
-发现未匹配人脸
+发现陌生人入场
 ```
 
 内容：
@@ -799,7 +801,7 @@ signature = base64.b64encode(
   "content": {
     "post": {
       "zh_cn": {
-        "title": "发现未匹配人脸",
+        "title": "发现陌生人入场",
         "content": [
           [{"tag": "text", "text": "摄像头：SN123456"}],
           [{"tag": "text", "text": "识别时间：2026-07-02 18:35:01"}],
@@ -3152,7 +3154,489 @@ ssh qypower-prod "sudo systemctl restart camera-face-guard"
 - 本轮没有写入 `/AI/FaceSnapshotCfg`、`/Pictures/1/FaceDetect`、`/System/AlgorithmStoreCfg`、`/System/HTTPEventServerConfigV2`、人脸库、人员、Owner 或组织结构。
 - 下一步应由用户重新站到摄像头前测试现实抓拍效果；如仍不抓拍，再基于该恢复基线只读排查。
 
-## 24. 参考文档
+### 23.21 Round 21：会员脸库批量导入运行步骤
+
+本轮目标：
+
+- 将本地会员 CSV 中已有人脸图片的 244 个会员写入摄像头“会员”脸库。
+- 使用 `member_name` 作为摄像头人员姓名。
+- 使用 CSV `id` 作为 `FaceUUID`，并绑定同名图片 `styd_member_faces/{id}.jpg`。
+- 性别统一写入 `male`。
+
+本轮技术方案：
+
+- 目标脸库：
+  - `GroupName=会员`
+  - `GroupID2=c1e42a1f2531467bae464da8a79dad53`
+- 写入前预检：
+  - CSV 必须存在且恰好 244 行。
+  - `id` 必须非空、唯一、全部为 16 位数字。
+  - `member_name` 必须非空，UTF-8 字节长度不得超过 32。
+  - 每个 `id` 必须有对应 `styd_member_faces/{id}.jpg`。
+  - JPG 必须可打开，大小不得超过接口文档建议上限。
+- 脸库确认：
+  - 先调用 `/FaceGroups/QueryAll`。
+  - 如果目标 `GroupID2` 已存在且名称为“会员”，直接复用。
+  - 如果目标 `GroupID2` 不存在，调用 `/FaceGroups/Create` 创建。
+  - 如果目标 `GroupID2` 已存在但名称不是“会员”，立即停止。
+- 人员写入：
+  - 使用官方 multipart `POST /FaceGroup/UpdatePersonInfoAndFaceImage`。
+  - 字段固定为 `Name`、`Sex`、`Ownner`、`FaceGroupID`、`FaceUUID`、`SystemTime`、`file`。
+  - 先写入样本 `3785841386866689 / 苏苏`，成功后再按 CSV 顺序写入剩余人员。
+  - 单线程执行，每条间隔约 200ms。
+
+本轮范围：
+
+- 允许修改：
+  - `docs/camera-alarm-feishu-push-lld.md`
+- 允许写入摄像头：
+  - `/FaceGroups/Create`，仅当“会员”目标脸库不存在时。
+  - `/FaceGroup/UpdatePersonInfoAndFaceImage`，仅写入会员 CSV 中的 244 个会员。
+
+本轮不做：
+
+- 不写入“教练”或“员工”脸库。
+- 不写入组织结构。
+- 不修改人脸识别抓拍、推送、录像、算法、HTTP 事件配置。
+- 不修改远程服务器或飞书配置。
+- 不提交会员 CSV、图片或 `.env.local`。
+
+停止条件：
+
+- 写入前预检失败。
+- 目标脸库 ID 与现有名称冲突。
+- 样本写入失败。
+- 样本写入后无法通过人员查询或等价证据确认。
+- 批量写入任一人员返回 HTTP 非 2xx 或设备 `statusCode` 非 `0`。
+
+回滚方式：
+
+- 本轮不在执行中自动删除人员，避免误删既有人脸库数据。
+- 如需回滚，使用运行报告中的成功 `FaceUUID` 列表，按 `/FaceGroup/DeletePersonList` 从“会员”脸库删除本轮成功写入的人员。
+- 如果本轮创建了“会员”脸库且确认其中只有本轮数据，可使用 `/FaceGroups/Delete` 删除该脸库。
+
+验证方式：
+
+- 写入报告记录每条人员的 `id`、`name`、图片文件、HTTP 状态、设备状态码和响应摘要。
+- 写入后使用 `/FaceGroup/QueryPersonInfoList` 分页查询，按 `FaceUUID` 统计目标人员是否存在。
+- 真实验收由用户站到摄像头前触发识别，远程事件中应出现 `FaceReco`，并包含 CSV 姓名和会员 ID。
+
+本轮执行结果：
+
+- 运行目录：
+  - `/private/tmp/p6s_member_import_20260703_084508`
+- 写入前预检通过：
+  - CSV 行数：244。
+  - manifest 行数：244。
+  - `id` 无重复、无空值，图片全部存在且可打开。
+  - `member_name` 无空值，存在 1 组重名，但本轮按用户要求不追加手机号或 ID。
+- 目标脸库检查：
+  - 初始 `/FaceGroups/QueryAll` 中不存在目标 `GroupID2`，且无同名冲突。
+  - 已创建 `GroupName=会员`、`GroupID2=c1e42a1f2531467bae464da8a79dad53`。
+  - 原始 UTF-8 回读确认脸库名为“会员”。
+- 样本写入：
+  - 已写入 `3785841386866689 / 苏苏`。
+  - HTTP 状态：`200`。
+  - 设备 `statusCode=0`。
+  - `/FaceGroup/QueryPersonInfoList` 回查到对应 `FaceUUID`。
+- 批量写入：
+  - 剩余 243 条全部返回成功。
+  - 加上样本，总计 244 条目标会员写入成功。
+  - 未出现中途失败。
+- 写入后回查：
+  - `/FaceGroups/QueryAll` 回读“会员”脸库：
+    - `PersonInfoCount=244`
+    - `ValidPersonCount=244`
+    - `InvalidPersonCount=0`
+  - `/FaceGroup/QueryPersonInfoList` 分页回查：
+    - 244 个目标会员 `FaceUUID` 全部存在，缺失数为 0。
+    - 查询结果额外包含历史测试 ID `3427976339944670`；由于 `/FaceGroups/QueryAll` 对“会员”脸库计数为 244，本轮不删除该历史测试人员，避免误删非本轮数据。
+    - 查询到的人员 `ModelState` 均为 `success`。
+- 本轮未修改：
+  - 远程服务器。
+  - 飞书配置。
+  - 人脸识别抓拍、推送、录像、算法或 HTTP 事件配置。
+  - 教练/员工脸库。
+
+### 23.22 Round 22：教练/员工脸库批量导入运行步骤
+
+本轮目标：
+
+- 将本地 `teacher.csv` 中的 15 名教练写入摄像头“教练”脸库。
+- 将本地 `staff.csv` 中的 4 名员工写入摄像头“员工”脸库。
+- 使用 CSV `姓名` 作为摄像头人员姓名。
+- 使用 CSV `ID` 作为 `FaceUUID`，并绑定 CSV `人脸图片名称` 指向的本地图片。
+- 性别统一写入 `male`。
+
+本轮技术方案：
+
+- 目标脸库：
+  - 教练：`GroupName=教练`，`GroupID2=9c89bc7bc2234801b5ae0f8d60da8c30`
+  - 员工：`GroupName=员工`，`GroupID2=4dcafc2c9fbd4d1fa267ccbf145c8861`
+- 写入前预检：
+  - `teacher.csv` 必须存在且恰好 15 行。
+  - `staff.csv` 必须存在且恰好 4 行。
+  - `ID` 必须非空且唯一。
+  - `姓名` 必须非空，UTF-8 字节长度不得超过 32。
+  - `人脸图片名称` 必须符合 `ID_姓名.(jpg|jpeg|png)`。
+  - 每条记录必须有对应本地图片，且图片必须可打开。
+  - 如果图片尺寸超过设备导入建议上限，或图片不是适合设备导入的 RGB JPEG，则在运行目录生成临时归一化 JPEG 副本；原始图片不修改。
+  - 教练、员工之间不得有重复 ID；不得与已导入会员 CSV 的 ID 冲突。
+- 脸库确认：
+  - 先调用 `/FaceGroups/QueryAll`。
+  - 如果目标 `GroupID2` 已存在且名称匹配，直接复用。
+  - 如果目标 `GroupID2` 不存在，调用 `/FaceGroups/Create` 创建。
+  - 如果目标 `GroupID2` 已存在但名称不匹配，或目标名称被其他 `GroupID2` 占用，立即停止。
+- 人员写入：
+  - 使用官方 multipart `POST /FaceGroup/UpdatePersonInfoAndFaceImage`。
+  - 字段固定为 `Name`、`Sex`、`Ownner`、`FaceGroupID`、`FaceUUID`、`SystemTime`、`file`。
+  - 先写入教练样本 `2190181831084742 / 祝教练`。
+  - 再写入员工样本 `1715263741293 / 刘彩玲`。
+  - 样本成功后，先按 CSV 顺序写入剩余 14 名教练，再写入剩余 3 名员工。
+  - 实际上传文件优先使用运行目录中的归一化 JPEG 副本；报告同时记录原图路径和实际上传路径。
+  - 单线程执行，每条间隔约 200ms。
+
+本轮范围：
+
+- 允许修改：
+  - `docs/camera-alarm-feishu-push-lld.md`
+- 允许写入摄像头：
+  - `/FaceGroups/Create`，仅当“教练”或“员工”目标脸库不存在时。
+  - `/FaceGroup/UpdatePersonInfoAndFaceImage`，仅写入教练和员工 CSV 中的 19 个人员。
+
+本轮不做：
+
+- 不修改“会员”脸库。
+- 不写入组织结构。
+- 不修改人脸识别抓拍、推送、录像、算法、HTTP 事件配置。
+- 不修改远程服务器或飞书配置。
+- 不修改 `.env.local`。
+- 不提交 CSV 或图片。
+
+停止条件：
+
+- 写入前预检失败。
+- 目标脸库 ID 或名称冲突。
+- 任一样本写入失败。
+- 任一样本写入后无法通过人员查询确认在目标组。
+- 批量写入任一人员返回 HTTP 非 2xx 或设备 `statusCode` 非 `0`。
+
+回滚方式：
+
+- 本轮不在执行中自动删除人员，避免误删既有人脸库数据。
+- 如需回滚，使用运行报告中的成功 `FaceUUID` 列表，按 `/FaceGroup/DeletePersonList` 从对应脸库删除本轮成功写入的人员。
+- 如果本轮创建了“教练”或“员工”脸库且确认其中只有本轮数据，可使用 `/FaceGroups/Delete` 删除该脸库。
+
+验证方式：
+
+- 写入报告记录每条人员的角色、`id`、`name`、图片文件、HTTP 状态、设备状态码和响应摘要。
+- 写入报告同时记录原始图片路径、实际上传图片路径、原始尺寸和归一化后尺寸，便于定位 `4112` 等图片规格问题。
+- 写入后使用 `/FaceGroup/QueryPersonInfoList` 分页查询，按 `FaceUUID` 和返回 `<Group>` 字段等于目标 `GroupID2` 统计目标人员是否存在。
+- `/FaceGroup/QueryPersonInfoList` 的数字 `GroupID` 在当前设备上不能可靠区分脸库，不能作为分组校验依据。
+- `/FaceGroups/QueryAll` 回读“教练”和“员工”脸库的 `PersonInfoCount`、`ValidPersonCount`、`InvalidPersonCount`。
+- 真实验收由用户站到摄像头前触发识别，事件中应包含对应姓名和人员 ID，并可通过 `GroupID2` 映射识别为教练或员工。
+
+本轮执行结果：
+
+- 首次运行目录：
+  - `/private/tmp/p6s_role_import_20260703_092058`
+- 首次运行结果：
+  - 写入前预检通过，manifest 行数为 19。
+  - 摄像头初始只存在“会员”脸库。
+  - 已创建“教练”和“员工”两个目标脸库。
+  - 教练样本 `2190181831084742 / 祝教练` 使用原始图片写入时，HTTP 状态为 `200`，设备 `statusCode=4112`，按停止条件终止。
+  - 失败样本原图为 `1276x1276`、约 `239955` 字节；对比此前成功会员图约 `210x210`，判断需要按设备图片规格生成临时归一化上传图。
+- 二次运行目录：
+  - `/private/tmp/p6s_role_import_20260703_092235`
+- 二次运行调整：
+  - 对超尺寸或非 RGB JPEG 图片，在运行目录 `normalized_faces/` 下生成临时 JPEG 副本。
+  - 原始图片不修改。
+  - 报告同时记录原图路径和实际上传路径。
+- 二次运行预检通过：
+  - 教练 CSV 行数：15。
+  - 员工 CSV 行数：4。
+  - 教练图片数：15。
+  - 员工图片数：4。
+  - 无重复 ID、无重复图片名、无缺失图片、无跨角色重复 ID、无会员 ID 冲突。
+- 样本写入：
+  - 已写入教练样本 `2190181831084742 / 祝教练`。
+  - 已写入员工样本 `1715263741293 / 刘彩玲`。
+  - 两个样本均为 HTTP `200`、设备 `statusCode=0`。
+  - 两个样本均通过人员列表按 `FaceUUID + GroupID2` 回查确认。
+- 批量写入：
+  - 剩余 14 名教练全部写入成功。
+  - 剩余 3 名员工全部写入成功。
+  - 加上样本，总计 19 名目标人员写入成功。
+- 写入后回查：
+  - `/FaceGroups/QueryAll` 回读“教练”脸库：
+    - `PersonInfoCount=15`
+    - `ValidPersonCount=15`
+    - `InvalidPersonCount=0`
+  - `/FaceGroups/QueryAll` 回读“员工”脸库：
+    - `PersonInfoCount=4`
+    - `ValidPersonCount=4`
+    - `InvalidPersonCount=0`
+  - `/FaceGroup/QueryPersonInfoList` 分页回查：
+    - 查询总人数为 263。
+    - 会员组：244 人。
+    - 教练组：15 人。
+    - 员工组：4 人。
+    - 19 个目标 `FaceUUID` 全部存在，缺失数为 0。
+    - 查询到的人员 `ModelState` 均为 `success`。
+- 本轮未修改：
+  - 会员脸库。
+  - 组织结构。
+  - 人脸识别抓拍、推送、录像、算法或 HTTP 事件配置。
+  - 远程服务器。
+  - 飞书配置。
+  - `.env.local`。
+
+## 24. 未开发项审计与推进计划
+
+本节只记录仍需开发、文档修订或配置模板调整的任务；不把真机未验收、人工未触发、飞书未观察到等验证事项混入“未开发”口径。
+
+### 24.1 本轮跟踪项与实现状态
+
+1. 飞书通知标题按人员类型定制：
+   - 本轮已实现：`app/services/feishu.py` 支持按角色传入标题，陌生人标题改为“发现陌生人入场”。
+   - 已确认标题：`会员入场提醒`、`教练入场提醒`、`员工入场提醒`、`人员入场提醒`、`发现陌生人入场`。
+   - 验证方式：本地 fixture 校验飞书 post payload 的标题和正文，不发送真实飞书消息。
+
+2. `FaceReco.personInfo` 到本地角色的映射层：
+   - 本轮已实现：服务端解析 `personType`、`groupId`、`groupName`、`Group`、`FaceGroupID` 等字段，映射为“会员/教练/员工”。
+   - 已知真机现象：真实 `FaceReco` 样本中 `groupId` 与 `groupName` 可能为空，`personType` 可携带脸库 `GroupID2`。
+   - 降级策略：无法识别角色时不丢弃事件，使用 `role=unknown` 和“人员入场提醒”。
+
+3. 教练/员工入场通知语义：
+   - 本轮已实现：通知层区分会员、教练、员工和未知已匹配身份。
+   - 字段展示：姓名、人员 ID、设备、时间、事件 ID 保持不变；可识别角色时增加“身份类型”。
+
+4. 旧文件名图片公开接口收口：
+   - 本轮已实现：`GET /api/p6s/event-images/{filename}` 保留为排障入口，但增加管理员鉴权。
+   - 对外路径：飞书消息只使用 token 图片入口 `GET /api/p6s/event-images/view/{token}`。
+
+5. 事件与图片保留期清理机制：
+   - 本轮已实现：新增 `scripts/cleanup_p6s_event_store.py`。
+   - 行为：只清理过期 `raw`、`records`、`strangers`、`links` 日期目录；默认 dry-run，显式 `--apply` 才删除。
+   - 约束：脚本不接触摄像头，不删除 LLD、CSV、人脸库导入报告或非事件根目录文件。
+
+6. LLD 当前状态同步：
+   - 本轮已同步：本节记录截至当前的开发状态、硬约束、批准步骤和验证结果。
+   - 仍需注意：真人识别、远程服务器接收事件和飞书真实送达属于后续验证任务，不属于本轮代码未完成项。
+
+### 24.2 推进硬约束
+
+- 未经用户明确允许，后续任何开发、验证和排障都禁止向摄像头写入配置。
+- 禁止未经允许调用以下摄像头写接口：
+  - `/System/HTTPEventServerConfigV2`
+  - `/FaceReco/1/RecoRuleList`
+  - `/Pictures/1/FaceDetect`
+  - `/AI/FaceSnapshotCfg`
+  - `/System/AlgorithmStoreCfg`
+  - `/FaceGroups/Create`
+  - `/FaceGroups/Modify`
+  - `/FaceGroups/Delete`
+  - `/FaceGroup/UpdatePersonInfoAndFaceImage`
+  - `/FaceGroup/ModifyPersonInfo`
+  - `/FaceGroup/DeletePersonList`
+- 允许的默认动作仅限：
+  - 阅读和修改本地代码/文档。
+  - 运行本地单元或 fixture 验证。
+  - 只读查看远程服务器事件目录、日志摘要和 systemd 状态。
+  - 只读调用摄像头 GET/查询类接口；如果接口语义不明确，先停下来确认，不用“试试看”的方式写入。
+- 如后续确实需要写摄像头，必须先新增或更新 LLD 小节，写清楚目标接口、写入字段、影响面、回滚方式、停止条件，并等用户明确批准。
+
+### 24.3 建议开发顺序
+
+1. 同步文档当前状态：
+   - 更新 LLD 中过时的“当前实现差距”和真机验证结论。
+   - 明确三组脸库已完成录入，但三组入场通知标题尚未开发。
+
+2. 设计并实现角色映射层：
+   - 从环境变量读取会员、教练、员工的 `GroupID2` 与名称。
+   - 从真实 `personInfo` 中优先读取 `personType`、`groupId`、`groupName`，映射到本地角色。
+   - 在处理记录中保存 `person_role`、`person_role_name`、`person_group_id`，便于排障。
+
+3. 改造飞书通知模板：
+   - `notify_known_face` 增加角色/标题入参。
+   - 匹配成功按角色生成标题。
+   - 陌生人标题改为“发现陌生人入场”。
+   - 保持原有姓名、人员 ID、设备、时间、事件 ID 字段不丢失。
+
+4. 补充 fixture 与本地验证：
+   - 增加会员、教练、员工、未知角色、陌生人 fixture。
+   - 验证各角色标题、记录字段、飞书 payload 结构。
+   - 验证无角色字段时降级为通用标题。
+
+5. 收口旧图片接口：
+   - 先确认是否仍需保留本地排障入口。
+   - 按确认结果实现删除或管理员鉴权。
+   - 验证 token 图片入口不受影响。
+
+6. 增加事件保留期清理脚本：
+   - 支持 `--dry-run`、`--apply`、`--days`。
+   - 只允许清理 `P6S_EVENT_IMAGE_DIR` 下的事件子目录。
+   - 默认不接入定时任务；是否加 cron/systemd timer 另行确认。
+
+### 24.5 本轮批准开发步骤
+
+本轮只实现服务端代码、文档、配置模板和本地验证脚本；不部署远程服务器、不修改 `.env.local`、不调用任何摄像头写接口、不变更脸库数据。
+
+1. 文档落地：
+   - 将本轮批准范围、默认标题、验证方式和摄像头写入禁令同步到本节。
+   - 后续实现必须以本节为边界，发现范围外需求先暂停反馈。
+
+2. 角色映射：
+   - 服务端从环境变量读取三组脸库：
+     - `P6S_FACE_GROUP_MEMBERS_ID` / `P6S_FACE_GROUP_MEMBERS_NAME`
+     - `P6S_FACE_GROUP_COACHES_ID` / `P6S_FACE_GROUP_COACHES_NAME`
+     - `P6S_FACE_GROUP_STAFF_ID` / `P6S_FACE_GROUP_STAFF_NAME`
+   - 兼容旧配置 `P6S_FACE_GROUP_ID` / `P6S_FACE_GROUP_NAME`，作为会员组 fallback。
+   - 从 `personInfo` 中按 `personType`、`groupId`、`groupName`、`Group`、`FaceGroupID` 等字段匹配本地角色。
+   - 匹配不到角色时不丢弃事件，降级为 `role=unknown`、标题“人员入场提醒”。
+
+3. 飞书通知：
+   - 已匹配人员标题：
+     - 会员：`会员入场提醒`
+     - 教练：`教练入场提醒`
+     - 员工：`员工入场提醒`
+     - 未知已匹配身份：`人员入场提醒`
+   - 陌生人标题：`发现陌生人入场`。
+   - 飞书正文保留姓名、人员 ID、设备、时间、事件 ID，并在可识别角色时增加“身份类型”。
+   - 抽出纯 payload 构建函数，便于本地验证，不依赖真实飞书 webhook。
+
+4. 事件处理记录：
+   - `known` 记录中保存 `person_role`、`person_role_name`、`person_group_id`、`person_group_name`、`notification_title`。
+   - `stranger` 记录保持图片落盘、token 链接和 Ack 行为不变。
+
+5. 图片访问接口：
+   - 飞书链接只使用 `GET /api/p6s/event-images/view/{token}`。
+   - 旧 `GET /api/p6s/event-images/{filename}` 保留为排障入口，但必须加管理员鉴权；未登录用户不能通过裸文件名访问图片。
+
+6. 事件保留期清理：
+   - 新增手动运维脚本，默认 dry-run。
+   - 仅扫描并清理事件根目录下的 `raw`、`records`、`strangers`、`links` 日期目录。
+   - 只有显式传入 `--apply` 才删除；本轮不接入 cron 或 systemd timer。
+
+7. 本地验证：
+   - 扩展 fixture 验证会员、教练、员工、未知已匹配身份、陌生人、重复事件、心跳。
+   - 验证飞书 payload 标题和正文，不发送真实飞书消息。
+   - 验证 token 图片入口不受旧路由鉴权影响。
+   - 用 `/private/tmp` 模拟事件目录验证清理脚本 dry-run 和 apply。
+
+### 24.6 本轮实现结果
+
+- 已更新：
+  - `app/services/p6s_events.py`
+  - `app/services/feishu.py`
+  - `app/routers/camera.py`
+  - `scripts/cleanup_p6s_event_store.py`
+  - `scripts/validate_p6s_event_flow.py`
+  - `.env.example`
+  - `README.md`
+  - `DEPLOY.md`
+  - `tests/fixtures/p6s_face_reco_member.json`
+  - `tests/fixtures/p6s_face_reco_coach.json`
+  - `tests/fixtures/p6s_face_reco_staff.json`
+  - `tests/fixtures/p6s_face_reco_unknown_role.json`
+- 已验证：
+  - `python3 -m py_compile app/services/p6s_events.py app/services/feishu.py app/routers/camera.py scripts/cleanup_p6s_event_store.py scripts/validate_p6s_event_flow.py`
+  - `python3 scripts/validate_p6s_event_flow.py`
+- 本轮未执行：
+  - 未部署远程服务器。
+  - 未修改 `.env.local`。
+  - 未调用摄像头写接口。
+  - 未修改摄像头配置、脸库、组织结构或人员数据。
+
+### 24.7 不属于开发未完成的事项
+
+- 会员、教练、员工三组脸库录入后的真人识别测试：属于验证任务。
+- 陌生人站位触发、图片落盘、token 链接点击：属于验证任务，除非验证发现代码缺陷。
+- 真实重复事件幂等：属于验证任务；当前本地 fixture 已覆盖 duplicate 分支。
+- 摄像头抓拍/识别配置继续调参：不属于当前开发任务，且必须遵守 24.2 的写入禁令。
+
+### 24.8 远程部署脚本与本轮部署步骤
+
+本节用于把本轮服务端模板改动发布到 `qypower-prod`，并沉淀一个可重复使用的本地部署脚本。
+
+部署目标：
+
+- 远程主机：`qypower-prod`。
+- 应用目录：`/opt/camera-face-guard`。
+- systemd 服务：`camera-face-guard`。
+- 环境变量文件：`/etc/camera-face-guard/app.env`，本轮不修改。
+- 事件和图片目录：`/var/lib/camera-face-guard/p6s_events`，本轮不修改。
+
+脚本设计：
+
+- 新增 `scripts/deploy_qypower_prod.sh`，从本地执行。
+- 默认同步当前工作区代码到远程 `/opt/camera-face-guard/`。
+- 默认执行本地语法检查和 fixture 验证。
+- 默认远程执行语法检查、fixture 验证、服务重启和本机 HTTP 验证。
+- 支持 `--dry-run` 只查看同步计划。
+- 支持 `--skip-local-check`、`--skip-remote-check`、`--skip-deps`、`--skip-restart` 作为排障开关。
+
+同步范围：
+
+- 同步应用代码、静态页面、脚本、测试 fixture、文档和配置模板。
+- 不同步真实本地配置：`.env.local`、`.env.*`。
+- 不同步本地虚拟环境、Git 目录、缓存目录。
+- 不同步会员图片、教练图片、员工图片、CSV、抓取报告、事件日志等数据文件。
+- 不使用 `--delete-excluded`，避免删除远程已经存在但被排除的数据目录，如 `styd_member_faces/` 和 `.venv/`。
+
+部署验证：
+
+1. 本地：
+   - `python3 -m py_compile app/services/p6s_events.py app/services/feishu.py app/routers/camera.py scripts/cleanup_p6s_event_store.py scripts/validate_p6s_event_flow.py`
+   - `python3 scripts/validate_p6s_event_flow.py`
+2. 远程：
+   - `.venv/bin/python -m py_compile ...`
+   - `.venv/bin/python scripts/validate_p6s_event_flow.py`
+   - `systemctl restart camera-face-guard`
+   - `systemctl is-active camera-face-guard`
+   - `curl http://127.0.0.1:8000/api/docs`
+   - `curl http://127.0.0.1:8000/camera`
+   - 只读 grep 确认远程代码已包含 `会员入场提醒`、`教练入场提醒`、`员工入场提醒`、`发现陌生人入场`。
+
+回滚方式：
+
+- 本轮部署脚本会在远程生成 `~/camera-face-guard-backups/backup-<timestamp>` 备份目录。
+- 如部署后服务异常，可在远程执行：
+  - `sudo systemctl stop camera-face-guard`
+  - `rsync -a --delete ~/camera-face-guard-backups/backup-<timestamp>/ /opt/camera-face-guard/`
+  - `sudo systemctl restart camera-face-guard`
+- 回滚不涉及 `/etc/camera-face-guard/app.env` 和 `/var/lib/camera-face-guard/p6s_events`。
+
+本轮限制：
+
+- 不修改 `.env.local`。
+- 不修改远程 `/etc/camera-face-guard/app.env`。
+- 不写摄像头配置、不写脸库、不调用摄像头写接口。
+- 不触发飞书测试消息；只验证模板代码和本地 fixture。
+
+本轮执行结果：
+
+- 已新增并使用 `scripts/deploy_qypower_prod.sh`。
+- 首次部署前备份：
+  - `/home/ubuntu/camera-face-guard-backups/backup-20260703101943`
+- 首次部署已完成文件同步，但远程验证脚本因 `fastapi.testclient` 额外依赖缺失而在重启前停止；服务当时未切换到新代码。
+- 已将验证脚本改为不依赖 `TestClient`，通过直接 token 解析和路由依赖检查完成图片入口验证。
+- 二次部署完成代码同步、远程 fixture 验证和服务重启；服务状态为 `active`。
+- 重启后即时 HTTP 检查曾遇到启动竞态，后续只读检查确认：
+  - `http://127.0.0.1:8000/api/docs` 返回 `200`。
+  - `http://127.0.0.1:8000/camera` 返回 `200`。
+  - 远程代码已包含 `会员入场提醒`、`教练入场提醒`、`员工入场提醒`、`发现陌生人入场`。
+- 已为部署脚本增加 HTTP 等待循环，并用 `--skip-restart` 同步到远程后验证通过。
+- 最新脚本同步备份：
+  - `/home/ubuntu/camera-face-guard-backups/backup-20260703102118`
+- 本轮未修改：
+  - `.env.local`
+  - `/etc/camera-face-guard/app.env`
+  - 摄像头配置
+  - 摄像头脸库和人员数据
+  - 飞书机器人配置
+
+## 25. 参考文档
 
 - `docs/camera-alarm-feishu-push-plan.html`
 - `README.md`

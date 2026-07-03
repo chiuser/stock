@@ -57,7 +57,16 @@ def send_post(
     config: FeishuConfig | None = None,
 ) -> dict[str, Any]:
     cfg = config or FeishuConfig.from_env()
-    payload = {
+    return _send_webhook_payload(build_post_payload(title, lines), cfg)
+
+
+def build_post_payload(
+    title: str,
+    lines: list[list[dict[str, str]]],
+) -> dict[str, Any]:
+    """Build a Feishu post payload without sending it."""
+
+    return {
         "msg_type": "post",
         "content": {
             "post": {
@@ -68,7 +77,6 @@ def send_post(
             }
         },
     }
-    return _send_webhook_payload(payload, cfg)
 
 
 def upload_image(image_path: Path, config: FeishuConfig | None = None) -> dict[str, Any]:
@@ -116,9 +124,38 @@ def notify_known_face(
     device_sn: str,
     event_time: str,
     event_id: str | int | None,
+    role_name: str = "",
+    title: str = "",
     config: FeishuConfig | None = None,
 ) -> dict[str, Any]:
     """Notify Feishu about a successfully matched face."""
+
+    cfg = config or FeishuConfig.from_env()
+    return _send_webhook_payload(
+        build_known_face_post(
+            name=name,
+            person_id=person_id,
+            device_sn=device_sn,
+            event_time=event_time,
+            event_id=event_id,
+            role_name=role_name,
+            title=title,
+        ),
+        cfg,
+    )
+
+
+def build_known_face_post(
+    *,
+    name: str,
+    person_id: str,
+    device_sn: str,
+    event_time: str,
+    event_id: str | int | None,
+    role_name: str = "",
+    title: str = "",
+) -> dict[str, Any]:
+    """Build the post payload for a successfully matched face."""
 
     lines = [
         _text_line("姓名", name),
@@ -127,7 +164,10 @@ def notify_known_face(
         _text_line("时间", event_time or "unknown"),
         _text_line("事件 ID", event_id or "unknown"),
     ]
-    return send_post("人脸识别成功", lines, config)
+    if role_name:
+        # Put the user-facing role at the end so existing field order stays stable.
+        lines.append(_text_line("身份类型", role_name))
+    return build_post_payload(title or "人员入场提醒", lines)
 
 
 def notify_unknown_face(
@@ -143,18 +183,16 @@ def notify_unknown_face(
     """Notify Feishu about an unknown face and include a link when possible."""
 
     cfg = config or FeishuConfig.from_env()
-    resolved_storage_path = storage_path or (str(image_path) if image_path else "")
-    lines = [
-        _text_line("设备", device_sn or "unknown"),
-        _text_line("时间", event_time or "unknown"),
-        _text_line("事件 ID", event_id or "unknown"),
-    ]
-    if resolved_storage_path:
-        lines.append(_text_line("保存位置", resolved_storage_path))
-    if view_url:
-        lines.append(_link_line("查看图片", view_url))
+    post_payload = build_unknown_face_post(
+        image_path=image_path,
+        device_sn=device_sn,
+        event_time=event_time,
+        event_id=event_id,
+        storage_path=storage_path,
+        view_url=view_url,
+    )
 
-    results: list[dict[str, Any]] = [send_post("发现未匹配人脸", lines, cfg)]
+    results: list[dict[str, Any]] = [_send_webhook_payload(post_payload, cfg)]
 
     if image_path and image_path.exists() and cfg.app_id and cfg.app_secret:
         upload_result = upload_image(image_path, cfg)
@@ -170,6 +208,30 @@ def notify_unknown_face(
     return {"ok": any(r.get("ok") for r in results), "results": results}
 
 
+def build_unknown_face_post(
+    *,
+    image_path: Path | None,
+    device_sn: str,
+    event_time: str,
+    event_id: str | int | None,
+    storage_path: str | None = None,
+    view_url: str | None = None,
+) -> dict[str, Any]:
+    """Build the post payload for an unknown face."""
+
+    resolved_storage_path = storage_path or (str(image_path) if image_path else "")
+    lines = [
+        _text_line("设备", device_sn or "unknown"),
+        _text_line("时间", event_time or "unknown"),
+        _text_line("事件 ID", event_id or "unknown"),
+    ]
+    if resolved_storage_path:
+        lines.append(_text_line("保存位置", resolved_storage_path))
+    if view_url:
+        lines.append(_link_line("查看图片", view_url))
+    return build_post_payload("发现陌生人入场", lines)
+
+
 def notify_event_error(
     *,
     message: str,
@@ -181,6 +243,29 @@ def notify_event_error(
 ) -> dict[str, Any]:
     """Notify Feishu about an event handling error without exposing stack traces."""
 
+    cfg = config or FeishuConfig.from_env()
+    return _send_webhook_payload(
+        build_event_error_post(
+            message=message,
+            device_sn=device_sn,
+            event_time=event_time,
+            event_id=event_id,
+            raw_event_path=raw_event_path,
+        ),
+        cfg,
+    )
+
+
+def build_event_error_post(
+    *,
+    message: str,
+    device_sn: str = "",
+    event_time: str = "",
+    event_id: str | int | None = None,
+    raw_event_path: str = "",
+) -> dict[str, Any]:
+    """Build the post payload for an event handling error."""
+
     lines = [
         _text_line("问题", message),
         _text_line("设备", device_sn or "unknown"),
@@ -189,7 +274,7 @@ def notify_event_error(
     ]
     if raw_event_path:
         lines.append(_text_line("原始事件", raw_event_path))
-    return send_post("人脸识别事件处理异常", lines, config)
+    return build_post_payload("人脸识别事件处理异常", lines)
 
 
 def _tenant_access_token(config: FeishuConfig) -> dict[str, Any]:
