@@ -8,8 +8,10 @@ import hmac
 import os
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -41,6 +43,15 @@ class FeishuConfig:
                 self.webhook_url and self.app_id and self.app_secret
             ),
         }
+
+    @classmethod
+    def from_face_recheck_shadow_env(cls) -> "FeishuConfig":
+        return cls(
+            webhook_url=os.environ.get("FACE_RECHECK_SHADOW_FEISHU_WEBHOOK_URL", "").strip(),
+            webhook_secret=os.environ.get("FACE_RECHECK_SHADOW_FEISHU_WEBHOOK_SECRET", "").strip(),
+            app_id="",
+            app_secret="",
+        )
 
 
 def send_text(text: str, config: FeishuConfig | None = None) -> dict[str, Any]:
@@ -77,6 +88,105 @@ def build_post_payload(
             }
         },
     }
+
+
+def notify_face_recheck_shadow(
+    *,
+    device_sn: str,
+    event_time: str,
+    event_id: str | int | None,
+    camera_result: str,
+    camera_person_summary: dict[str, Any] | None,
+    recheck_result: dict[str, Any],
+    background_view_url: str | None = None,
+    capture_view_url: str | None = None,
+    config: FeishuConfig | None = None,
+) -> dict[str, Any]:
+    """Send InsightFace shadow comparison to the dedicated Feishu bot."""
+
+    cfg = config or FeishuConfig.from_face_recheck_shadow_env()
+    if not cfg.webhook_url:
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "face recheck shadow webhook is not configured",
+        }
+    return _send_webhook_payload(
+        build_face_recheck_shadow_post(
+            device_sn=device_sn,
+            event_time=event_time,
+            event_id=event_id,
+            camera_result=camera_result,
+            camera_person_summary=camera_person_summary,
+            recheck_result=recheck_result,
+            background_view_url=background_view_url,
+            capture_view_url=capture_view_url,
+        ),
+        cfg,
+    )
+
+
+def build_face_recheck_shadow_post(
+    *,
+    device_sn: str,
+    event_time: str,
+    event_id: str | int | None,
+    camera_result: str,
+    camera_person_summary: dict[str, Any] | None,
+    recheck_result: dict[str, Any],
+    background_view_url: str | None = None,
+    capture_view_url: str | None = None,
+) -> dict[str, Any]:
+    """Build a shadow-only InsightFace comparison post."""
+
+    selected_face = recheck_result.get("selected_face") or {}
+    gallery_match = recheck_result.get("gallery_match") or {}
+    lines = [
+        _text_line("事件时间", event_time or "unknown"),
+        _text_line("发送时间", _now_text()),
+        _text_line("设备", device_sn or "unknown"),
+        _text_line("事件 ID", event_id or "unknown"),
+        _text_line("摄像头结果", camera_result or "unknown"),
+        _text_line("摄像头人员", _camera_person_text(camera_person_summary)),
+        _text_line("InsightFace 模式", recheck_result.get("mode") or "unknown"),
+        _text_line("InsightFace 状态", recheck_result.get("status") or "unknown"),
+        _text_line("InsightFace 建议", recheck_result.get("decision") or "unknown"),
+        _text_line("过滤原因", recheck_result.get("reason") or "unknown"),
+        _text_line("检测人脸数", recheck_result.get("face_count", 0)),
+    ]
+    if selected_face:
+        lines.extend(
+            [
+                _text_line("检测分数", selected_face.get("det_score", "unknown")),
+                _text_line(
+                    "人脸尺寸",
+                    f"{selected_face.get('width', 'unknown')}x{selected_face.get('height', 'unknown')}",
+                ),
+                _text_line("模糊分数", selected_face.get("blur_score", "unknown")),
+                _text_line("侧脸分数", selected_face.get("frontal_score", "unknown")),
+                _text_line("质量标记", ", ".join(selected_face.get("quality_flags") or []) or "无"),
+            ]
+        )
+    if gallery_match:
+        lines.append(
+            _text_line(
+                "Gallery 命中",
+                (
+                    f"{gallery_match.get('name', '')} / "
+                    f"{gallery_match.get('person_type', '')} / "
+                    f"{gallery_match.get('person_id', '')} / "
+                    f"{gallery_match.get('similarity', '')}"
+                ).strip(" /"),
+            )
+        )
+    else:
+        lines.append(_text_line("Gallery 命中", "未启用"))
+    _append_image_links(
+        lines,
+        background_view_url=background_view_url,
+        capture_view_url=capture_view_url,
+    )
+    return build_post_payload("InsightFace Shadow 对比", lines)
 
 
 def upload_image(image_path: Path, config: FeishuConfig | None = None) -> dict[str, Any]:
@@ -372,6 +482,20 @@ def _with_signature(payload: dict[str, Any], config: FeishuConfig) -> dict[str, 
     signed_payload["timestamp"] = timestamp
     signed_payload["sign"] = signature
     return signed_payload
+
+
+def _now_text() -> str:
+    return datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _camera_person_text(person: dict[str, Any] | None) -> str:
+    if not person:
+        return "陌生人/无"
+    name = str(person.get("name") or person.get("person_name") or "").strip()
+    person_id = str(person.get("id") or person.get("person_id") or "").strip()
+    role = str(person.get("role_name") or person.get("role") or "").strip()
+    parts = [part for part in (name, person_id, role) if part]
+    return " / ".join(parts) if parts else "未知"
 
 
 def _text_line(label: str, value: Any) -> list[dict[str, str]]:

@@ -11,11 +11,12 @@ import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.services import feishu, image_links, p6s_events
+from app.services import face_recheck, feishu, image_links, p6s_events
 from app.services.event_store import RequestMeta
 
 FIXTURE_DIR = PROJECT_ROOT / "tests" / "fixtures"
@@ -56,6 +57,12 @@ async def validate() -> None:
         "P6S_FACE_GROUP_STAFF_ID": "4dcafc2c9fbd4d1fa267ccbf145c8861",
         "P6S_FACE_GROUP_STAFF_NAME": "员工",
         "ATTENDANCE_DB_ENABLED": "false",
+        "FACE_RECHECK_ENABLED": "false",
+        "FACE_RECHECK_MODE": "shadow",
+        "FACE_RECHECK_SHADOW_FEISHU_WEBHOOK_URL": "",
+        "FACE_RECHECK_SHADOW_FEISHU_WEBHOOK_SECRET": "",
+        "FEISHU_WEBHOOK_URL": "",
+        "FEISHU_WEBHOOK_SECRET": "",
     }
     with patched_env(role_env), tempfile.TemporaryDirectory() as temp_dir:
         root = Path(temp_dir)
@@ -178,6 +185,7 @@ async def validate() -> None:
         assert heartbeat_result.ack["operator"] == "heartbeat-Ack"
 
         validate_feishu_payloads()
+        await validate_face_recheck_shadow_flow(request_meta)
         validate_image_routes(root)
         validate_cleanup_script()
 
@@ -233,6 +241,91 @@ def validate_feishu_payloads() -> None:
         item.get("tag") == "a" and item.get("text") == "查看人脸图"
         for line in _post_lines(unknown_payload)
         for item in line
+    )
+
+    shadow_payload = feishu.build_face_recheck_shadow_post(
+        device_sn="SN-FIXTURE-001",
+        event_time="2026-07-02 10:05:00",
+        event_id="shadow-001",
+        camera_result="stranger",
+        camera_person_summary=None,
+        recheck_result=_mock_recheck_result().to_dict(),
+        background_view_url="http://example.test/api/p6s/event-images/view/shadow-background-token",
+        capture_view_url="http://example.test/api/p6s/event-images/view/shadow-capture-token",
+    )
+    assert _post_title(shadow_payload) == "InsightFace Shadow 对比"
+    assert any(
+        item.get("text") == "摄像头结果: stranger"
+        for line in _post_lines(shadow_payload)
+        for item in line
+    )
+    assert any(
+        item.get("text") == "InsightFace 状态: passed"
+        for line in _post_lines(shadow_payload)
+        for item in line
+    )
+    assert any(
+        item.get("tag") == "a" and item.get("text") == "查看背景全图"
+        for line in _post_lines(shadow_payload)
+        for item in line
+    )
+
+
+async def validate_face_recheck_shadow_flow(request_meta: RequestMeta) -> None:
+    env = {
+        "ATTENDANCE_DB_ENABLED": "false",
+        "FACE_RECHECK_ENABLED": "true",
+        "FACE_RECHECK_MODE": "shadow",
+        "FACE_RECHECK_SHADOW_FEISHU_WEBHOOK_URL": "",
+        "FACE_RECHECK_SHADOW_FEISHU_WEBHOOK_SECRET": "",
+        "FEISHU_WEBHOOK_URL": "",
+        "FEISHU_WEBHOOK_SECRET": "",
+    }
+    with patched_env(env), tempfile.TemporaryDirectory() as temp_dir:
+        with patch.object(
+            p6s_events.face_recheck,
+            "run_face_recheck",
+            return_value=_mock_recheck_result(),
+        ):
+            result = await p6s_events.handle_event(
+                with_capture_image(load_fixture("p6s_face_reco_known.json")),
+                request_meta=request_meta,
+                root=Path(temp_dir),
+                notify=True,
+            )
+            assert result.result == "known"
+            assert result.record_file is not None
+            record_text = result.record_file.path.read_text(encoding="utf-8")
+            record = json.loads(record_text)
+    assert record["face_recheck"]["enabled"] is True
+    assert record["face_recheck"]["mode"] == "shadow"
+    assert record["face_recheck"]["status"] == "passed"
+    assert record["face_recheck"]["decision"] == "allow_original"
+    assert record["face_recheck_shadow_feishu"]["skipped"] is True
+    assert "shadow-background-token" not in record_text
+
+
+def _mock_recheck_result() -> face_recheck.FaceRecheckResult:
+    return face_recheck.FaceRecheckResult(
+        enabled=True,
+        mode="shadow",
+        status="passed",
+        decision="allow_original",
+        reason="quality_passed",
+        image_source="background",
+        face_count=1,
+        selected_face=face_recheck.DetectedFaceSummary(
+            index=0,
+            bbox=(1.0, 2.0, 101.0, 122.0),
+            det_score=0.91,
+            width=100.0,
+            height=120.0,
+            blur_score=132.4,
+            frontal_score=0.12,
+            quality_flags=[],
+        ),
+        gallery_match=None,
+        elapsed_ms=12,
     )
 
 

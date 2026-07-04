@@ -5,3 +5,7 @@ websocket-client>=1.8.0
 SQLAlchemy>=2.0.0
 alembic>=1.13.0
 psycopg[binary]>=3.2.0
+insightface==1.0.1
+onnxruntime>=1.18.0
+opencv-python-headless>=4.10.0
+numpy>=1.26.0

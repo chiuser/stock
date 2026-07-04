@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.services import attendance, event_store, feishu, image_links
+from app.services import attendance, event_store, face_recheck, feishu, image_links
 
 
 @dataclass(frozen=True)
@@ -252,6 +252,13 @@ def _handle_known_face(
     )
     primary_image = face_images.primary()
     representative_image = _representative_image(face_images)
+    recheck_result, recheck_shadow_result = _run_face_recheck_for_event(
+        identity=identity,
+        route_result="known",
+        face_images=face_images,
+        camera_person=_matched_person_summary(person),
+        notify=notify,
+    )
     draft = attendance.build_known_draft(
         identity=identity,
         raw_file=raw_file,
@@ -324,6 +331,8 @@ def _handle_known_face(
             "link": _link_to_dict(primary_image.created_link) if primary_image else None,
             "images": face_images.image_records(),
             "links": face_images.link_records(),
+            "face_recheck": recheck_result.to_dict(),
+            "face_recheck_shadow_feishu": _notify_result_summary(recheck_shadow_result),
             "feishu": feishu_result,
             "attendance": db_result.to_dict(),
             "attendance_notification": notification_record,
@@ -365,6 +374,13 @@ def _handle_stranger(
     )
     primary_image = face_images.primary()
     representative_image = _representative_image(face_images)
+    recheck_result, recheck_shadow_result = _run_face_recheck_for_event(
+        identity=identity,
+        route_result="stranger",
+        face_images=face_images,
+        camera_person=None,
+        notify=notify,
+    )
 
     draft = attendance.build_stranger_draft(
         identity=identity,
@@ -424,6 +440,8 @@ def _handle_stranger(
             "link": _link_to_dict(primary_image.created_link) if primary_image else None,
             "images": face_images.image_records(),
             "links": face_images.link_records(),
+            "face_recheck": recheck_result.to_dict(),
+            "face_recheck_shadow_feishu": _notify_result_summary(recheck_shadow_result),
             "feishu": feishu_result,
             "attendance": db_result.to_dict(),
             "attendance_notification": notification_record,
@@ -464,6 +482,13 @@ def _handle_parse_error(
     )
     primary_image = face_images.primary()
     representative_image = _representative_image(face_images)
+    recheck_result, recheck_shadow_result = _run_face_recheck_for_event(
+        identity=identity,
+        route_result="parse_error",
+        face_images=face_images,
+        camera_person=None,
+        notify=notify,
+    )
     ack = _face_reco_ack(
         payload,
         matched_person=None,
@@ -512,6 +537,8 @@ def _handle_parse_error(
             "link": _link_to_dict(primary_image.created_link) if primary_image else None,
             "images": face_images.image_records(),
             "links": face_images.link_records(),
+            "face_recheck": recheck_result.to_dict(),
+            "face_recheck_shadow_feishu": _notify_result_summary(recheck_shadow_result),
             "feishu": feishu_result,
             "attendance": db_result.to_dict(),
             "attendance_notification": notification_record,
@@ -984,6 +1011,78 @@ def _image_source(image: SavedFaceRecoImage | None) -> str:
     if image:
         return str(image.image_record.get("source") or "")
     return ""
+
+
+def _run_face_recheck_for_event(
+    *,
+    identity: event_store.EventIdentity,
+    route_result: str,
+    face_images: SavedFaceRecoImages,
+    camera_person: dict[str, Any] | None,
+    notify: bool,
+) -> tuple[face_recheck.FaceRecheckResult, dict[str, Any]]:
+    primary_image = face_images.primary()
+    recheck_result = face_recheck.run_face_recheck(
+        face_recheck.FaceRecheckInput(
+            identity=identity,
+            route_result=route_result,  # type: ignore[arg-type]
+            camera_person=camera_person,
+            primary_image_path=_stored_image_file(primary_image),
+            background_image_path=_stored_image_file(face_images.background),
+            capture_image_path=_stored_image_file(face_images.capture),
+            background_view_url=_image_view_url(face_images.background),
+            capture_view_url=_image_view_url(face_images.capture),
+        )
+    )
+    if not notify:
+        return recheck_result, _notification_skipped("notify disabled")
+    if not recheck_result.enabled or recheck_result.mode == "off":
+        return recheck_result, _notification_skipped("face recheck disabled")
+    shadow_result = _safe_notify(
+        feishu.notify_face_recheck_shadow,
+        device_sn=identity.serial_number,
+        event_time=identity.event_time,
+        event_id=identity.event_id,
+        camera_result=route_result,
+        camera_person_summary=camera_person,
+        recheck_result=recheck_result.to_dict(),
+        background_view_url=_image_view_url(face_images.background),
+        capture_view_url=_image_view_url(face_images.capture),
+    )
+    return recheck_result, shadow_result
+
+
+def _stored_image_file(image: SavedFaceRecoImage | None) -> Path | None:
+    if image and image.stored_image:
+        return image.stored_image.path
+    return None
+
+
+def _matched_person_summary(person: MatchedPerson) -> dict[str, Any]:
+    return {
+        "name": person.name,
+        "id": person.person_id,
+        "person_id": person.person_id,
+        "camera_person_id": person.camera_person_id,
+        "role": person.role.code,
+        "role_name": person.role.name,
+        "group_id": person.role.group_id,
+        "group_name": person.role.group_name,
+    }
+
+
+def _notify_result_summary(result: dict[str, Any]) -> dict[str, Any]:
+    summary = {
+        "ok": bool(result.get("ok")),
+        "skipped": bool(result.get("skipped")),
+    }
+    if "reason" in result:
+        summary["reason"] = result.get("reason")
+    if isinstance(result.get("status_code"), int):
+        summary["status_code"] = result.get("status_code")
+    if result.get("error_type"):
+        summary["error_type"] = result.get("error_type")
+    return summary
 
 
 def _notify_known_enabled() -> bool:
