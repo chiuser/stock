@@ -642,13 +642,24 @@ class DetectedFaceSummary:
 @dataclass(frozen=True)
 class GalleryMatch:
     person_id: str
+    credential_no: str
+    credential_type: str
     name: str
+    sex: str
     person_type: Literal["member", "coach", "staff"]
     group_id: str
     group_name: str
     similarity: float
     second_similarity: float | None
     accepted: bool
+    camera_identity_status: Literal[
+        "not_compared",
+        "name_matched",
+        "id_matched",
+        "name_and_id_matched",
+        "identity_conflict",
+        "camera_unknown",
+    ]
 
 @dataclass(frozen=True)
 class FaceRecheckResult:
@@ -794,6 +805,74 @@ def get_face_analysis(settings: FaceRecheckSettings) -> FaceAnalysis:
       <h2>八、服务器侧 Gallery 设计</h2>
       <h3>文件格式</h3>
       <p>gallery 是服务器侧二次比对用的人脸库，和摄像头脸库分离。它是运行时敏感资产，不进 Git。</p>
+      <div class="callout" style="margin-top: 18px;">
+        <p><strong>Milestone 4 输入源已确认：</strong>Gallery 必须从已按 P6S 人脸库命名规则生成的三个目录构建，不能再从旧 CSV + 原始图片目录推导身份信息。这样服务器侧 Gallery 与摄像头人脸库使用同一套姓名和证件号口径，后续 shadow 对比可以直接判断摄像头结果与 InsightFace 结果是否为同一人。</p>
+      </div>
+      <h3>输入目录与角色映射</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>角色</th>
+            <th><code>person_type</code></th>
+            <th>输入目录</th>
+            <th>摄像头脸库</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>会员</td>
+            <td><code>member</code></td>
+            <td><code>/Users/congming/github/stock/styd_member_faces_full_p6s_named</code></td>
+            <td><code>GroupName=会员</code></td>
+          </tr>
+          <tr>
+            <td>员工</td>
+            <td><code>staff</code></td>
+            <td><code>/Users/congming/github/stock/staff_p6s_named</code></td>
+            <td><code>GroupName=员工</code></td>
+          </tr>
+          <tr>
+            <td>教练</td>
+            <td><code>coach</code></td>
+            <td><code>/Users/congming/github/stock/teacher_p6s_named</code></td>
+            <td><code>GroupName=教练</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <h3>文件名解析规则</h3>
+      <p>构建脚本只处理 <code>.jpg</code>、<code>.jpeg</code>、<code>.png</code> 文件。文件名必须符合 P6S 导入命名规则：</p>
+      <pre><code>I名称#S性别#T证件类型#M证件号码.jpg/png</code></pre>
+      <table>
+        <thead>
+          <tr>
+            <th>片段</th>
+            <th>Gallery 字段</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>I名称</code></td>
+            <td><code>name</code></td>
+            <td>人员姓名，后续用于和摄像头事件里的人员姓名对齐。文件名中如 <code>I微信用户379...</code>，则完整保留为姓名。</td>
+          </tr>
+          <tr>
+            <td><code>S性别</code></td>
+            <td><code>sex</code></td>
+            <td>当前统一为 <code>0</code>，表示男；仅写入 manifest，不参与相似度计算。</td>
+          </tr>
+          <tr>
+            <td><code>T证件类型</code></td>
+            <td><code>credential_type</code></td>
+            <td>当前统一为 <code>2</code>；仅写入 manifest，便于和摄像头人脸库导入口径回溯。</td>
+          </tr>
+          <tr>
+            <td><code>M证件号码</code></td>
+            <td><code>person_id</code> / <code>credential_no</code></td>
+            <td>人员稳定 ID。Gallery 内部用 <code>person_type + person_id</code> 保证唯一。</td>
+          </tr>
+        </tbody>
+      </table>
       <pre><code>/var/lib/camera-face-guard/face-gallery/
   gallery.npz
   gallery_manifest.json
@@ -816,7 +895,7 @@ def get_face_analysis(settings: FaceRecheckSettings) -> FaceAnalysis:
           <tr>
             <td><code>person_ids</code></td>
             <td><code>str[N]</code></td>
-            <td>人员 ID，与 CSV/图片命名一致。</td>
+            <td>人员 ID，来自文件名中的 <code>M证件号码</code>。</td>
           </tr>
           <tr>
             <td><code>person_types</code></td>
@@ -826,7 +905,7 @@ def get_face_analysis(settings: FaceRecheckSettings) -> FaceAnalysis:
           <tr>
             <td><code>names</code></td>
             <td><code>str[N]</code></td>
-            <td>人员姓名。</td>
+            <td>人员姓名，来自文件名中的 <code>I名称</code>。</td>
           </tr>
         </tbody>
       </table>
@@ -836,39 +915,51 @@ def get_face_analysis(settings: FaceRecheckSettings) -> FaceAnalysis:
   "model_sha256": "80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f",
   "created_at": "2026-07-04T00:00:00+08:00",
   "source_sets": [
-    {"person_type": "member", "csv": "...", "image_dir": "...", "count": 244},
-    {"person_type": "coach", "csv": "...", "image_dir": "...", "count": 15},
-    {"person_type": "staff", "csv": "...", "image_dir": "...", "count": 4}
+    {"person_type": "member", "group_name": "会员", "image_dir": ".../styd_member_faces_full_p6s_named", "count": 244},
+    {"person_type": "staff", "group_name": "员工", "image_dir": ".../staff_p6s_named", "count": 4},
+    {"person_type": "coach", "group_name": "教练", "image_dir": ".../teacher_p6s_named", "count": 15}
   ],
   "records": [
     {
       "index": 0,
       "person_id": "3427976339944670",
+      "credential_no": "3427976339944670",
+      "credential_type": "2",
       "name": "小明",
+      "sex": "0",
       "person_type": "staff",
       "group_id": "4dcafc2c9fbd4d1fa267ccbf145c8861",
       "group_name": "员工",
-      "source_image_path": "/private/path/not_for_git.jpg",
+      "source_filename": "I小明#S0#T2#M3427976339944670.jpg",
+      "source_image_path": "/private/path/staff_p6s_named/I小明#S0#T2#M3427976339944670.jpg",
       "quality_flags": []
     }
   ]
 }</code></pre>
       <h3>构建脚本</h3>
       <pre><code>python3 scripts/build_face_gallery.py \
-  --member-csv /Users/congming/github/stock/styd_members_20260703_existing_faces_244.csv \
-  --member-dir /Users/congming/github/stock/styd_member_faces \
-  --coach-csv /Users/congming/github/stock/teacher.csv \
-  --coach-dir /Users/congming/github/stock/teacher \
-  --staff-csv /Users/congming/github/stock/staff.csv \
-  --staff-dir /Users/congming/github/stock/staff \
+  --member-dir /Users/congming/github/stock/styd_member_faces_full_p6s_named \
+  --staff-dir /Users/congming/github/stock/staff_p6s_named \
+  --coach-dir /Users/congming/github/stock/teacher_p6s_named \
   --output-dir /var/lib/camera-face-guard/face-gallery \
   --model-root /Users/congming/.insightface</code></pre>
       <h3>构建规则</h3>
       <ul>
-        <li>每张源图必须能被 InsightFace 检测到且只选一个主脸。</li>
+        <li>身份信息只从 P6S 命名文件名解析，不再读取会员、教练、员工 CSV。</li>
+        <li>不符合 <code>I名称#S性别#T证件类型#M证件号码</code> 的文件写入 <code>build_report</code> 并跳过，不猜测姓名或 ID。</li>
+        <li>每张源图必须能被 InsightFace 检测到且只选一个主脸；无人脸、多脸、不可读或无 embedding 记为失败。</li>
+        <li>低分、过小、模糊、侧脸等质量问题不阻断入库，写入 manifest 的 <code>quality_flags</code> 和 <code>build_report</code> 的 warning，避免 Gallery 覆盖率被首版阈值过度削弱。</li>
         <li>提取失败的人员写入 <code>build_report</code>，默认不中断全量构建，但报告中必须列出失败人员。</li>
         <li>同一 <code>person_type + person_id</code> 重复时停止，避免 gallery 索引歧义。</li>
+        <li>同一 <code>person_type + name</code> 允许重复，但 shadow 对比时姓名一致只能作为“疑似一致”，最终仍保留 <code>person_id</code> 供回查。</li>
         <li>脚本默认输出到用户指定目录，不写入仓库。</li>
+      </ul>
+      <h3>摄像头结果对齐口径</h3>
+      <ul>
+        <li>摄像头事件里如果返回姓名，则优先用 <code>name</code> 与 Gallery 命中姓名判断是否一致。</li>
+        <li>摄像头事件里如果返回人员 ID 或证件号，则同时与 Gallery 的 <code>person_id</code> / <code>credential_no</code> 比对。</li>
+        <li>姓名一致但 ID 缺失时，shadow 消息标记为 <code>name_matched</code>；姓名或 ID 冲突时标记为 <code>identity_conflict</code>，本阶段只记录，不覆盖业务结果。</li>
+        <li>目录角色决定 Gallery 身份类型：会员、员工、教练；不从文件名或摄像头返回字段反推角色。</li>
       </ul>
     </section>
 
@@ -1044,6 +1135,7 @@ InsightFace 建议: override_to_known
 模糊分数: 132.4
 侧脸分数: 0.12
 Gallery 命中: 小明 / staff / 3427976339944670 / 0.63
+结果对齐: name_matched
 查看背景全图
 查看人脸图</code></pre>
       <h3>发送规则</h3>
@@ -1151,7 +1243,9 @@ FACE_RECHECK_SHADOW_FEISHU_WEBHOOK_SECRET=&lt;真实值&gt;</code></pre>
       <h3>Gallery 构建验证</h3>
       <ul>
         <li>构建脚本输出 <code>gallery.npz</code>、<code>gallery_manifest.json</code>、<code>build_report</code>。</li>
-        <li>报告必须包含总人数、成功人数、失败人数、失败原因。</li>
+        <li>报告必须包含总文件数、有效命名文件数、成功人数、失败人数、失败原因。</li>
+        <li>报告必须列出命名解析失败文件、InsightFace 无脸/多脸/无 embedding 文件、低质量 warning、重复 <code>person_type + person_id</code>。</li>
+        <li>manifest 中每条记录必须包含 <code>name</code>、<code>sex</code>、<code>credential_type</code>、<code>credential_no</code>、<code>person_type</code>、<code>group_name</code> 和 <code>source_filename</code>。</li>
         <li>对小明等已知人员抽样验证相似度命中。</li>
       </ul>
       <h3>事件流验证</h3>
@@ -1197,6 +1291,17 @@ FACE_RECHECK_SHADOW_FEISHU_WEBHOOK_SECRET=&lt;真实值&gt;</code></pre>
         <li>扩展 <code>scripts/validate_p6s_event_flow.py</code>，增加 shadow/filter/override fixture。</li>
         <li>本地运行静态检查、POC、事件流验证。</li>
         <li>评审结果后再执行远程 shadow 部署。</li>
+      </ol>
+      <h3>Milestone 4 Gallery 专属步骤</h3>
+      <ol>
+        <li>实现 P6S 命名解析函数，只接受 <code>I名称#S性别#T证件类型#M证件号码.jpg/png</code>，解析失败写入 <code>build_report</code>。</li>
+        <li>固定读取三个已确认目录：<code>styd_member_faces_full_p6s_named</code>、<code>staff_p6s_named</code>、<code>teacher_p6s_named</code>。</li>
+        <li>按目录注入角色：会员为 <code>member</code>，员工为 <code>staff</code>，教练为 <code>coach</code>；不从 CSV 或摄像头返回值反推角色。</li>
+        <li>构建每张图片的 InsightFace embedding，成功记录写入 <code>gallery.npz</code> 和 <code>gallery_manifest.json</code>。</li>
+        <li>失败记录统一写入 <code>build_report</code>，包括命名失败、图片不可读、无人脸、多脸、无 embedding 和重复 ID；低质量只作为 warning。</li>
+        <li>实现 Gallery 加载与余弦相似度比对，输出 <code>GalleryMatch</code>，保留姓名、证件号、角色、相似度和摄像头结果对齐状态。</li>
+        <li>扩展 shadow 消息，在不改变主业务结果的前提下展示 Gallery 命中和 <code>name_matched</code> / <code>identity_conflict</code> 等对齐结论。</li>
+        <li>本地验证通过后，再由用户确认是否部署到远程 shadow 环境。</li>
       </ol>
     </section>
   </main>

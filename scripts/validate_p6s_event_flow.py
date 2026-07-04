@@ -16,7 +16,7 @@ from unittest.mock import patch
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.services import face_recheck, feishu, image_links, p6s_events
+from app.services import face_gallery, face_recheck, feishu, image_links, p6s_events
 from app.services.event_store import RequestMeta
 
 FIXTURE_DIR = PROJECT_ROOT / "tests" / "fixtures"
@@ -185,6 +185,7 @@ async def validate() -> None:
         assert heartbeat_result.ack["operator"] == "heartbeat-Ack"
 
         validate_feishu_payloads()
+        validate_face_gallery_matching()
         await validate_face_recheck_shadow_flow(request_meta)
         validate_image_routes(root)
         validate_cleanup_script()
@@ -265,10 +266,87 @@ def validate_feishu_payloads() -> None:
         for item in line
     )
     assert any(
+        item.get("text") == "Gallery 是否通过: True"
+        for line in _post_lines(shadow_payload)
+        for item in line
+    )
+    assert any(
+        item.get("text") == "结果对齐: camera_unknown"
+        for line in _post_lines(shadow_payload)
+        for item in line
+    )
+    assert any(
         item.get("tag") == "a" and item.get("text") == "查看背景全图"
         for line in _post_lines(shadow_payload)
         for item in line
     )
+
+
+def validate_face_gallery_matching() -> None:
+    import numpy as np
+
+    records = [
+        {
+            "person_id": "3427976339944670",
+            "credential_no": "3427976339944670",
+            "credential_type": "2",
+            "name": "小明",
+            "sex": "0",
+            "person_type": "staff",
+            "group_id": "4dcafc2c9fbd4d1fa267ccbf145c8861",
+            "group_name": "员工",
+            "source_filename": "I小明#S0#T2#M3427976339944670.jpg",
+            "source_image_path": "/private/fixture/I小明#S0#T2#M3427976339944670.jpg",
+            "quality_flags": [],
+        },
+        {
+            "person_id": "3785841386866689",
+            "credential_no": "3785841386866689",
+            "credential_type": "2",
+            "name": "苏苏",
+            "sex": "0",
+            "person_type": "member",
+            "group_id": "c1e42a1f2531467bae464da8a79dad53",
+            "group_name": "会员",
+            "source_filename": "I苏苏#S0#T2#M3785841386866689.jpg",
+            "source_image_path": "/private/fixture/I苏苏#S0#T2#M3785841386866689.jpg",
+            "quality_flags": [],
+        },
+    ]
+    index = face_gallery.FaceGalleryIndex(
+        embeddings=np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32),
+        records=records,
+        manifest={"records": records},
+    )
+    match = index.match(
+        np.array([1.0, 0.0], dtype=np.float32),
+        similarity_threshold=0.5,
+        similarity_margin=0.03,
+        camera_person={"name": "小明", "person_id": "3427976339944670"},
+    )
+    assert match is not None
+    assert match.accepted is True
+    assert match.person_type == "staff"
+    assert match.camera_identity_status == "name_and_id_matched"
+
+    conflict = index.match(
+        np.array([1.0, 0.0], dtype=np.float32),
+        similarity_threshold=0.5,
+        similarity_margin=0.03,
+        camera_person={"name": "其他人", "person_id": "000"},
+    )
+    assert conflict is not None
+    assert conflict.camera_identity_status == "identity_conflict"
+
+    low_confidence = index.match(
+        np.array([0.51, 0.49], dtype=np.float32),
+        similarity_threshold=0.8,
+        similarity_margin=0.03,
+        camera_person=None,
+    )
+    assert low_confidence is not None
+    assert low_confidence.accepted is False
+    assert low_confidence.camera_identity_status == "camera_unknown"
 
 
 async def validate_face_recheck_shadow_flow(request_meta: RequestMeta) -> None:
@@ -324,7 +402,20 @@ def _mock_recheck_result() -> face_recheck.FaceRecheckResult:
             frontal_score=0.12,
             quality_flags=[],
         ),
-        gallery_match=None,
+        gallery_match=face_recheck.GalleryMatch(
+            person_id="3427976339944670",
+            credential_no="3427976339944670",
+            credential_type="2",
+            name="小明",
+            sex="0",
+            person_type="staff",
+            group_id="4dcafc2c9fbd4d1fa267ccbf145c8861",
+            group_name="员工",
+            similarity=0.91,
+            second_similarity=0.42,
+            accepted=True,
+            camera_identity_status="camera_unknown",
+        ),
         elapsed_ms=12,
     )
 

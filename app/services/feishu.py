@@ -179,6 +179,19 @@ def build_face_recheck_shadow_post(
                 ).strip(" /"),
             )
         )
+        lines.extend(
+            [
+                _text_line(
+                    "Gallery 第二名分数",
+                    gallery_match.get("second_similarity", "无"),
+                ),
+                _text_line("Gallery 是否通过", gallery_match.get("accepted", False)),
+                _text_line(
+                    "结果对齐",
+                    gallery_match.get("camera_identity_status", "not_compared"),
+                ),
+            ]
+        )
     else:
         lines.append(_text_line("Gallery 命中", "未启用"))
     _append_image_links(

@@ -126,13 +126,24 @@ class DetectedFaceSummary:
 @dataclass(frozen=True)
 class GalleryMatch:
     person_id: str
+    credential_no: str
+    credential_type: str
     name: str
+    sex: str
     person_type: Literal["member", "coach", "staff"]
     group_id: str
     group_name: str
     similarity: float
     second_similarity: float | None
     accepted: bool
+    camera_identity_status: Literal[
+        "not_compared",
+        "name_matched",
+        "id_matched",
+        "name_and_id_matched",
+        "identity_conflict",
+        "camera_unknown",
+    ]
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -252,6 +263,7 @@ def run_face_recheck(
             if any(flag in blocking_flags for flag in summary.quality_flags)
             else "passed"
         )
+        gallery_match = _match_gallery(cfg, selected_face, recheck_input.camera_person)
         reason = ",".join(summary.quality_flags) if summary.quality_flags else "quality_passed"
         return _result(
             cfg,
@@ -260,6 +272,7 @@ def run_face_recheck(
             image_source=image_source,
             face_count=len(faces),
             selected_face=summary,
+            gallery_match=gallery_match,
             started=started,
         )
     except Exception as exc:
@@ -442,6 +455,7 @@ def _result(
     face_count: int,
     selected_face: DetectedFaceSummary | None,
     started: float,
+    gallery_match: GalleryMatch | None = None,
 ) -> FaceRecheckResult:
     return FaceRecheckResult(
         enabled=True,
@@ -452,8 +466,49 @@ def _result(
         image_source=image_source,
         face_count=face_count,
         selected_face=selected_face,
-        gallery_match=None,
+        gallery_match=gallery_match,
         elapsed_ms=_elapsed_ms(started),
+    )
+
+
+def _match_gallery(
+    settings: FaceRecheckSettings,
+    selected_face: Any,
+    camera_person: dict[str, Any] | None,
+) -> GalleryMatch | None:
+    embedding = getattr(selected_face, "normed_embedding", None)
+    if embedding is None:
+        return None
+    try:
+        from app.services import face_gallery
+
+        index = face_gallery.load_gallery(
+            gallery_path=settings.gallery_path,
+            manifest_path=settings.gallery_manifest_path,
+        )
+        match = index.match(
+            embedding,
+            similarity_threshold=settings.similarity_threshold,
+            similarity_margin=settings.similarity_margin,
+            camera_person=camera_person,
+        )
+    except Exception:
+        return None
+    if match is None:
+        return None
+    return GalleryMatch(
+        person_id=match.person_id,
+        credential_no=match.credential_no,
+        credential_type=match.credential_type,
+        name=match.name,
+        sex=match.sex,
+        person_type=match.person_type,
+        group_id=match.group_id,
+        group_name=match.group_name,
+        similarity=match.similarity,
+        second_similarity=match.second_similarity,
+        accepted=match.accepted,
+        camera_identity_status=match.camera_identity_status,
     )
 
 
