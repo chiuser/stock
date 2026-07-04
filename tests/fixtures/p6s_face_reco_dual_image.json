@@ -1,0 +1,27 @@
+{
+  "operator": "FaceReco",
+  "deviceInfo": {
+    "serialNumber": "SN-FIXTURE-001"
+  },
+  "info": {
+    "eventId": "dual-image-001",
+    "time": "2026-07-02 10:20:00",
+    "matchNumber": 1,
+    "BackgroundImage": {
+      "picture": "data:image/jpeg;base64,/9j/4GZpeHR1cmU="
+    },
+    "CaptureImage": {
+      "picture": "data:image/jpeg;base64,/9j/4GZpeHR1cmU="
+    },
+    "recognizeImage": {
+      "picture": "",
+      "pictureMd5": "d41d8cd98f00b204e9800998ecf8427e"
+    },
+    "personInfo": {
+      "uniqueId": "dual-image-member-001",
+      "name": "双图验证会员",
+      "personId": "dual-image-member-001",
+      "groupId": "c1e42a1f2531467bae464da8a79dad53"
+    }
+  }
+}

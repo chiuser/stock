@@ -66,6 +66,7 @@ def parse_args() -> argparse.Namespace:
 def run_validation(prefix: str, settings: AttendanceDbSettings) -> dict[str, Any]:
     base_time = datetime(2099, 1, 1, 10, 0, tzinfo=LOCAL_TZ)
     member_id = f"{prefix}-member"
+    dedup_settings = replace(settings, attendance_notify_dedup_enabled=True)
 
     first = attendance.record_event(
         known_draft(
@@ -73,8 +74,9 @@ def run_validation(prefix: str, settings: AttendanceDbSettings) -> dict[str, Any
             suffix="known-1",
             event_time=base_time,
             person_ref_id=member_id,
+            camera_person_id="3427976339944670",
         ),
-        settings=settings,
+        settings=dedup_settings,
     )
     assert first.inserted and first.should_notify and not first.notification_suppressed
 
@@ -91,8 +93,9 @@ def run_validation(prefix: str, settings: AttendanceDbSettings) -> dict[str, Any
             suffix="known-2",
             event_time=base_time + timedelta(minutes=10),
             person_ref_id=member_id,
+            camera_person_id="3427976339944670",
         ),
-        settings=settings,
+        settings=dedup_settings,
     )
     assert second.inserted and not second.should_notify and second.notification_suppressed
     assert second.suppressed_reason == "known_person_2h_window"
@@ -104,6 +107,7 @@ def run_validation(prefix: str, settings: AttendanceDbSettings) -> dict[str, Any
             suffix="known-3",
             event_time=base_time + timedelta(minutes=20),
             person_ref_id=member_id,
+            camera_person_id="3427976339944670",
         ),
         settings=no_dedup_settings,
     )
@@ -129,6 +133,7 @@ def run_validation(prefix: str, settings: AttendanceDbSettings) -> dict[str, Any
     assert summary["member_entries"] >= 3
     assert summary["stranger_entries"] >= 1
     assert summary["notification_suppressed_count"] >= 1
+    assert fetch_member_camera_person_id(member_id, settings) == "3427976339944670"
 
     return {
         "first_known": first.to_dict(),
@@ -139,7 +144,14 @@ def run_validation(prefix: str, settings: AttendanceDbSettings) -> dict[str, Any
     }
 
 
-def known_draft(*, prefix: str, suffix: str, event_time: datetime, person_ref_id: str) -> attendance.AttendanceEventDraft:
+def known_draft(
+    *,
+    prefix: str,
+    suffix: str,
+    event_time: datetime,
+    person_ref_id: str,
+    camera_person_id: str | None,
+) -> attendance.AttendanceEventDraft:
     identity = identity_for(prefix=prefix, suffix=suffix, event_time=event_time)
     raw_file = raw_file_for(prefix, suffix)
     return attendance.build_known_draft(
@@ -148,7 +160,7 @@ def known_draft(*, prefix: str, suffix: str, event_time: datetime, person_ref_id
         person_type="member",
         person_ref_id=person_ref_id,
         name="验证会员",
-        camera_person_id=None,
+        camera_person_id=camera_person_id,
         face_group_id="validation-members",
         face_group_name="会员",
         match_number=1,
@@ -209,6 +221,15 @@ def cleanup(prefix: str, settings: AttendanceDbSettings) -> None:
         conn.execute(text("delete from daily_attendance_reports where report_date = :report_date"), {"report_date": VALIDATION_DATE})
         conn.execute(text("delete from strangers where image_url like :prefix"), {"prefix": f"%/{prefix}/%"})
         conn.execute(text("delete from members where member_id like :prefix"), {"prefix": f"{prefix}%"})
+
+
+def fetch_member_camera_person_id(member_id: str, settings: AttendanceDbSettings) -> str | None:
+    with transaction(settings) as conn:
+        row = conn.execute(
+            text("select camera_person_id from members where member_id = :member_id"),
+            {"member_id": member_id},
+        ).first()
+    return str(row[0]) if row and row[0] is not None else None
 
 
 def _json_default(value: Any) -> str:

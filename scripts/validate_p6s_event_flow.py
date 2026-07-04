@@ -87,6 +87,31 @@ async def validate() -> None:
         assert known_record["link"] is not None
         assert known_result.link.token not in known_record_text
 
+        dual = load_fixture("p6s_face_reco_dual_image.json")
+        dual_result = await p6s_events.handle_event(
+            dual,
+            request_meta=request_meta,
+            root=root,
+            notify=False,
+        )
+        assert dual_result.result == "known"
+        assert dual_result.image is not None
+        assert dual_result.link is not None
+        assert dual_result.record_file is not None
+        dual_record_text = dual_result.record_file.path.read_text(encoding="utf-8")
+        dual_record = json.loads(dual_record_text)
+        assert dual_record["image"]["kind"] == "background"
+        assert dual_record["image"]["source"] == "BackgroundImage"
+        assert "_background_" in dual_record["image"]["storage_path"]
+        assert dual_record["images"]["background"]["status"] == "saved"
+        assert dual_record["images"]["capture"]["status"] == "saved"
+        assert "_capture_" in dual_record["images"]["capture"]["storage_path"]
+        assert dual_record["links"]["background"]["relative_path"] == dual_record["images"]["background"]["relative_path"]
+        assert dual_record["links"]["capture"]["relative_path"] == dual_record["images"]["capture"]["relative_path"]
+        assert "token_hash" in dual_record["links"]["background"]
+        assert "token_hash" in dual_record["links"]["capture"]
+        assert dual_result.link.token not in dual_record_text
+
         for fixture, role, role_name, title in (
             ("p6s_face_reco_member.json", "members", "会员", "会员入场提醒"),
             ("p6s_face_reco_coach.json", "coaches", "教练", "教练入场提醒"),
@@ -106,6 +131,8 @@ async def validate() -> None:
             assert matched["person_role"] == role
             assert matched["person_role_name"] == role_name
             assert matched["notification_title"] == title
+            if role == "staff":
+                assert matched["camera_person_id"] == "3427976339944670"
 
         duplicate_result = await p6s_events.handle_event(
             known,
@@ -167,7 +194,8 @@ def validate_feishu_payloads() -> None:
         role_name="会员",
         title="会员入场提醒",
         storage_path="/var/lib/camera-face-guard/p6s_events/faces/2026-07-02/member.jpg",
-        view_url="http://example.test/api/p6s/event-images/view/member-token",
+        background_view_url="http://example.test/api/p6s/event-images/view/member-background-token",
+        capture_view_url="http://example.test/api/p6s/event-images/view/member-capture-token",
     )
     assert _post_title(known_payload) == "会员入场提醒"
     assert any(
@@ -176,7 +204,12 @@ def validate_feishu_payloads() -> None:
         for item in line
     )
     assert any(
-        item.get("tag") == "a" and item.get("text") == "查看图片"
+        item.get("tag") == "a" and item.get("text") == "查看背景全图"
+        for line in _post_lines(known_payload)
+        for item in line
+    )
+    assert any(
+        item.get("tag") == "a" and item.get("text") == "查看人脸图"
         for line in _post_lines(known_payload)
         for item in line
     )
@@ -187,11 +220,17 @@ def validate_feishu_payloads() -> None:
         event_time="2026-07-02 10:05:00",
         event_id="stranger-001",
         storage_path="/var/lib/camera-face-guard/p6s_events/strangers/2026-07-02/a.jpg",
-        view_url="http://example.test/api/p6s/event-images/view/token",
+        background_view_url="http://example.test/api/p6s/event-images/view/stranger-background-token",
+        capture_view_url="http://example.test/api/p6s/event-images/view/stranger-capture-token",
     )
     assert _post_title(unknown_payload) == "发现陌生人入场"
     assert any(
-        item.get("tag") == "a" and item.get("text") == "查看图片"
+        item.get("tag") == "a" and item.get("text") == "查看背景全图"
+        for line in _post_lines(unknown_payload)
+        for item in line
+    )
+    assert any(
+        item.get("tag") == "a" and item.get("text") == "查看人脸图"
         for line in _post_lines(unknown_payload)
         for item in line
     )

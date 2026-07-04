@@ -91,9 +91,10 @@ class StoredImage:
     md5: str
     md5_ok: bool | None
     source: str
+    image_kind: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "status": "saved",
             "source": self.source,
             "storage_path": str(self.path),
@@ -103,6 +104,9 @@ class StoredImage:
             "md5": self.md5,
             "md5_ok": self.md5_ok,
         }
+        if self.image_kind:
+            data["kind"] = self.image_kind
+        return data
 
 
 def now_local() -> datetime:
@@ -275,6 +279,7 @@ def save_stranger_image(
     expected_md5: str | None = None,
     root: Path | str | None = None,
     max_bytes: int | None = None,
+    image_kind: str | None = None,
 ) -> StoredImage:
     return save_face_image(
         identity,
@@ -284,6 +289,7 @@ def save_stranger_image(
         root=root,
         max_bytes=max_bytes,
         category="strangers",
+        image_kind=image_kind,
     )
 
 
@@ -296,6 +302,7 @@ def save_face_image(
     root: Path | str | None = None,
     max_bytes: int | None = None,
     category: str = "faces",
+    image_kind: str | None = None,
 ) -> StoredImage:
     byte_limit = max_bytes if max_bytes is not None else _max_image_bytes()
     if not image_bytes:
@@ -305,7 +312,7 @@ def save_face_image(
 
     content_type, extension = detect_image_type(image_bytes)
     actual_md5 = hashlib.md5(image_bytes).hexdigest()
-    expected = (expected_md5 or identity.picture_md5 or "").strip().lower()
+    expected = (expected_md5 or "").strip().lower()
     md5_ok = actual_md5 == expected if expected else None
     paths = ensure_event_store_dirs(day=identity.event_day, root=root)
     target_dir = _image_target_dir(paths, category)
@@ -314,6 +321,7 @@ def save_face_image(
         image_md5=expected or actual_md5,
         fallback_hash=hashlib.sha256(image_bytes).hexdigest(),
         extension=extension,
+        image_kind=image_kind,
     )
     path = target_dir / filename
     _atomic_write_bytes(path, image_bytes)
@@ -325,6 +333,7 @@ def save_face_image(
         md5=actual_md5,
         md5_ok=md5_ok,
         source=source,
+        image_kind=image_kind,
     )
 
 
@@ -375,12 +384,16 @@ def _face_image_filename(
     image_md5: str,
     fallback_hash: str,
     extension: str,
+    image_kind: str | None = None,
 ) -> str:
     serial = safe_filename_part(identity.serial_number, default="device")
     event_id = safe_filename_part(identity.event_id, default="event")
+    kind = safe_filename_part(image_kind, default="", max_length=32) if image_kind else ""
     md5_part = re.sub(r"[^0-9A-Fa-f]", "", image_md5)[:8]
     if not md5_part:
         md5_part = fallback_hash[:8]
+    if kind:
+        return f"{identity.event_time_compact}_{serial}_{event_id}_{kind}_{md5_part}.{extension}"
     return f"{identity.event_time_compact}_{serial}_{event_id}_{md5_part}.{extension}"
 
 

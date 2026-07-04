@@ -47,7 +47,7 @@ def upsert_known_person(
     person_ref_id: str,
     name: str,
     face_group_id: str | None,
-    camera_person_id: int | None,
+    camera_person_id: str | int | None,
     event_time: datetime,
 ) -> None:
     table_name, id_column = _known_person_target(person_type)
@@ -72,7 +72,7 @@ def upsert_known_person(
             "person_ref_id": person_ref_id,
             "name": name,
             "face_group_id": face_group_id,
-            "camera_person_id": camera_person_id,
+            "camera_person_id": _camera_person_id_param(camera_person_id),
             "event_time": event_time,
         },
     )
@@ -436,8 +436,15 @@ def _known_person_params(person: Mapping[str, Any]) -> dict[str, Any]:
         "person_ref_id": person.get("person_ref_id"),
         "name": person.get("name"),
         "face_group_id": person.get("face_group_id"),
-        "camera_person_id": person.get("camera_person_id"),
+        "camera_person_id": _camera_person_id_param(person.get("camera_person_id")),
     }
+
+
+def _camera_person_id_param(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _attendance_event_params(values: Mapping[str, Any]) -> dict[str, Any]:

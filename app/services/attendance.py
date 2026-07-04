@@ -30,7 +30,7 @@ class AttendancePerson:
     person_type: str
     person_ref_id: str | None
     name: str
-    camera_person_id: int | None
+    camera_person_id: str | None
     face_group_id: str | None
     face_group_name: str | None
 
@@ -103,7 +103,7 @@ def build_known_draft(
     person_type: str,
     person_ref_id: str | None,
     name: str,
-    camera_person_id: int | None,
+    camera_person_id: str | int | None,
     face_group_id: str | None,
     face_group_name: str | None,
     match_number: int | None,
@@ -128,7 +128,7 @@ def build_known_draft(
             person_type=person_type,
             person_ref_id=person_ref_id,
             name=name,
-            camera_person_id=camera_person_id,
+            camera_person_id=_normalize_camera_person_id(camera_person_id),
             face_group_id=face_group_id,
             face_group_name=face_group_name,
         ),
@@ -371,6 +371,13 @@ def _attendance_image(
         url=image_url,
         token_hash=token_hash,
     )
+
+
+def _normalize_camera_person_id(value: str | int | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _attendance_event_values(

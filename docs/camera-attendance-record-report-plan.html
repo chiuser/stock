@@ -372,7 +372,7 @@
           <tr><td><code>member_id</code></td><td><code>text primary key</code></td><td>会员 FaceUUID，沿用摄像头人员 ID。</td></tr>
           <tr><td><code>name</code></td><td><code>text not null</code></td><td>会员姓名。</td></tr>
           <tr><td><code>face_group_id</code></td><td><code>text</code></td><td>会员脸库 GroupID2。</td></tr>
-          <tr><td><code>camera_person_id</code></td><td><code>integer</code></td><td>摄像头事件中的 personId，可为空。</td></tr>
+          <tr><td><code>camera_person_id</code></td><td><code>text</code></td><td>摄像头事件中的 personId，可为空。设备返回值可能超过 32 位整数范围，因此按字符串保存。</td></tr>
           <tr><td><code>is_active</code></td><td><code>boolean not null default true</code></td><td>是否仍作为有效会员参与统计。</td></tr>
           <tr><td><code>last_seen_at</code></td><td><code>timestamptz</code></td><td>最近一次识别时间。</td></tr>
           <tr><td><code>created_at</code></td><td><code>timestamptz not null default now()</code></td><td>创建时间。</td></tr>
@@ -389,7 +389,7 @@
           <tr><td><code>coach_id</code></td><td><code>text primary key</code></td><td>教练 FaceUUID。</td></tr>
           <tr><td><code>name</code></td><td><code>text not null</code></td><td>教练姓名。</td></tr>
           <tr><td><code>face_group_id</code></td><td><code>text</code></td><td>教练脸库 GroupID2。</td></tr>
-          <tr><td><code>camera_person_id</code></td><td><code>integer</code></td><td>摄像头事件中的 personId，可为空。</td></tr>
+          <tr><td><code>camera_person_id</code></td><td><code>text</code></td><td>摄像头事件中的 personId，可为空。设备返回值可能超过 32 位整数范围，因此按字符串保存。</td></tr>
           <tr><td><code>is_active</code></td><td><code>boolean not null default true</code></td><td>是否仍作为有效教练参与统计。</td></tr>
           <tr><td><code>last_seen_at</code></td><td><code>timestamptz</code></td><td>最近一次识别时间。</td></tr>
           <tr><td><code>created_at</code></td><td><code>timestamptz not null default now()</code></td><td>创建时间。</td></tr>
@@ -406,7 +406,7 @@
           <tr><td><code>staff_id</code></td><td><code>text primary key</code></td><td>员工 FaceUUID。</td></tr>
           <tr><td><code>name</code></td><td><code>text not null</code></td><td>员工姓名。</td></tr>
           <tr><td><code>face_group_id</code></td><td><code>text</code></td><td>员工脸库 GroupID2。</td></tr>
-          <tr><td><code>camera_person_id</code></td><td><code>integer</code></td><td>摄像头事件中的 personId，可为空。</td></tr>
+          <tr><td><code>camera_person_id</code></td><td><code>text</code></td><td>摄像头事件中的 personId，可为空。设备返回值可能超过 32 位整数范围，因此按字符串保存。</td></tr>
           <tr><td><code>is_active</code></td><td><code>boolean not null default true</code></td><td>是否仍作为有效员工参与统计。</td></tr>
           <tr><td><code>last_seen_at</code></td><td><code>timestamptz</code></td><td>最近一次识别时间。</td></tr>
           <tr><td><code>created_at</code></td><td><code>timestamptz not null default now()</code></td><td>创建时间。</td></tr>
@@ -507,7 +507,7 @@
   member_id text primary key,
   name text not null,
   face_group_id text,
-  camera_person_id integer,
+  camera_person_id text,
   is_active boolean not null default true,
   last_seen_at timestamptz,
   created_at timestamptz not null default now(),
@@ -518,7 +518,7 @@ create table coaches (
   coach_id text primary key,
   name text not null,
   face_group_id text,
-  camera_person_id integer,
+  camera_person_id text,
   is_active boolean not null default true,
   last_seen_at timestamptz,
   created_at timestamptz not null default now(),
@@ -529,7 +529,7 @@ create table staff (
   staff_id text primary key,
   name text not null,
   face_group_id text,
-  camera_person_id integer,
+  camera_person_id text,
   is_active boolean not null default true,
   last_seen_at timestamptz,
   created_at timestamptz not null default now(),

@@ -128,6 +128,8 @@ def notify_known_face(
     title: str = "",
     storage_path: str | None = None,
     view_url: str | None = None,
+    background_view_url: str | None = None,
+    capture_view_url: str | None = None,
     config: FeishuConfig | None = None,
 ) -> dict[str, Any]:
     """Notify Feishu about a successfully matched face."""
@@ -144,6 +146,8 @@ def notify_known_face(
             title=title,
             storage_path=storage_path,
             view_url=view_url,
+            background_view_url=background_view_url,
+            capture_view_url=capture_view_url,
         ),
         cfg,
     )
@@ -160,6 +164,8 @@ def build_known_face_post(
     title: str = "",
     storage_path: str | None = None,
     view_url: str | None = None,
+    background_view_url: str | None = None,
+    capture_view_url: str | None = None,
 ) -> dict[str, Any]:
     """Build the post payload for a successfully matched face."""
 
@@ -175,8 +181,12 @@ def build_known_face_post(
         lines.append(_text_line("身份类型", role_name))
     if storage_path:
         lines.append(_text_line("保存位置", storage_path))
-    if view_url:
-        lines.append(_link_line("查看图片", view_url))
+    _append_image_links(
+        lines,
+        view_url=view_url,
+        background_view_url=background_view_url,
+        capture_view_url=capture_view_url,
+    )
     return build_post_payload(title or "人员入场提醒", lines)
 
 
@@ -188,6 +198,8 @@ def notify_unknown_face(
     event_id: str | int | None,
     storage_path: str | None = None,
     view_url: str | None = None,
+    background_view_url: str | None = None,
+    capture_view_url: str | None = None,
     config: FeishuConfig | None = None,
 ) -> dict[str, Any]:
     """Notify Feishu about an unknown face and include a link when possible."""
@@ -200,20 +212,13 @@ def notify_unknown_face(
         event_id=event_id,
         storage_path=storage_path,
         view_url=view_url,
+        background_view_url=background_view_url,
+        capture_view_url=capture_view_url,
     )
 
-    results: list[dict[str, Any]] = [_send_webhook_payload(post_payload, cfg)]
-
-    if image_path and image_path.exists() and cfg.app_id and cfg.app_secret:
-        upload_result = upload_image(image_path, cfg)
-        results.append({"step": "upload_image", **upload_result})
-        if upload_result.get("ok") and upload_result.get("image_key"):
-            results.append(
-                {
-                    "step": "send_image",
-                    **send_image(upload_result["image_key"], cfg),
-                }
-            )
+    results: list[dict[str, Any]] = [
+        {"step": "send_post", **_send_webhook_payload(post_payload, cfg)}
+    ]
 
     return {"ok": any(r.get("ok") for r in results), "results": results}
 
@@ -226,6 +231,8 @@ def build_unknown_face_post(
     event_id: str | int | None,
     storage_path: str | None = None,
     view_url: str | None = None,
+    background_view_url: str | None = None,
+    capture_view_url: str | None = None,
 ) -> dict[str, Any]:
     """Build the post payload for an unknown face."""
 
@@ -237,8 +244,12 @@ def build_unknown_face_post(
     ]
     if resolved_storage_path:
         lines.append(_text_line("保存位置", resolved_storage_path))
-    if view_url:
-        lines.append(_link_line("查看图片", view_url))
+    _append_image_links(
+        lines,
+        view_url=view_url,
+        background_view_url=background_view_url,
+        capture_view_url=capture_view_url,
+    )
     return build_post_payload("发现陌生人入场", lines)
 
 
@@ -251,6 +262,8 @@ def notify_event_error(
     raw_event_path: str = "",
     storage_path: str | None = None,
     view_url: str | None = None,
+    background_view_url: str | None = None,
+    capture_view_url: str | None = None,
     config: FeishuConfig | None = None,
 ) -> dict[str, Any]:
     """Notify Feishu about an event handling error without exposing stack traces."""
@@ -265,6 +278,8 @@ def notify_event_error(
             raw_event_path=raw_event_path,
             storage_path=storage_path,
             view_url=view_url,
+            background_view_url=background_view_url,
+            capture_view_url=capture_view_url,
         ),
         cfg,
     )
@@ -279,6 +294,8 @@ def build_event_error_post(
     raw_event_path: str = "",
     storage_path: str | None = None,
     view_url: str | None = None,
+    background_view_url: str | None = None,
+    capture_view_url: str | None = None,
 ) -> dict[str, Any]:
     """Build the post payload for an event handling error."""
 
@@ -292,8 +309,12 @@ def build_event_error_post(
         lines.append(_text_line("原始事件", raw_event_path))
     if storage_path:
         lines.append(_text_line("保存位置", storage_path))
-    if view_url:
-        lines.append(_link_line("查看图片", view_url))
+    _append_image_links(
+        lines,
+        view_url=view_url,
+        background_view_url=background_view_url,
+        capture_view_url=capture_view_url,
+    )
     return build_post_payload("人脸识别事件处理异常", lines)
 
 
@@ -359,3 +380,21 @@ def _text_line(label: str, value: Any) -> list[dict[str, str]]:
 
 def _link_line(text: str, href: str) -> list[dict[str, str]]:
     return [{"tag": "a", "text": text, "href": href}]
+
+
+def _append_image_links(
+    lines: list[list[dict[str, str]]],
+    *,
+    view_url: str | None = None,
+    background_view_url: str | None = None,
+    capture_view_url: str | None = None,
+) -> None:
+    appended = False
+    if background_view_url:
+        lines.append(_link_line("查看背景全图", background_view_url))
+        appended = True
+    if capture_view_url:
+        lines.append(_link_line("查看人脸图", capture_view_url))
+        appended = True
+    if view_url and not appended:
+        lines.append(_link_line("查看图片", view_url))

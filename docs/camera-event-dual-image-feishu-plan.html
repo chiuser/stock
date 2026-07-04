@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>P6S 事件双图保存与飞书查看技术方案</title>
+  <style>
+    :root {
+      --bg: #eef2ea;
+      --paper: #fffdf4;
+      --paper-soft: rgba(255, 253, 244, .86);
+      --ink: #20251f;
+      --muted: #647064;
+      --line: #d9d2c3;
+      --brand: #1d6655;
+      --brand-dark: #17483d;
+      --accent: #b86f32;
+      --good: #24704f;
+      --warn: #9b5c24;
+      --danger: #9d3f35;
+      --soft: #e4f0e5;
+      --soft-warn: #f8ead8;
+      --shadow: 0 24px 70px rgba(46, 43, 34, .13);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.74;
+      background:
+        radial-gradient(circle at 12% 0%, rgba(29, 102, 85, .17), transparent 30rem),
+        radial-gradient(circle at 88% 10%, rgba(184, 111, 50, .16), transparent 28rem),
+        linear-gradient(135deg, #edf6ea 0%, var(--bg) 48%, #f2e1cf 100%);
+    }
+
+    .shell {
+      width: min(1120px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 42px 0 72px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.35fr .8fr;
+      gap: 22px;
+      align-items: stretch;
+      margin-bottom: 22px;
+    }
+
+    .hero-card,
+    .panel {
+      border: 1px solid rgba(32, 37, 31, .08);
+      border-radius: 30px;
+      background: var(--paper-soft);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(16px);
+    }
+
+    .hero-card { padding: 38px; }
+    .panel { padding: 26px; margin-top: 18px; }
+
+    .eyebrow {
+      display: inline-flex;
+      padding: 7px 13px;
+      border-radius: 999px;
+      color: var(--brand-dark);
+      background: rgba(29, 102, 85, .12);
+      font-size: 13px;
+      font-weight: 850;
+      letter-spacing: .02em;
+    }
+
+    h1 {
+      margin: 18px 0 14px;
+      font-size: clamp(32px, 5vw, 54px);
+      line-height: 1.05;
+      letter-spacing: -.045em;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 25px;
+      line-height: 1.25;
+      letter-spacing: -.025em;
+    }
+
+    h3 { margin: 22px 0 10px; font-size: 18px; }
+
+    .lead {
+      margin: 0;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    .meta {
+      display: grid;
+      gap: 12px;
+      padding: 26px;
+    }
+
+    .meta-item {
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, .52);
+      border: 1px solid rgba(32, 37, 31, .07);
+    }
+
+    .meta-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .meta-value {
+      margin-top: 4px;
+      font-weight: 800;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      padding: 18px;
+      border-radius: 22px;
+      border: 1px solid rgba(32, 37, 31, .08);
+      background: rgba(255, 255, 255, .54);
+    }
+
+    .tag {
+      display: inline-flex;
+      padding: 4px 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 850;
+      color: var(--brand-dark);
+      background: rgba(29, 102, 85, .12);
+    }
+
+    .tag.good { color: var(--good); background: var(--soft); }
+    .tag.warn { color: var(--warn); background: var(--soft-warn); }
+    .tag.danger { color: var(--danger); background: rgba(157, 63, 53, .10); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, .58);
+    }
+
+    th,
+    td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      color: var(--brand-dark);
+      font-size: 13px;
+      background: rgba(29, 102, 85, .10);
+    }
+
+    code {
+      padding: 2px 6px;
+      border: 1px solid rgba(32, 37, 31, .08);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, .72);
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: .92em;
+    }
+
+    pre {
+      overflow: auto;
+      padding: 18px;
+      border-radius: 18px;
+      color: #fbf5e9;
+      background: #1f2b25;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06);
+    }
+
+    pre code {
+      padding: 0;
+      border: 0;
+      color: inherit;
+      background: transparent;
+      font-size: 13px;
+    }
+
+    ul { padding-left: 22px; }
+    li { margin: 7px 0; }
+
+    .callout {
+      padding: 16px 18px;
+      border: 1px solid rgba(184, 111, 50, .25);
+      border-radius: 20px;
+      background: rgba(248, 234, 216, .76);
+    }
+
+    .flow {
+      display: grid;
+      gap: 10px;
+    }
+
+    .step {
+      padding: 14px 16px;
+      border-left: 4px solid var(--brand);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .55);
+    }
+
+    @media (max-width: 840px) {
+      .hero,
+      .grid { grid-template-columns: 1fr; }
+      .hero-card { padding: 28px; }
+      .shell { width: min(100% - 28px, 1120px); }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div class="hero-card">
+        <span class="eyebrow">技术方案 · 只覆盖双图通知</span>
+        <h1>P6S 事件双图保存与飞书查看</h1>
+        <p class="lead">
+          本方案只解决一个问题：人脸识别事件中同时保存背景全图和人脸小图，并在飞书消息中提供两个可查看入口。
+          不修改摄像头配置，不调整识别算法，不新增去重策略，不重构数据库。
+        </p>
+      </div>
+      <aside class="hero-card meta">
+        <div class="meta-item">
+          <div class="meta-label">状态</div>
+          <div class="meta-value">方案待确认</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">范围</div>
+          <div class="meta-value">服务器事件处理与飞书消息模板</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">不做</div>
+          <div class="meta-value">摄像头写配置、算法过滤、数据库迁移</div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="panel">
+      <h2>1. 背景与目标</h2>
+      <div class="grid">
+        <div class="card">
+          <span class="tag warn">当前问题</span>
+          <p>
+            当前服务端从 <code>FaceReco.info</code> 中按
+            <code>CaptureImage</code>、<code>BackgroundImage</code>、<code>recognizeImage</code>
+            的顺序选择第一张可用图。真实事件中 <code>CaptureImage</code> 常见为 128x128 小图，
+            飞书中看到的人脸图会很模糊。
+          </p>
+        </div>
+        <div class="card">
+          <span class="tag good">目标结果</span>
+          <p>
+            对每一条人脸识别事件，服务端分别保存 <code>BackgroundImage</code> 背景全图和
+            <code>CaptureImage</code> 人脸小图；飞书消息中提供“查看背景全图”和“查看人脸图”两个入口。
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>2. 范围边界</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>类别</th>
+            <th>本次做什么</th>
+            <th>本次不做什么</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>图片处理</td>
+            <td>解码、校验、保存 <code>BackgroundImage</code> 和 <code>CaptureImage</code>。</td>
+            <td>不做图片增强、压缩重采样、人脸质量评分、正脸过滤。</td>
+          </tr>
+          <tr>
+            <td>飞书通知</td>
+            <td>飞书消息展示两个用户可点击的图片链接：背景全图链接和人脸小图链接。</td>
+            <td>不新增飞书机器人，不改变 webhook、签名、密钥配置方式，不发送飞书内联图片消息。</td>
+          </tr>
+          <tr>
+            <td>服务端存储</td>
+            <td>两张图分别落盘，并分别生成 token 化查看链接。</td>
+            <td>不改变事件目录根路径，不迁移历史图片。</td>
+          </tr>
+          <tr>
+            <td>数据库</td>
+            <td>保留现有单主图字段语义：优先把背景全图作为主图写入现有记录。</td>
+            <td>不新增表、不新增列、不写 Alembic 迁移。</td>
+          </tr>
+          <tr>
+            <td>摄像头</td>
+            <td>只消费摄像头已推送的事件内容。</td>
+            <td>不调用任何摄像头写接口，不调整抓拍、识别、推送配置。</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="callout">
+        <strong>约束：</strong>如果某条事件缺少 <code>BackgroundImage</code> 或 <code>CaptureImage</code>，不得让整条事件失败；
+        有哪张就保存哪张，并在飞书中只展示可用图片入口。
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>3. 图片策略</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>字段</th>
+            <th>用途</th>
+            <th>保存要求</th>
+            <th>飞书展示</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>BackgroundImage</code></td>
+            <td>背景全图，用于查看现场整体画面和人员位置。</td>
+            <td>保存为 <code>background</code> 类型图片；优先作为事件主图。</td>
+            <td>展示为“查看背景全图”。</td>
+          </tr>
+          <tr>
+            <td><code>CaptureImage</code></td>
+            <td>人脸小图，用于查看摄像头实际裁剪识别的人脸区域。</td>
+            <td>保存为 <code>capture</code> 类型图片。</td>
+            <td>展示为“查看人脸图”。</td>
+          </tr>
+          <tr>
+            <td><code>recognizeImage</code></td>
+            <td>当前真实事件中可能为空图。</td>
+            <td>本次不纳入保存目标；保留在 raw 事件中。</td>
+            <td>不展示。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>4. 数据流</h2>
+      <div class="flow">
+        <div class="step">1. 摄像头推送 <code>FaceReco</code> 事件到服务器，服务器照常保存 raw JSON。</div>
+        <div class="step">2. 事件处理模块从 <code>info.BackgroundImage</code> 和 <code>info.CaptureImage</code> 中分别提取 base64 图片。</div>
+        <div class="step">3. 服务端校验图片必须是 JPEG 或 PNG，空图、无效 base64、非图片内容单独标记为不可用。</div>
+        <div class="step">4. 可用图片分别保存到事件图片目录，并生成各自 token 化查看链接。</div>
+        <div class="step">5. 入场记录继续按现有流程写库；单主图字段优先记录背景全图链接，缺失时回退到人脸小图。</div>
+        <div class="step">6. 飞书消息保留原有身份、姓名、事件时间、事件 ID 等字段，并新增两个图片入口。</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>5. 飞书消息模板</h2>
+      <h3>5.1 已匹配人员</h3>
+      <pre><code>会员入场提醒 / 教练入场提醒 / 员工入场提醒
+姓名：小明
+人员 ID：3427976339944670
+设备：I20F11AAA3D5133BCF1A1AE
+时间：20260704T191512+08
+事件 ID：629
+身份类型：员工
+保存位置：/var/lib/camera-face-guard/p6s_events/faces/2026-07-04/...
+查看背景全图：https://.../api/p6s/event-images/view/{background_token}
+查看人脸图：https://.../api/p6s/event-images/view/{capture_token}</code></pre>
+      <h3>5.2 陌生人</h3>
+      <pre><code>发现陌生人入场
+设备：I20F11AAA3D5133BCF1A1AE
+时间：20260704T191512+08
+事件 ID：629
+保存位置：/var/lib/camera-face-guard/p6s_events/strangers/2026-07-04/...
+查看背景全图：https://.../api/p6s/event-images/view/{background_token}
+查看人脸图：https://.../api/p6s/event-images/view/{capture_token}</code></pre>
+      <div class="callout">
+        <strong>说明：</strong>“保存位置”继续保留为服务器排查用途；用户主要通过两个 token 链接查看图片。
+        本期只发送两个可点击链接，不上传飞书内联图片消息。
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>6. 影响面</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>模块</th>
+            <th>影响</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>app/services/p6s_events.py</code></td>
+            <td>事件图片解析从单图改为双图；通知参数增加背景图和人脸图链接。</td>
+          </tr>
+          <tr>
+            <td><code>app/services/event_store.py</code></td>
+            <td>图片文件名需要带来源标识，避免同事件双图文件名冲突。</td>
+          </tr>
+          <tr>
+            <td><code>app/services/feishu.py</code></td>
+            <td>飞书消息模板增加两个图片入口；保留原有标题和身份字段。</td>
+          </tr>
+          <tr>
+            <td><code>app/services/attendance.py</code></td>
+            <td>只使用现有单主图字段，不新增数据库结构；主图选择逻辑改为背景图优先。</td>
+          </tr>
+          <tr>
+            <td>测试脚本与 fixtures</td>
+            <td>补充双图事件样例，验证两张图均保存、均生成链接、飞书模板字段正确。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>7. 风险与处理</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>风险</th>
+            <th>处理方式</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>图片体积增大</td>
+            <td>沿用现有最大图片大小限制；超限图片标记失败，不影响事件整体处理。</td>
+          </tr>
+          <tr>
+            <td>飞书消息过长</td>
+            <td>只新增两个链接，不展开 base64，不在消息中打印 token hash 或内部 JSON。</td>
+          </tr>
+          <tr>
+            <td>只有一张图可用</td>
+            <td>只展示可用链接；不可用图片写入处理记录，便于排查。</td>
+          </tr>
+          <tr>
+            <td>历史日报主图变化</td>
+            <td>不迁移历史数据；新事件主图改为背景全图优先，符合“更清晰查看”的目标。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>8. 回滚方式</h2>
+      <ul>
+        <li>代码回滚到上一版本后，事件处理将恢复为单图逻辑。</li>
+        <li>已经保存的双图文件不需要删除，不影响旧版本读取已有单主图记录。</li>
+        <li>不涉及数据库迁移，因此不需要执行数据库回滚。</li>
+        <li>不涉及摄像头配置，因此不需要恢复摄像头参数。</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>9. 验证方式</h2>
+      <ul>
+        <li>本地 fixture 验证：构造同时包含 <code>BackgroundImage</code> 和 <code>CaptureImage</code> 的事件，确认保存两张图片。</li>
+        <li>链接验证：确认两张图片各自生成 token 链接，且可通过 <code>/api/p6s/event-images/view/{token}</code> 访问。</li>
+        <li>模板验证：确认已匹配人员和陌生人飞书消息都包含“查看背景全图”和“查看人脸图”。</li>
+        <li>兼容验证：缺少其中一张图时事件不失败，飞书只显示可用入口。</li>
+        <li>安全验证：日志、处理记录、飞书消息不输出 base64 正文、webhook、secret、Owner、摄像头密码。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
