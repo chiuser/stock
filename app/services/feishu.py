@@ -141,6 +141,7 @@ def build_face_recheck_shadow_post(
 
     selected_face = recheck_result.get("selected_face") or {}
     gallery_match = recheck_result.get("gallery_match") or {}
+    thresholds = recheck_result.get("thresholds") or {}
     lines = [
         _text_line("事件时间", event_time or "unknown"),
         _text_line("发送时间", _now_text()),
@@ -153,17 +154,28 @@ def build_face_recheck_shadow_post(
         _text_line("InsightFace 建议", recheck_result.get("decision") or "unknown"),
         _text_line("过滤原因", recheck_result.get("reason") or "unknown"),
         _text_line("检测人脸数", recheck_result.get("face_count", 0)),
+        _text_line("是否检测到人脸", "是" if recheck_result.get("face_count", 0) else "否"),
     ]
     if selected_face:
         lines.extend(
             [
                 _text_line("检测分数", selected_face.get("det_score", "unknown")),
+                _text_line("检测分阈值", _min_threshold_text(thresholds.get("det_score_threshold"))),
                 _text_line(
                     "人脸尺寸",
                     f"{selected_face.get('width', 'unknown')}x{selected_face.get('height', 'unknown')}",
                 ),
+                _text_line(
+                    "尺寸阈值",
+                    _face_size_threshold_text(
+                        thresholds.get("min_face_width"),
+                        thresholds.get("min_face_height"),
+                    ),
+                ),
                 _text_line("模糊分数", selected_face.get("blur_score", "unknown")),
+                _text_line("模糊阈值", _min_threshold_text(thresholds.get("blur_threshold"))),
                 _text_line("侧脸分数", selected_face.get("frontal_score", "unknown")),
+                _text_line("侧脸阈值", _max_threshold_text(thresholds.get("frontal_max_yaw_score"))),
                 _text_line("质量标记", ", ".join(selected_face.get("quality_flags") or []) or "无"),
             ]
         )
@@ -182,10 +194,21 @@ def build_face_recheck_shadow_post(
         lines.extend(
             [
                 _text_line(
+                    "Gallery 阈值",
+                    _gallery_threshold_text(
+                        thresholds.get("similarity_threshold"),
+                        thresholds.get("similarity_margin"),
+                    ),
+                ),
+                _text_line(
                     "Gallery 第二名分数",
                     gallery_match.get("second_similarity", "无"),
                 ),
                 _text_line("Gallery 是否通过", gallery_match.get("accepted", False)),
+                _text_line(
+                    "Gallery 候选集",
+                    _gallery_candidates_text(gallery_match.get("candidates") or []),
+                ),
                 _text_line(
                     "结果对齐",
                     gallery_match.get("camera_identity_status", "not_compared"),
@@ -513,6 +536,45 @@ def _camera_person_text(person: dict[str, Any] | None) -> str:
 
 def _text_line(label: str, value: Any) -> list[dict[str, str]]:
     return [{"tag": "text", "text": f"{label}: {value}"}]
+
+
+def _min_threshold_text(value: Any) -> str:
+    return f">= {value}" if value not in (None, "") else "unknown"
+
+
+def _max_threshold_text(value: Any) -> str:
+    return f"<= {value}" if value not in (None, "") else "unknown"
+
+
+def _face_size_threshold_text(width: Any, height: Any) -> str:
+    if width in (None, "") or height in (None, ""):
+        return "unknown"
+    return f">= {width}x{height}"
+
+
+def _gallery_threshold_text(similarity: Any, margin: Any) -> str:
+    if similarity in (None, "") and margin in (None, ""):
+        return "unknown"
+    return (
+        f"相似度 {_min_threshold_text(similarity)}；"
+        f"领先第二名 {_min_threshold_text(margin)}"
+    )
+
+
+def _gallery_candidates_text(candidates: list[dict[str, Any]]) -> str:
+    if not candidates:
+        return "无"
+    items: list[str] = []
+    for candidate in candidates[:5]:
+        name = str(candidate.get("name") or "未知").strip()
+        person_type = str(candidate.get("person_type") or "unknown").strip()
+        person_id = str(candidate.get("person_id") or candidate.get("credential_no") or "").strip()
+        group_name = str(candidate.get("group_name") or "").strip()
+        similarity = candidate.get("similarity", "unknown")
+        rank = candidate.get("rank", len(items) + 1)
+        identity = " / ".join(part for part in (name, person_type, group_name, person_id) if part)
+        items.append(f"{rank}. {identity} / {similarity}")
+    return "; ".join(items)
 
 
 def _link_line(text: str, href: str) -> list[dict[str, str]]:

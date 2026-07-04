@@ -640,6 +640,29 @@ class DetectedFaceSummary:
     quality_flags: list[str]
 
 @dataclass(frozen=True)
+class FaceRecheckThresholds:
+    det_score_threshold: float
+    min_face_width: int
+    min_face_height: int
+    blur_threshold: float
+    frontal_max_yaw_score: float
+    similarity_threshold: float
+    similarity_margin: float
+
+@dataclass(frozen=True)
+class GalleryCandidate:
+    rank: int
+    person_id: str
+    credential_no: str
+    credential_type: str
+    name: str
+    sex: str
+    person_type: Literal["member", "coach", "staff"]
+    group_id: str
+    group_name: str
+    similarity: float
+
+@dataclass(frozen=True)
 class GalleryMatch:
     person_id: str
     credential_no: str
@@ -660,6 +683,7 @@ class GalleryMatch:
         "identity_conflict",
         "camera_unknown",
     ]
+    candidates: list[GalleryCandidate]
 
 @dataclass(frozen=True)
 class FaceRecheckResult:
@@ -673,10 +697,13 @@ class FaceRecheckResult:
     selected_face: DetectedFaceSummary | None
     gallery_match: GalleryMatch | None
     elapsed_ms: int | None
-    error_type: str | None = None</code></pre>
+    error_type: str | None = None
+    thresholds: FaceRecheckThresholds | None = None</code></pre>
       <h3>JSON 序列化要求</h3>
       <ul>
         <li><code>FaceRecheckResult.to_dict()</code> 不包含 embedding 原始向量，不包含图片 base64，不包含机器人 token。</li>
+        <li><code>GalleryMatch.candidates</code> 最多保留 Top 5 候选摘要，用于 shadow 飞书展示排名、人员、角色、组名和相似度。</li>
+        <li><code>FaceRecheckResult.thresholds</code> 固化本次判断使用的阈值，便于消息里同时展示分数和判断口径。</li>
         <li>写入事件记录时字段名为 <code>face_recheck</code>。</li>
         <li>shadow 机器人发送结果另写入 <code>face_recheck_shadow_feishu</code>，只保存 <code>ok/status_code/text 摘要</code>，不保存签名。</li>
       </ul>
@@ -1130,11 +1157,21 @@ InsightFace 状态: passed
 InsightFace 建议: override_to_known
 过滤原因: quality_passed
 检测人脸数: 1
+是否检测到人脸: 是
 检测分数: 0.91
+检测分阈值: >= 0.65
 人脸尺寸: 146x151
+尺寸阈值: >= 80x80
 模糊分数: 132.4
+模糊阈值: >= 80.0
 侧脸分数: 0.12
+侧脸阈值: <= 0.35
+质量标记: 无
 Gallery 命中: 小明 / staff / 3427976339944670 / 0.63
+Gallery 阈值: 相似度 >= 0.50；领先第二名 >= 0.03
+Gallery 第二名分数: 0.42
+Gallery 是否通过: True
+Gallery 候选集: 1. 小明 / staff / 3427976339944670 / 0.63; 2. 苏苏 / member / 3785841386866689 / 0.42
 结果对齐: name_matched
 查看背景全图
 查看人脸图</code></pre>
@@ -1143,6 +1180,8 @@ Gallery 命中: 小明 / staff / 3427976339944670 / 0.63
         <li><code>FACE_RECHECK_ENABLED=false</code> 时不发送。</li>
         <li><code>FACE_RECHECK_MODE=shadow</code> 时每条 FaceReco 都发送 shadow 对比消息。</li>
         <li><code>filter</code> 和 <code>verify_and_override</code> 时仍发送 shadow 消息，便于追踪实际干预。</li>
+        <li>shadow 消息必须展示当前阈值，避免人工看分数时不知道是否达标。</li>
+        <li>Gallery 候选集最多展示 Top 5；只展示排名、姓名、身份类型、人员 ID、组名和相似度分数，不展示 embedding。</li>
         <li>shadow 发送失败不影响主链路，记录摘要后继续。</li>
         <li>消息中不得包含 webhook、secret、base64 图片、embedding 原始向量。</li>
       </ul>

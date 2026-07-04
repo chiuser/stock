@@ -10,7 +10,7 @@ import os
 import time
 import warnings
 from contextlib import redirect_stderr, redirect_stdout
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from io import StringIO
 from pathlib import Path
@@ -124,6 +124,56 @@ class DetectedFaceSummary:
 
 
 @dataclass(frozen=True)
+class FaceRecheckThresholds:
+    det_score_threshold: float
+    min_face_width: int
+    min_face_height: int
+    blur_threshold: float
+    frontal_max_yaw_score: float
+    similarity_threshold: float
+    similarity_margin: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "det_score_threshold": round(self.det_score_threshold, 6),
+            "min_face_width": self.min_face_width,
+            "min_face_height": self.min_face_height,
+            "blur_threshold": round(self.blur_threshold, 6),
+            "frontal_max_yaw_score": round(self.frontal_max_yaw_score, 6),
+            "similarity_threshold": round(self.similarity_threshold, 6),
+            "similarity_margin": round(self.similarity_margin, 6),
+        }
+
+
+@dataclass(frozen=True)
+class GalleryCandidate:
+    rank: int
+    person_id: str
+    credential_no: str
+    credential_type: str
+    name: str
+    sex: str
+    person_type: Literal["member", "coach", "staff"]
+    group_id: str
+    group_name: str
+    similarity: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "rank": self.rank,
+            "person_id": self.person_id,
+            "credential_no": self.credential_no,
+            "credential_type": self.credential_type,
+            "name": self.name,
+            "sex": self.sex,
+            "person_type": self.person_type,
+            "group_id": self.group_id,
+            "group_name": self.group_name,
+            "similarity": round(self.similarity, 6),
+        }
+
+
+@dataclass(frozen=True)
 class GalleryMatch:
     person_id: str
     credential_no: str
@@ -144,12 +194,24 @@ class GalleryMatch:
         "identity_conflict",
         "camera_unknown",
     ]
+    candidates: list[GalleryCandidate] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        data["similarity"] = round(self.similarity, 6)
-        data["second_similarity"] = _rounded_or_none(self.second_similarity)
-        return data
+        return {
+            "person_id": self.person_id,
+            "credential_no": self.credential_no,
+            "credential_type": self.credential_type,
+            "name": self.name,
+            "sex": self.sex,
+            "person_type": self.person_type,
+            "group_id": self.group_id,
+            "group_name": self.group_name,
+            "similarity": round(self.similarity, 6),
+            "second_similarity": _rounded_or_none(self.second_similarity),
+            "accepted": self.accepted,
+            "camera_identity_status": self.camera_identity_status,
+            "candidates": [candidate.to_dict() for candidate in self.candidates],
+        }
 
 
 @dataclass(frozen=True)
@@ -165,6 +227,7 @@ class FaceRecheckResult:
     gallery_match: GalleryMatch | None
     elapsed_ms: int | None
     error_type: str | None = None
+    thresholds: FaceRecheckThresholds | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -179,6 +242,7 @@ class FaceRecheckResult:
             "gallery_match": self.gallery_match.to_dict() if self.gallery_match else None,
             "elapsed_ms": self.elapsed_ms,
             "error_type": self.error_type,
+            "thresholds": self.thresholds.to_dict() if self.thresholds else None,
         }
 
 
@@ -211,6 +275,7 @@ def run_face_recheck(
             selected_face=None,
             gallery_match=None,
             elapsed_ms=_elapsed_ms(started),
+            thresholds=_thresholds(cfg),
         )
     if not image_path.exists():
         return FaceRecheckResult(
@@ -225,6 +290,7 @@ def run_face_recheck(
             gallery_match=None,
             elapsed_ms=_elapsed_ms(started),
             error_type="FileNotFoundError",
+            thresholds=_thresholds(cfg),
         )
 
     try:
@@ -288,6 +354,7 @@ def run_face_recheck(
             gallery_match=None,
             elapsed_ms=_elapsed_ms(started),
             error_type=type(exc).__name__,
+            thresholds=_thresholds(cfg),
         )
 
 
@@ -468,6 +535,7 @@ def _result(
         selected_face=selected_face,
         gallery_match=gallery_match,
         elapsed_ms=_elapsed_ms(started),
+        thresholds=_thresholds(settings),
     )
 
 
@@ -509,6 +577,21 @@ def _match_gallery(
         second_similarity=match.second_similarity,
         accepted=match.accepted,
         camera_identity_status=match.camera_identity_status,
+        candidates=[
+            GalleryCandidate(
+                rank=candidate.rank,
+                person_id=candidate.person_id,
+                credential_no=candidate.credential_no,
+                credential_type=candidate.credential_type,
+                name=candidate.name,
+                sex=candidate.sex,
+                person_type=candidate.person_type,
+                group_id=candidate.group_id,
+                group_name=candidate.group_name,
+                similarity=candidate.similarity,
+            )
+            for candidate in match.candidates
+        ],
     )
 
 
@@ -524,6 +607,19 @@ def _skipped(settings: FaceRecheckSettings, reason: str, started: float) -> Face
         selected_face=None,
         gallery_match=None,
         elapsed_ms=_elapsed_ms(started),
+        thresholds=_thresholds(settings),
+    )
+
+
+def _thresholds(settings: FaceRecheckSettings) -> FaceRecheckThresholds:
+    return FaceRecheckThresholds(
+        det_score_threshold=settings.det_score_threshold,
+        min_face_width=settings.min_face_width,
+        min_face_height=settings.min_face_height,
+        blur_threshold=settings.blur_threshold,
+        frontal_max_yaw_score=settings.frontal_max_yaw_score,
+        similarity_threshold=settings.similarity_threshold,
+        similarity_margin=settings.similarity_margin,
     )
 
 

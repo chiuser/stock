@@ -266,7 +266,22 @@ def validate_feishu_payloads() -> None:
         for item in line
     )
     assert any(
+        item.get("text") == "是否检测到人脸: 是"
+        for line in _post_lines(shadow_payload)
+        for item in line
+    )
+    assert any(
+        item.get("text") == "检测分阈值: >= 0.65"
+        for line in _post_lines(shadow_payload)
+        for item in line
+    )
+    assert any(
         item.get("text") == "Gallery 是否通过: True"
+        for line in _post_lines(shadow_payload)
+        for item in line
+    )
+    assert any(
+        item.get("text", "").startswith("Gallery 候选集: 1. 小明")
         for line in _post_lines(shadow_payload)
         for item in line
     )
@@ -328,6 +343,8 @@ def validate_face_gallery_matching() -> None:
     assert match.accepted is True
     assert match.person_type == "staff"
     assert match.camera_identity_status == "name_and_id_matched"
+    assert len(match.candidates) == 2
+    assert match.candidates[0].name == "小明"
 
     conflict = index.match(
         np.array([1.0, 0.0], dtype=np.float32),
@@ -415,8 +432,43 @@ def _mock_recheck_result() -> face_recheck.FaceRecheckResult:
             second_similarity=0.42,
             accepted=True,
             camera_identity_status="camera_unknown",
+            candidates=[
+                face_recheck.GalleryCandidate(
+                    rank=1,
+                    person_id="3427976339944670",
+                    credential_no="3427976339944670",
+                    credential_type="2",
+                    name="小明",
+                    sex="0",
+                    person_type="staff",
+                    group_id="4dcafc2c9fbd4d1fa267ccbf145c8861",
+                    group_name="员工",
+                    similarity=0.91,
+                ),
+                face_recheck.GalleryCandidate(
+                    rank=2,
+                    person_id="3785841386866689",
+                    credential_no="3785841386866689",
+                    credential_type="2",
+                    name="苏苏",
+                    sex="0",
+                    person_type="member",
+                    group_id="c1e42a1f2531467bae464da8a79dad53",
+                    group_name="会员",
+                    similarity=0.42,
+                ),
+            ],
         ),
         elapsed_ms=12,
+        thresholds=face_recheck.FaceRecheckThresholds(
+            det_score_threshold=0.65,
+            min_face_width=80,
+            min_face_height=80,
+            blur_threshold=80.0,
+            frontal_max_yaw_score=0.35,
+            similarity_threshold=0.5,
+            similarity_margin=0.03,
+        ),
     )
 
 

@@ -554,6 +554,7 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
           <h3>消息用途</h3>
           <ul>
             <li>展示 InsightFace 对同一条 <code>FaceReco</code> 事件的检测数量、检测分数、质量判断、过滤建议和二次比对结果。</li>
+            <li>展示是否检测到人脸、过滤原因、选中人脸质量指标、当前阈值、Gallery 首位命中、是否通过和 Top N 候选分数，便于人工调参和验收。</li>
             <li>和主飞书机器人消息按同一个摄像头事件时间戳对齐，方便人工比较摄像头原始判断和服务器二次判断。</li>
             <li>不改变 <code>attendance_events</code> 是否写入，也不改变主飞书机器人是否发送。</li>
           </ul>
@@ -572,6 +573,8 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
         <li>shadow 消息中的“事件时间”必须使用 P6S 事件自身的 <code>EventTime</code> 或当前系统已解析出的 <code>identity.event_time</code>。</li>
         <li>shadow 消息可以额外展示“发送时间”，但不能用发送时间替代事件时间。</li>
         <li>消息中应包含 <code>event_id</code>、设备序列号、摄像头原始判断、InsightFace 判断和最终建议，方便和主机器人消息逐条对比。</li>
+        <li>候选集最多展示 Gallery Top 5，只包含排名、姓名、身份类型、人员 ID、组名和相似度分数；不得展示 embedding 原始向量、图片 base64、webhook 或 secret。</li>
+        <li>阈值展示包括检测分、最小人脸尺寸、模糊分、侧脸分、Gallery 相似度阈值和 Gallery 领先分差阈值。</li>
       </ul>
     </section>
 

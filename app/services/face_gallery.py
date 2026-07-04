@@ -20,6 +20,7 @@ _P6S_NAMED_IMAGE_RE = re.compile(
     re.IGNORECASE,
 )
 _GALLERY_CACHE: dict[tuple[str, str, float, float], "FaceGalleryIndex"] = {}
+_GALLERY_CANDIDATE_LIMIT = 5
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,20 @@ class GallerySourcePerson:
 
 
 @dataclass(frozen=True)
+class GalleryCandidateResult:
+    rank: int
+    person_id: str
+    credential_no: str
+    credential_type: str
+    name: str
+    sex: str
+    person_type: Literal["member", "coach", "staff"]
+    group_id: str
+    group_name: str
+    similarity: float
+
+
+@dataclass(frozen=True)
 class GallerySearchResult:
     person_id: str
     credential_no: str
@@ -73,6 +88,7 @@ class GallerySearchResult:
         "identity_conflict",
         "camera_unknown",
     ]
+    candidates: list[GalleryCandidateResult]
 
 
 @dataclass(frozen=True)
@@ -114,6 +130,14 @@ class FaceGalleryIndex:
         )
         accepted = best_similarity >= similarity_threshold and margin_ok
         record = self.records[best_index]
+        candidates = [
+            _candidate_from_record(
+                rank=rank,
+                record=self.records[int(index)],
+                similarity=float(similarities[int(index)]),
+            )
+            for rank, index in enumerate(order[:_GALLERY_CANDIDATE_LIMIT], start=1)
+        ]
         return GallerySearchResult(
             person_id=str(record.get("person_id") or ""),
             credential_no=str(record.get("credential_no") or record.get("person_id") or ""),
@@ -127,6 +151,7 @@ class FaceGalleryIndex:
             second_similarity=second_similarity,
             accepted=accepted,
             camera_identity_status=compare_camera_identity(record, camera_person),
+            candidates=candidates,
         )
 
 
@@ -262,6 +287,26 @@ def _person_type(value: Any) -> Literal["member", "coach", "staff"]:
     if text in {"member", "coach", "staff"}:
         return text  # type: ignore[return-value]
     return "member"
+
+
+def _candidate_from_record(
+    *,
+    rank: int,
+    record: dict[str, Any],
+    similarity: float,
+) -> GalleryCandidateResult:
+    return GalleryCandidateResult(
+        rank=rank,
+        person_id=str(record.get("person_id") or ""),
+        credential_no=str(record.get("credential_no") or record.get("person_id") or ""),
+        credential_type=str(record.get("credential_type") or ""),
+        name=str(record.get("name") or ""),
+        sex=str(record.get("sex") or ""),
+        person_type=_person_type(record.get("person_type")),
+        group_id=str(record.get("group_id") or ""),
+        group_name=str(record.get("group_name") or ""),
+        similarity=similarity,
+    )
 
 
 def _import_numpy() -> Any:
