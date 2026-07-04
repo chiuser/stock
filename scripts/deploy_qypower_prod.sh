@@ -100,13 +100,17 @@ RSYNC_EXCLUDES=(
   --exclude docs/p6scgi-showdoc/
   --exclude docs/styd-member-assets.md
   --exclude logs/
+  --exclude '*.zip'
   --exclude styd_member_faces/
   --exclude styd_member_faces_full/
   --exclude 'styd_member_faces_new_*/'
+  --exclude 'styd_member_faces*_p6s_named/'
   --exclude styd_member_sync_runs/
   --exclude styd_member_ids.txt
   --exclude teacher/
+  --exclude teacher_p6s_named/
   --exclude staff/
+  --exclude staff_p6s_named/
   --exclude '*.csv'
   --exclude '*.jpg'
   --exclude '*.jpeg'
@@ -143,12 +147,16 @@ mkdir -p "$(dirname "$backup_dir")"
 rsync -a --delete \
   --exclude .venv/ \
   --exclude logs/ \
+  --exclude '*.zip' \
   --exclude styd_member_faces/ \
   --exclude styd_member_faces_full/ \
   --exclude 'styd_member_faces_new_*/' \
+  --exclude 'styd_member_faces*_p6s_named/' \
   --exclude styd_member_sync_runs/ \
   --exclude teacher/ \
+  --exclude teacher_p6s_named/ \
   --exclude staff/ \
+  --exclude staff_p6s_named/ \
   "$REMOTE_DIR/" "$backup_dir/"
 printf '[remote] backup_dir=%s\n' "$backup_dir"
 REMOTE_BACKUP

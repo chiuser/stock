@@ -1,0 +1,1204 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>P6S 摄像头 InsightFace 二次识别与噪音过滤 LLD</title>
+  <style>
+    :root {
+      --bg: #eef1e8;
+      --paper: #fffdf5;
+      --paper-soft: rgba(255, 253, 245, .86);
+      --ink: #20251f;
+      --muted: #657064;
+      --line: #d9d1c2;
+      --brand: #1d6957;
+      --brand-dark: #174a3e;
+      --accent: #a8662f;
+      --good: #246f4f;
+      --warn: #9c5b22;
+      --danger: #9f3f35;
+      --soft: #e6f1e8;
+      --soft-warn: #f7ead8;
+      --soft-danger: #f3dfdc;
+      --shadow: 0 24px 70px rgba(45, 43, 34, .13);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.72;
+      background:
+        radial-gradient(circle at 10% 0%, rgba(29, 105, 87, .16), transparent 30rem),
+        radial-gradient(circle at 90% 8%, rgba(168, 102, 47, .16), transparent 26rem),
+        linear-gradient(135deg, #edf5eb 0%, var(--bg) 48%, #f3e4d2 100%);
+    }
+
+    a { color: var(--brand-dark); font-weight: 760; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .shell {
+      width: min(1220px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 42px 0 78px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.35fr .8fr;
+      gap: 22px;
+      align-items: stretch;
+      margin-bottom: 22px;
+    }
+
+    .hero-card,
+    .panel {
+      border: 1px solid rgba(32, 37, 31, .08);
+      border-radius: 30px;
+      background: var(--paper-soft);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(16px);
+    }
+
+    .hero-card { padding: 38px; }
+    .panel { padding: 28px; margin-top: 18px; }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 13px;
+      border-radius: 999px;
+      color: var(--brand-dark);
+      background: rgba(29, 105, 87, .12);
+      font-size: 13px;
+      font-weight: 850;
+      letter-spacing: .02em;
+    }
+
+    h1 {
+      margin: 18px 0 14px;
+      font-size: clamp(32px, 5vw, 56px);
+      line-height: 1.04;
+      letter-spacing: -.045em;
+    }
+
+    h2 {
+      margin: 0 0 16px;
+      font-size: 25px;
+      line-height: 1.25;
+      letter-spacing: -.025em;
+    }
+
+    h3 { margin: 22px 0 10px; font-size: 18px; }
+    h4 { margin: 18px 0 8px; font-size: 15px; color: var(--brand); }
+    p { margin: 0 0 12px; }
+
+    .lead {
+      margin: 0;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    .meta {
+      display: grid;
+      gap: 12px;
+      padding: 26px;
+    }
+
+    .meta-item {
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, .52);
+      border: 1px solid rgba(32, 37, 31, .07);
+    }
+
+    .meta-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .meta-value {
+      margin-top: 4px;
+      font-weight: 800;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      padding: 18px;
+      border-radius: 22px;
+      border: 1px solid rgba(32, 37, 31, .08);
+      background: rgba(255, 255, 255, .52);
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 850;
+      color: var(--brand-dark);
+      background: rgba(29, 105, 87, .12);
+    }
+
+    .tag.good { color: var(--good); background: var(--soft); }
+    .tag.warn { color: var(--warn); background: var(--soft-warn); }
+    .tag.danger { color: var(--danger); background: var(--soft-danger); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, .58);
+    }
+
+    th,
+    td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      color: var(--brand-dark);
+      font-size: 13px;
+      background: rgba(29, 105, 87, .10);
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    code {
+      padding: 2px 6px;
+      border: 1px solid rgba(32, 37, 31, .08);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, .72);
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: .92em;
+    }
+
+    pre {
+      overflow: auto;
+      padding: 18px;
+      border-radius: 18px;
+      color: #fbf5e9;
+      background: #1f2b25;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06);
+    }
+
+    pre code {
+      padding: 0;
+      border: 0;
+      color: inherit;
+      background: transparent;
+      font-size: 13px;
+    }
+
+    ul,
+    ol { padding-left: 22px; }
+    li { margin: 7px 0; }
+
+    .callout {
+      padding: 16px 18px;
+      border-radius: 20px;
+      border: 1px solid rgba(168, 102, 47, .25);
+      background: rgba(247, 234, 216, .76);
+    }
+
+    .callout.good { border-color: rgba(36, 111, 79, .24); background: rgba(230, 241, 232, .76); }
+    .callout.danger { border-color: rgba(159, 63, 53, .24); background: rgba(243, 223, 220, .76); }
+
+    .flow {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .step {
+      padding: 14px 16px;
+      border-left: 4px solid var(--brand);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .55);
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 920px) {
+      .shell { width: min(100% - 24px, 1220px); padding-top: 24px; }
+      .hero,
+      .grid,
+      .cards { grid-template-columns: 1fr; }
+      .hero-card,
+      .panel,
+      .meta { padding: 22px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div class="hero-card">
+        <span class="eyebrow">LLD · InsightFace 二次识别</span>
+        <h1>P6S 摄像头 InsightFace 二次识别与噪音过滤</h1>
+        <p class="lead">
+          本 LLD 严格基于 <code>camera-insightface-recheck-plan.html</code> 细化代码级实现。目标是在现有 P6S 事件链路中增加可开关的 InsightFace 二次判断层，首版以 <code>shadow</code> 模式记录并发送对比结论，不改变原飞书通知和入场统计。
+        </p>
+      </div>
+      <aside class="hero-card meta">
+        <div class="meta-item">
+          <div class="meta-label">文档状态</div>
+          <div class="meta-value">LLD 已补充拍板结论，待开发</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">创建日期</div>
+          <div class="meta-value">2026-07-04</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">前置方案</div>
+          <div class="meta-value">camera-insightface-recheck-plan.html</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">强约束</div>
+          <div class="meta-value">不写摄像头配置，不提交模型/人脸资产</div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="panel">
+      <h2>一、实现边界</h2>
+      <div class="grid">
+        <div class="card">
+          <span class="tag good">本次开发范围</span>
+          <ul>
+            <li>新增 InsightFace 二次识别服务和质量过滤服务。</li>
+            <li>新增服务器侧 gallery embedding 构建脚本和加载逻辑。</li>
+            <li>在 <code>FaceReco</code> 图片保存后、写库/通知前接入二次判断。</li>
+            <li>新增 shadow 飞书机器人消息模板和发送函数。</li>
+            <li>新增本地 POC、fixture 验证和部署校验步骤。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <span class="tag danger">明确不做</span>
+          <ul>
+            <li>不修改摄像头抓拍、识别、推送、录像、脸库配置。</li>
+            <li>不接入 RTSP 连续视频流。</li>
+            <li>不训练模型，不做活体检测，不展示年龄性别。</li>
+            <li>不把 <code>buffalo_l.zip</code>、<code>.onnx</code>、人脸图片、gallery embedding 提交 Git。</li>
+            <li>不改主飞书机器人密钥、图片 token 链接规则和日报格式。</li>
+          </ul>
+        </div>
+      </div>
+      <div class="callout danger" style="margin-top: 18px;">
+        <p><strong>摄像头写入禁止：</strong>本 LLD 的所有开发、测试、部署验证均不得调用任何 P6S 摄像头写接口。若后续确实需要调整摄像头配置，必须另起方案并获得明确授权。</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>二、当前代码接入点</h2>
+      <p>当前事件处理主入口在 <code>app/services/p6s_events.py</code>。现有逻辑已经保存双图、创建图片 token 链接、构建到场记录草稿并发送飞书。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>位置</th>
+            <th>现状</th>
+            <th>本次接入方式</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>handle_event()</code></td>
+            <td>持久化原始事件、去重、按 <code>operator</code> 路由。</td>
+            <td>不改入口签名，不改变 heartbeat/ignored/duplicate 行为。</td>
+          </tr>
+          <tr>
+            <td><code>_handle_face_reco()</code></td>
+            <td>按 <code>matchNumber/personInfo</code> 路由为 known、stranger、parse_error。</td>
+            <td>不改变摄像头原始路由，只在各分支内增加 recheck 上下文。</td>
+          </tr>
+          <tr>
+            <td><code>_save_face_reco_images()</code></td>
+            <td>保存 <code>BackgroundImage</code> 和 <code>CaptureImage</code>，生成 token 链接。</td>
+            <td>InsightFace 只读取已保存的背景全图路径；背景图缺失时可回退人脸图。</td>
+          </tr>
+          <tr>
+            <td><code>_handle_known_face()</code></td>
+            <td>保存图片后立即构建 known 到场草稿并发主飞书。</td>
+            <td>保存图片后调用 <code>run_face_recheck()</code>。<code>shadow</code> 不改变原逻辑；<code>filter</code> 可停止写库/主通知；<code>verify_and_override</code> 仅按规则覆盖陌生人。</td>
+          </tr>
+          <tr>
+            <td><code>_handle_stranger()</code></td>
+            <td>保存图片后构建 stranger 到场草稿并发主飞书。</td>
+            <td>保存图片后调用 <code>run_face_recheck()</code>。<code>verify_and_override</code> 可把高置信命中改为会员/教练/员工。</td>
+          </tr>
+          <tr>
+            <td><code>_handle_parse_error()</code></td>
+            <td>保存图片后写 unknown_known 到场草稿并发送异常提醒。</td>
+            <td>可记录 recheck 结果并发送 shadow，对主异常处理不做身份覆盖。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>二补充、已拍板结论</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>事项</th>
+            <th>结论</th>
+            <th>代码实现约束</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>首版上线模式</td>
+            <td><code>FACE_RECHECK_MODE=shadow</code></td>
+            <td>首版只发送 shadow 对比机器人消息，不改变主飞书、不改变 <code>attendance_events</code> 写入、不改变日报统计。</td>
+          </tr>
+          <tr>
+            <td>filter 模式过滤事件</td>
+            <td>不写入 <code>attendance_events</code></td>
+            <td>只保存原始事件和处理记录。处理记录必须包含 <code>face_recheck.status=filtered</code>、<code>face_recheck.reason</code>、<code>quality_flags</code>，便于后续统计本地模型拦截数量和原因。</td>
+          </tr>
+          <tr>
+            <td>verify_and_override</td>
+            <td>允许把摄像头陌生人纠正为会员/教练/员工</td>
+            <td>仅当 gallery 命中超过 <code>FACE_RECHECK_SIMILARITY_THRESHOLD</code> 且领先第二名超过 <code>FACE_RECHECK_SIMILARITY_MARGIN</code> 时生效。摄像头 already-known 结果与 gallery 冲突时，不覆盖，只记录冲突。</td>
+          </tr>
+          <tr>
+            <td>Gallery 构建失败</td>
+            <td>单人失败不阻断全量构建</td>
+            <td>失败人员写入 <code>build_report</code>。如果小明等关键测试人员失败，脚本应以明确错误提示停下来，等待修正图片或输入后再继续。</td>
+          </tr>
+          <tr>
+            <td>其余默认项</td>
+            <td>按技术方案和本文档默认建议执行</td>
+            <td>CPU-only、<code>buffalo_l</code>、模型不进 Git、embedding 不进 Git、默认 fail-open、侧脸首版只 shadow 观测不强过滤。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>三、文件组织</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>文件</th>
+            <th>类型</th>
+            <th>职责</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>app/services/face_recheck.py</code></td>
+            <td>新增</td>
+            <td>核心服务。加载 InsightFace、执行图片检测、质量过滤、gallery 比对、输出业务决策。</td>
+          </tr>
+          <tr>
+            <td><code>app/services/face_gallery.py</code></td>
+            <td>新增</td>
+            <td>加载 <code>gallery.npz</code> 和 <code>gallery_manifest.json</code>，提供向量矩阵比对。</td>
+          </tr>
+          <tr>
+            <td><code>app/services/feishu.py</code></td>
+            <td>修改</td>
+            <td>新增 shadow recheck 消息构建与发送函数，复用已有 webhook 签名逻辑。</td>
+          </tr>
+          <tr>
+            <td><code>app/services/p6s_events.py</code></td>
+            <td>修改</td>
+            <td>在 FaceReco 三个分支接入 recheck，记录结果，并按模式决定是否继续原流程。</td>
+          </tr>
+          <tr>
+            <td><code>scripts/build_face_gallery.py</code></td>
+            <td>新增</td>
+            <td>离线构建服务器侧 gallery embedding。读取 CSV 和图片目录，输出私有运行时资产。</td>
+          </tr>
+          <tr>
+            <td><code>scripts/validate_insightface_recheck.py</code></td>
+            <td>新增</td>
+            <td>本地 POC 验证脚本。对真实或 fixture 图片输出检测、质量和耗时报告。</td>
+          </tr>
+          <tr>
+            <td><code>scripts/validate_p6s_event_flow.py</code></td>
+            <td>修改</td>
+            <td>扩展事件流 fixture，覆盖 shadow、filter、verify_and_override 的关键分支。</td>
+          </tr>
+          <tr>
+            <td><code>requirements.txt</code></td>
+            <td>修改</td>
+            <td>新增 <code>insightface==1.0.1</code>、<code>onnxruntime</code>、<code>opencv-python-headless</code>、<code>numpy</code>。</td>
+          </tr>
+          <tr>
+            <td><code>docs/camera-insightface-recheck-lld.html</code></td>
+            <td>新增</td>
+            <td>本文档。</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="callout" style="margin-top: 18px;">
+        <p><strong>不新增数据库迁移：</strong>本期 recheck 结果写入现有事件处理记录 JSON；不新增表、不修改 <code>attendance_events</code> schema。后续若要把 recheck 结果纳入日报或后台查询，再单独设计数据库迁移。</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>四、配置项设计</h2>
+      <p>真实配置遵守仓库规则：本地写入 <code>.env.local</code>，远程写入 <code>/etc/camera-face-guard/app.env</code>。文档、日志、测试输出不得打印真实 webhook、secret、Owner、摄像头密码。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>配置项</th>
+            <th>默认值</th>
+            <th>读取位置</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>FACE_RECHECK_ENABLED</code></td>
+            <td><code>false</code></td>
+            <td><code>face_recheck.FaceRecheckSettings.from_env()</code></td>
+            <td>总开关。关闭时不加载 InsightFace，不做任何 recheck。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_MODE</code></td>
+            <td><code>shadow</code></td>
+            <td><code>FaceRecheckMode</code></td>
+            <td>允许值：<code>off</code>、<code>shadow</code>、<code>filter</code>、<code>verify_and_override</code>。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_SHADOW_FEISHU_WEBHOOK_URL</code></td>
+            <td>空</td>
+            <td><code>feishu.FeishuConfig</code> 扩展或专用构造函数</td>
+            <td>shadow 结论专用机器人地址。真实值只在环境配置中保存。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_SHADOW_FEISHU_WEBHOOK_SECRET</code></td>
+            <td>空</td>
+            <td><code>feishu.FeishuConfig</code> 扩展或专用构造函数</td>
+            <td>shadow 机器人签名秘钥。真实值不写入文档和日志。</td>
+          </tr>
+          <tr>
+            <td><code>INSIGHTFACE_MODEL_NAME</code></td>
+            <td><code>buffalo_l</code></td>
+            <td><code>FaceRecheckSettings</code></td>
+            <td>模型包名称。</td>
+          </tr>
+          <tr>
+            <td><code>INSIGHTFACE_MODEL_ROOT</code></td>
+            <td><code>~/.insightface</code> 本地，远程建议 <code>/var/lib/camera-face-guard/insightface</code></td>
+            <td><code>FaceAnalysis(root=...)</code></td>
+            <td>根目录下必须包含 <code>models/buffalo_l/*.onnx</code>。</td>
+          </tr>
+          <tr>
+            <td><code>INSIGHTFACE_PROVIDER</code></td>
+            <td><code>CPUExecutionProvider</code></td>
+            <td><code>FaceAnalysis(providers=[...])</code></td>
+            <td>当前远程无 GPU，只支持 CPU。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_DET_SCORE</code></td>
+            <td><code>0.65</code></td>
+            <td><code>app.prepare(det_thresh=...)</code> 和质量门控</td>
+            <td>最低人脸检测置信度。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_MIN_FACE_WIDTH</code></td>
+            <td><code>80</code></td>
+            <td><code>FaceQualityGate</code></td>
+            <td>最低人脸框宽度，单位像素。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_MIN_FACE_HEIGHT</code></td>
+            <td><code>80</code></td>
+            <td><code>FaceQualityGate</code></td>
+            <td>最低人脸框高度，单位像素。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_BLUR_THRESHOLD</code></td>
+            <td><code>80</code></td>
+            <td><code>FaceQualityGate</code></td>
+            <td>人脸区域 Laplacian 方差低于该值时视为模糊。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_FRONTAL_MAX_YAW_SCORE</code></td>
+            <td><code>0.35</code></td>
+            <td><code>FaceQualityGate</code></td>
+            <td>基于关键点估算的侧脸阈值。首版 shadow 记录，不强过滤。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_SIMILARITY_THRESHOLD</code></td>
+            <td><code>0.50</code></td>
+            <td><code>FaceGalleryService</code></td>
+            <td>gallery 命中的最低余弦相似度。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_SIMILARITY_MARGIN</code></td>
+            <td><code>0.03</code></td>
+            <td><code>FaceGalleryService</code></td>
+            <td>第一名需要领先第二名的最小差值，降低误认。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_GALLERY_PATH</code></td>
+            <td><code>/var/lib/camera-face-guard/face-gallery/gallery.npz</code></td>
+            <td><code>FaceGalleryService</code></td>
+            <td>embedding 矩阵文件路径。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_GALLERY_MANIFEST_PATH</code></td>
+            <td><code>/var/lib/camera-face-guard/face-gallery/gallery_manifest.json</code></td>
+            <td><code>FaceGalleryService</code></td>
+            <td>embedding 对应人员元数据。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_FAIL_OPEN</code></td>
+            <td><code>true</code></td>
+            <td><code>run_face_recheck()</code></td>
+            <td>InsightFace 异常时是否继续原链路。必须默认开启。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_TIMEOUT_SECONDS</code></td>
+            <td><code>3</code></td>
+            <td>事件处理调用层</td>
+            <td>单次 recheck 超时上限。超时按 fail-open 处理。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>五、核心数据结构</h2>
+      <p>以下结构在 <code>app/services/face_recheck.py</code> 中定义。字段名称应稳定，便于写入事件记录和测试断言。</p>
+      <pre><code>class FaceRecheckMode(str, Enum):
+    OFF = "off"
+    SHADOW = "shadow"
+    FILTER = "filter"
+    VERIFY_AND_OVERRIDE = "verify_and_override"
+
+@dataclass(frozen=True)
+class FaceRecheckSettings:
+    enabled: bool
+    mode: FaceRecheckMode
+    model_name: str
+    model_root: str
+    provider: str
+    det_score_threshold: float
+    min_face_width: int
+    min_face_height: int
+    blur_threshold: float
+    frontal_max_yaw_score: float
+    similarity_threshold: float
+    similarity_margin: float
+    gallery_path: str
+    gallery_manifest_path: str
+    fail_open: bool
+    timeout_seconds: int
+
+@dataclass(frozen=True)
+class FaceRecheckInput:
+    identity: event_store.EventIdentity
+    route_result: Literal["known", "stranger", "parse_error"]
+    camera_person: dict[str, Any] | None
+    primary_image_path: Path | None
+    background_image_path: Path | None
+    capture_image_path: Path | None
+    background_view_url: str | None
+    capture_view_url: str | None
+
+@dataclass(frozen=True)
+class DetectedFaceSummary:
+    index: int
+    bbox: tuple[float, float, float, float]
+    det_score: float
+    width: float
+    height: float
+    blur_score: float | None
+    frontal_score: float | None
+    quality_flags: list[str]
+
+@dataclass(frozen=True)
+class GalleryMatch:
+    person_id: str
+    name: str
+    person_type: Literal["member", "coach", "staff"]
+    group_id: str
+    group_name: str
+    similarity: float
+    second_similarity: float | None
+    accepted: bool
+
+@dataclass(frozen=True)
+class FaceRecheckResult:
+    enabled: bool
+    mode: str
+    status: Literal["skipped", "passed", "filtered", "error"]
+    decision: Literal["allow_original", "suppress", "override_to_known"]
+    reason: str
+    image_source: Literal["background", "capture", "none"]
+    face_count: int
+    selected_face: DetectedFaceSummary | None
+    gallery_match: GalleryMatch | None
+    elapsed_ms: int | None
+    error_type: str | None = None</code></pre>
+      <h3>JSON 序列化要求</h3>
+      <ul>
+        <li><code>FaceRecheckResult.to_dict()</code> 不包含 embedding 原始向量，不包含图片 base64，不包含机器人 token。</li>
+        <li>写入事件记录时字段名为 <code>face_recheck</code>。</li>
+        <li>shadow 机器人发送结果另写入 <code>face_recheck_shadow_feishu</code>，只保存 <code>ok/status_code/text 摘要</code>，不保存签名。</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>六、InsightFace 服务实现</h2>
+      <h3>模型加载</h3>
+      <pre><code>_FACE_ANALYSIS_SINGLETON: FaceAnalysis | None = None
+
+def get_face_analysis(settings: FaceRecheckSettings) -> FaceAnalysis:
+    # Lazy-load; FACE_RECHECK_ENABLED=false 时绝不加载。
+    # CPU-only: providers=[settings.provider], ctx_id=-1。
+    # 生产环境不自动下载：启动前检查 model_root/models/buffalo_l/*.onnx 是否存在。
+</code></pre>
+      <table>
+        <thead>
+          <tr>
+            <th>点位</th>
+            <th>设计</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>加载时机</td>
+            <td>第一次 FaceReco recheck 时 lazy-load。不开启则不引入启动耗时。</td>
+          </tr>
+          <tr>
+            <td>模型目录检查</td>
+            <td>加载前确认 <code>det_10g.onnx</code>、<code>w600k_r50.onnx</code> 至少存在；缺失返回 error 并 fail-open。</td>
+          </tr>
+          <tr>
+            <td>CPU 配置</td>
+            <td><code>FaceAnalysis(name=model_name, root=model_root, providers=["CPUExecutionProvider"])</code>，<code>prepare(ctx_id=-1, det_thresh=...)</code>。</td>
+          </tr>
+          <tr>
+            <td>输入图片</td>
+            <td>优先 <code>background_image_path</code>；不存在时回退 <code>capture_image_path</code>；均不存在则返回 skipped。</td>
+          </tr>
+          <tr>
+            <td>读取方式</td>
+            <td>使用 <code>cv2.imdecode(np.fromfile(...))</code> 或 <code>cv2.imread()</code>。读取失败返回 error 并 fail-open。</td>
+          </tr>
+        </tbody>
+      </table>
+      <h3>检测流程</h3>
+      <pre><code>def analyze_image(input: FaceRecheckInput, settings: FaceRecheckSettings) -> FaceRecheckResult:
+    img = read_image(primary_path)
+    faces = app.get(img)
+    if not faces:
+        return filtered_or_shadow("no_face")
+
+    selected = select_face(faces, img_shape)
+    quality = evaluate_quality(selected, img)
+    match = gallery.match(selected.normed_embedding) if gallery_enabled else None
+    return decide(input, quality, match, settings)</code></pre>
+    </section>
+
+    <section class="panel">
+      <h2>七、质量过滤规则</h2>
+      <p>质量门控由 <code>FaceQualityGate</code> 负责。它输出 flags，不直接发飞书、不写 DB。业务是否抑制由 <code>FaceRecheckDecision</code> 根据模式处理。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>flag</th>
+            <th>触发条件</th>
+            <th>shadow</th>
+            <th>filter</th>
+            <th>verify_and_override</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>no_face</code></td>
+            <td>InsightFace 检测不到人脸。</td>
+            <td>记录并发 shadow。</td>
+            <td>抑制。</td>
+            <td>抑制。</td>
+          </tr>
+          <tr>
+            <td><code>low_det_score</code></td>
+            <td>选中人脸检测分数低于 <code>FACE_RECHECK_DET_SCORE</code>。</td>
+            <td>记录并发 shadow。</td>
+            <td>抑制。</td>
+            <td>抑制。</td>
+          </tr>
+          <tr>
+            <td><code>face_too_small</code></td>
+            <td>人脸框宽或高低于配置。</td>
+            <td>记录并发 shadow。</td>
+            <td>抑制。</td>
+            <td>抑制。</td>
+          </tr>
+          <tr>
+            <td><code>blurred</code></td>
+            <td>人脸区域 Laplacian 方差低于阈值。</td>
+            <td>记录并发 shadow。</td>
+            <td>抑制。</td>
+            <td>抑制。</td>
+          </tr>
+          <tr>
+            <td><code>side_face</code></td>
+            <td>关键点估算侧脸分数高于阈值。</td>
+            <td>记录并发 shadow。</td>
+            <td>首版不强制抑制，除非配置另开。</td>
+            <td>不参与身份覆盖，只记录。</td>
+          </tr>
+          <tr>
+            <td><code>multiple_faces</code></td>
+            <td>背景图中检测到多张脸。</td>
+            <td>记录人脸数。</td>
+            <td>默认不抑制，选最大且置信度最高的人脸。</td>
+            <td>只对选中人脸做 gallery 比对。</td>
+          </tr>
+        </tbody>
+      </table>
+      <h3>侧脸估算</h3>
+      <ul>
+        <li>优先读取 InsightFace face 对象可能提供的姿态字段；若无字段，则使用五点关键点几何估算。</li>
+        <li>几何估算只作为 shadow 观测指标，首版不作为强过滤条件，避免阈值未校准导致漏报。</li>
+        <li>LLD 不引入新模型做姿态识别，避免超出技术方案范围。</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>八、服务器侧 Gallery 设计</h2>
+      <h3>文件格式</h3>
+      <p>gallery 是服务器侧二次比对用的人脸库，和摄像头脸库分离。它是运行时敏感资产，不进 Git。</p>
+      <pre><code>/var/lib/camera-face-guard/face-gallery/
+  gallery.npz
+  gallery_manifest.json
+  build_report_YYYYMMDD_HHMMSS.json</code></pre>
+      <h4><code>gallery.npz</code></h4>
+      <table>
+        <thead>
+          <tr>
+            <th>key</th>
+            <th>类型</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>embeddings</code></td>
+            <td><code>float32[N, D]</code></td>
+            <td>InsightFace <code>normed_embedding</code> 矩阵，已归一化。</td>
+          </tr>
+          <tr>
+            <td><code>person_ids</code></td>
+            <td><code>str[N]</code></td>
+            <td>人员 ID，与 CSV/图片命名一致。</td>
+          </tr>
+          <tr>
+            <td><code>person_types</code></td>
+            <td><code>str[N]</code></td>
+            <td><code>member</code>、<code>coach</code>、<code>staff</code>。</td>
+          </tr>
+          <tr>
+            <td><code>names</code></td>
+            <td><code>str[N]</code></td>
+            <td>人员姓名。</td>
+          </tr>
+        </tbody>
+      </table>
+      <h4><code>gallery_manifest.json</code></h4>
+      <pre><code>{
+  "model_name": "buffalo_l",
+  "model_sha256": "80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f",
+  "created_at": "2026-07-04T00:00:00+08:00",
+  "source_sets": [
+    {"person_type": "member", "csv": "...", "image_dir": "...", "count": 244},
+    {"person_type": "coach", "csv": "...", "image_dir": "...", "count": 15},
+    {"person_type": "staff", "csv": "...", "image_dir": "...", "count": 4}
+  ],
+  "records": [
+    {
+      "index": 0,
+      "person_id": "3427976339944670",
+      "name": "小明",
+      "person_type": "staff",
+      "group_id": "4dcafc2c9fbd4d1fa267ccbf145c8861",
+      "group_name": "员工",
+      "source_image_path": "/private/path/not_for_git.jpg",
+      "quality_flags": []
+    }
+  ]
+}</code></pre>
+      <h3>构建脚本</h3>
+      <pre><code>python3 scripts/build_face_gallery.py \
+  --member-csv /Users/congming/github/stock/styd_members_20260703_existing_faces_244.csv \
+  --member-dir /Users/congming/github/stock/styd_member_faces \
+  --coach-csv /Users/congming/github/stock/teacher.csv \
+  --coach-dir /Users/congming/github/stock/teacher \
+  --staff-csv /Users/congming/github/stock/staff.csv \
+  --staff-dir /Users/congming/github/stock/staff \
+  --output-dir /var/lib/camera-face-guard/face-gallery \
+  --model-root /Users/congming/.insightface</code></pre>
+      <h3>构建规则</h3>
+      <ul>
+        <li>每张源图必须能被 InsightFace 检测到且只选一个主脸。</li>
+        <li>提取失败的人员写入 <code>build_report</code>，默认不中断全量构建，但报告中必须列出失败人员。</li>
+        <li>同一 <code>person_type + person_id</code> 重复时停止，避免 gallery 索引歧义。</li>
+        <li>脚本默认输出到用户指定目录，不写入仓库。</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>九、决策矩阵</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>摄像头结果</th>
+            <th>recheck 结果</th>
+            <th>shadow</th>
+            <th>filter</th>
+            <th>verify_and_override</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>known</td>
+            <td>质量通过，无 gallery 或 gallery 一致</td>
+            <td>原流程继续，发送 shadow。</td>
+            <td>原流程继续。</td>
+            <td>原流程继续。</td>
+          </tr>
+          <tr>
+            <td>known</td>
+            <td>质量不通过</td>
+            <td>原流程继续，发送 shadow。</td>
+            <td>抑制写库和主飞书，记录过滤原因。</td>
+            <td>抑制写库和主飞书，记录过滤原因。</td>
+          </tr>
+          <tr>
+            <td>known</td>
+            <td>gallery 命中其他人</td>
+            <td>原流程继续，shadow 标记冲突。</td>
+            <td>原流程继续，记录冲突。</td>
+            <td>不覆盖摄像头 known 身份，只记录冲突。</td>
+          </tr>
+          <tr>
+            <td>stranger</td>
+            <td>质量不通过</td>
+            <td>原流程继续，发送 shadow。</td>
+            <td>抑制写库和主飞书，记录过滤原因。</td>
+            <td>抑制写库和主飞书，记录过滤原因。</td>
+          </tr>
+          <tr>
+            <td>stranger</td>
+            <td>质量通过但 gallery 未命中</td>
+            <td>原流程继续，发送 shadow。</td>
+            <td>原流程继续。</td>
+            <td>原流程继续，仍作为陌生人。</td>
+          </tr>
+          <tr>
+            <td>stranger</td>
+            <td>质量通过且 gallery 高置信命中</td>
+            <td>原流程继续，shadow 展示建议覆盖。</td>
+            <td>原流程继续，仍作为陌生人。</td>
+            <td>覆盖为对应 member/coach/staff，使用命中人员姓名、ID、身份类型写库和发主飞书。</td>
+          </tr>
+          <tr>
+            <td>parse_error</td>
+            <td>任意</td>
+            <td>原流程继续，发送 shadow。</td>
+            <td>不做身份覆盖；是否抑制只依据质量硬失败。</td>
+            <td>不做身份覆盖；避免把解析异常直接改身份。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>十、p6s_events.py 改造细节</h2>
+      <h3>新增内部 helper</h3>
+      <pre><code>def _run_face_recheck_for_event(
+    *,
+    identity: event_store.EventIdentity,
+    route_result: str,
+    face_images: SavedFaceRecoImages,
+    camera_person: dict[str, Any] | None,
+) -> tuple[face_recheck.FaceRecheckResult, dict[str, Any]]:
+    # 1. 组装 FaceRecheckInput。
+    # 2. 调用 face_recheck.run_face_recheck(input)。
+    # 3. 调用 feishu.notify_face_recheck_shadow(...)。
+    # 4. 返回 result 和 shadow feishu 摘要。</code></pre>
+      <h3>known 分支顺序</h3>
+      <pre><code>face_images = _save_face_reco_images(...)
+recheck_result, shadow_result = _run_face_recheck_for_event(...)
+
+if _should_suppress_by_recheck(recheck_result):
+    ack = _face_reco_ack(...)
+    record_file = _write_record(... result="filtered", face_recheck=..., ...)
+    return EventHandleResult(... feishu_result=_notification_skipped("face recheck filtered"))
+
+# shadow 默认走到现有逻辑
+draft = attendance.build_known_draft(...)
+db_result = attendance.safe_record_event(draft)
+...</code></pre>
+      <h3>stranger 分支顺序</h3>
+      <pre><code>face_images = _save_face_reco_images(...)
+recheck_result, shadow_result = _run_face_recheck_for_event(...)
+
+if _should_suppress_by_recheck(recheck_result):
+    return filtered result
+
+if recheck_result.decision == "override_to_known":
+    # 使用 gallery_match 的 person_type/name/person_id/group_id/group_name
+    draft = attendance.build_known_draft(...)
+    feishu.notify_known_face(...)
+else:
+    # 现有 stranger 逻辑
+    draft = attendance.build_stranger_draft(...)</code></pre>
+      <h3>处理记录新增字段</h3>
+      <pre><code>{
+  "result": "known|stranger|parse_error|filtered",
+  "face_recheck": {
+    "enabled": true,
+    "mode": "shadow",
+    "status": "passed",
+    "decision": "allow_original",
+    "reason": "quality_passed",
+    "image_source": "background",
+    "face_count": 1,
+    "selected_face": {...},
+    "gallery_match": null,
+    "elapsed_ms": 312
+  },
+  "face_recheck_shadow_feishu": {
+    "ok": true,
+    "status_code": 200
+  }
+}</code></pre>
+    </section>
+
+    <section class="panel">
+      <h2>十一、Shadow 飞书消息</h2>
+      <p>shadow 机器人只发送 InsightFace 二次判断，不替代主业务机器人。消息必须使用 P6S 事件时间，方便和主机器人消息对齐。</p>
+      <h3>新增函数</h3>
+      <pre><code>def face_recheck_shadow_config_from_env() -> FeishuConfig:
+    return FeishuConfig(
+        webhook_url=os.environ.get("FACE_RECHECK_SHADOW_FEISHU_WEBHOOK_URL", "").strip(),
+        webhook_secret=os.environ.get("FACE_RECHECK_SHADOW_FEISHU_WEBHOOK_SECRET", "").strip(),
+        app_id="",
+        app_secret="",
+    )
+
+def build_face_recheck_shadow_post(
+    *,
+    identity: event_store.EventIdentity,
+    camera_result: str,
+    camera_person_summary: dict[str, Any] | None,
+    recheck_result: FaceRecheckResult,
+    background_view_url: str | None,
+    capture_view_url: str | None,
+) -> dict[str, Any]:
+    ...
+
+def notify_face_recheck_shadow(...) -> dict[str, Any]:
+    return _send_webhook_payload(payload, face_recheck_shadow_config_from_env())</code></pre>
+      <h3>消息模板</h3>
+      <pre><code>标题: InsightFace Shadow 对比
+
+事件时间: 2026-07-04 20:18:21
+发送时间: 2026-07-04 20:18:23
+设备: xxx
+事件 ID: xxx
+摄像头结果: stranger
+摄像头人员: 陌生人
+InsightFace 状态: passed
+InsightFace 建议: override_to_known
+过滤原因: quality_passed
+检测人脸数: 1
+检测分数: 0.91
+人脸尺寸: 146x151
+模糊分数: 132.4
+侧脸分数: 0.12
+Gallery 命中: 小明 / staff / 3427976339944670 / 0.63
+查看背景全图
+查看人脸图</code></pre>
+      <h3>发送规则</h3>
+      <ul>
+        <li><code>FACE_RECHECK_ENABLED=false</code> 时不发送。</li>
+        <li><code>FACE_RECHECK_MODE=shadow</code> 时每条 FaceReco 都发送 shadow 对比消息。</li>
+        <li><code>filter</code> 和 <code>verify_and_override</code> 时仍发送 shadow 消息，便于追踪实际干预。</li>
+        <li>shadow 发送失败不影响主链路，记录摘要后继续。</li>
+        <li>消息中不得包含 webhook、secret、base64 图片、embedding 原始向量。</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>十二、异常处理与 fail-open</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>异常</th>
+            <th>处理方式</th>
+            <th>业务影响</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>模型目录缺失</td>
+            <td>返回 <code>status=error</code>、<code>reason=model_missing</code>。</td>
+            <td><code>FACE_RECHECK_FAIL_OPEN=true</code> 时原链路继续。</td>
+          </tr>
+          <tr>
+            <td>InsightFace import 失败</td>
+            <td>捕获 <code>ImportError</code>，写入 error 类型。</td>
+            <td>原链路继续，shadow 可记录失败或跳过。</td>
+          </tr>
+          <tr>
+            <td>图片读取失败</td>
+            <td>返回 <code>reason=image_read_failed</code>。</td>
+            <td>原链路继续。</td>
+          </tr>
+          <tr>
+            <td>推理超时</td>
+            <td>返回 <code>reason=timeout</code>。</td>
+            <td>原链路继续；后续可调低模型或关闭 recheck。</td>
+          </tr>
+          <tr>
+            <td>gallery 文件缺失</td>
+            <td>质量过滤仍可用，gallery match 为 null。</td>
+            <td><code>verify_and_override</code> 不进行身份覆盖。</td>
+          </tr>
+          <tr>
+            <td>shadow 机器人失败</td>
+            <td>记录 <code>ok=false/status_code/text</code> 摘要。</td>
+            <td>不影响主飞书和入场记录。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>十三、部署步骤</h2>
+      <h3>本地准备</h3>
+      <ol>
+        <li>确认本地模型目录存在：<code>/Users/congming/.insightface/models/buffalo_l</code>。</li>
+        <li>确认模型文件包括：<code>det_10g.onnx</code>、<code>w600k_r50.onnx</code>、<code>2d106det.onnx</code>、<code>1k3d68.onnx</code>、<code>genderage.onnx</code>。</li>
+        <li>确认 <code>/Users/congming/Downloads/buffalo_l.zip</code> 的 SHA256 为 <code>80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f</code>。</li>
+        <li>本地 <code>.env.local</code> 写入 shadow 机器人真实配置，不写入文档和 Git。</li>
+      </ol>
+      <h3>远程模型上传</h3>
+      <pre><code>ssh qypower-prod 'sudo mkdir -p /var/lib/camera-face-guard/insightface/models/buffalo_l'
+rsync -az /Users/congming/.insightface/models/buffalo_l/ \
+  qypower-prod:/tmp/buffalo_l/
+ssh qypower-prod 'sudo rsync -a /tmp/buffalo_l/ /var/lib/camera-face-guard/insightface/models/buffalo_l/ && sudo chown -R ubuntu:ubuntu /var/lib/camera-face-guard/insightface'</code></pre>
+      <h3>远程环境变量</h3>
+      <pre><code>FACE_RECHECK_ENABLED=true
+FACE_RECHECK_MODE=shadow
+INSIGHTFACE_MODEL_NAME=buffalo_l
+INSIGHTFACE_MODEL_ROOT=/var/lib/camera-face-guard/insightface
+INSIGHTFACE_PROVIDER=CPUExecutionProvider
+FACE_RECHECK_SHADOW_FEISHU_WEBHOOK_URL=&lt;真实值&gt;
+FACE_RECHECK_SHADOW_FEISHU_WEBHOOK_SECRET=&lt;真实值&gt;</code></pre>
+      <h3>上线顺序</h3>
+      <ol>
+        <li>先部署依赖和代码，但远程保持 <code>FACE_RECHECK_ENABLED=false</code>，确认服务可启动。</li>
+        <li>上传模型文件并执行模型目录校验脚本。</li>
+        <li>切换 <code>FACE_RECHECK_ENABLED=true</code>、<code>FACE_RECHECK_MODE=shadow</code>。</li>
+        <li>重启服务并观察 shadow 机器人消息与主机器人消息时间戳是否对齐。</li>
+        <li>收集真实样本报告后，再评审是否进入 <code>filter</code>。</li>
+      </ol>
+    </section>
+
+    <section class="panel">
+      <h2>十四、验证计划</h2>
+      <h3>静态验证</h3>
+      <pre><code>python3 -m py_compile \
+  app/services/face_recheck.py \
+  app/services/face_gallery.py \
+  app/services/feishu.py \
+  app/services/p6s_events.py \
+  scripts/build_face_gallery.py \
+  scripts/validate_insightface_recheck.py</code></pre>
+      <h3>本地 POC</h3>
+      <pre><code>python3 scripts/validate_insightface_recheck.py \
+  --model-root /Users/congming/.insightface \
+  --image /path/to/background.jpg \
+  --mode shadow</code></pre>
+      <h3>Gallery 构建验证</h3>
+      <ul>
+        <li>构建脚本输出 <code>gallery.npz</code>、<code>gallery_manifest.json</code>、<code>build_report</code>。</li>
+        <li>报告必须包含总人数、成功人数、失败人数、失败原因。</li>
+        <li>对小明等已知人员抽样验证相似度命中。</li>
+      </ul>
+      <h3>事件流验证</h3>
+      <ul>
+        <li>fixture 覆盖 known + shadow：主飞书和 attendance 行为不变，记录包含 <code>face_recheck</code>。</li>
+        <li>fixture 覆盖 stranger + gallery 命中：shadow 下不覆盖，<code>verify_and_override</code> 下覆盖。</li>
+        <li>fixture 覆盖 no_face/blurred：shadow 下不抑制，filter 下抑制。</li>
+        <li>fixture 覆盖模型缺失/import 失败：接口不 500，原链路继续。</li>
+        <li>fixture 覆盖 shadow 机器人未配置：记录 skipped，不影响主链路。</li>
+      </ul>
+      <h3>生产 shadow 验收</h3>
+      <ul>
+        <li>主机器人消息和 shadow 机器人消息的事件时间一致。</li>
+        <li>shadow 消息能看到摄像头结果、InsightFace 状态、质量分数、gallery 建议。</li>
+        <li>主飞书通知数量、到场记录数量与启用前一致。</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>十五、回滚方案</h2>
+      <ol>
+        <li>最快回滚：远程设置 <code>FACE_RECHECK_ENABLED=false</code>，重启 <code>camera-face-guard</code>。</li>
+        <li>模式回滚：从 <code>verify_and_override</code> 或 <code>filter</code> 切回 <code>shadow</code>。</li>
+        <li>代码回滚：使用当前部署备份目录恢复上一版服务代码。</li>
+        <li>依赖回滚：若 InsightFace 依赖影响启动，回滚 requirements 和虚拟环境后重启。</li>
+        <li>模型回滚：模型目录可保留不动；关闭开关后不会读取。</li>
+      </ol>
+      <div class="callout good">
+        <p>本功能不写摄像头配置，因此回滚不涉及摄像头侧恢复。</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>十六、开发步骤</h2>
+      <ol>
+        <li>更新 <code>requirements.txt</code>，新增 InsightFace CPU 依赖。</li>
+        <li>实现 <code>app/services/face_gallery.py</code>，先支持加载和向量比对。</li>
+        <li>实现 <code>app/services/face_recheck.py</code>，支持配置读取、模型加载、质量过滤和决策输出。</li>
+        <li>实现 <code>scripts/validate_insightface_recheck.py</code>，先对单图跑 POC。</li>
+        <li>实现 <code>scripts/build_face_gallery.py</code>，生成 gallery 私有资产。</li>
+        <li>扩展 <code>app/services/feishu.py</code>，新增 shadow 机器人配置和消息模板。</li>
+        <li>改造 <code>app/services/p6s_events.py</code>，在 FaceReco 分支接入 recheck。</li>
+        <li>扩展 <code>scripts/validate_p6s_event_flow.py</code>，增加 shadow/filter/override fixture。</li>
+        <li>本地运行静态检查、POC、事件流验证。</li>
+        <li>评审结果后再执行远程 shadow 部署。</li>
+      </ol>
+    </section>
+  </main>
+</body>
+</html>
