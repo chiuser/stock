@@ -14,6 +14,7 @@ KNOWN_PERSON_TABLES = {
     "member": ("members", "member_id"),
     "coach": ("coaches", "coach_id"),
     "staff": ("staff", "staff_id"),
+    "class_member": ("class_members", "class_member_id"),
 }
 
 
@@ -276,6 +277,7 @@ def aggregate_daily_summary(conn: Connection, *, day_start: datetime, day_end: d
               count(*) filter (where person_type = 'member') as member_entries,
               count(*) filter (where person_type = 'coach') as coach_entries,
               count(*) filter (where person_type = 'staff') as staff_entries,
+              count(*) filter (where person_type = 'class_member') as class_member_entries,
               count(*) filter (where person_type = 'stranger') as stranger_entries,
               count(*) filter (where person_type = 'unknown_known') as unknown_known_entries,
               count(*) filter (
@@ -329,6 +331,7 @@ def upsert_daily_report(conn: Connection, values: Mapping[str, Any]) -> None:
               member_entries,
               coach_entries,
               staff_entries,
+              class_member_entries,
               stranger_entries,
               unknown_known_entries,
               notification_sent_count,
@@ -341,6 +344,7 @@ def upsert_daily_report(conn: Connection, values: Mapping[str, Any]) -> None:
               :member_entries,
               :coach_entries,
               :staff_entries,
+              :class_member_entries,
               :stranger_entries,
               :unknown_known_entries,
               :notification_sent_count,
@@ -353,6 +357,7 @@ def upsert_daily_report(conn: Connection, values: Mapping[str, Any]) -> None:
               member_entries = excluded.member_entries,
               coach_entries = excluded.coach_entries,
               staff_entries = excluded.staff_entries,
+              class_member_entries = excluded.class_member_entries,
               stranger_entries = excluded.stranger_entries,
               unknown_known_entries = excluded.unknown_known_entries,
               notification_sent_count = excluded.notification_sent_count,
@@ -367,6 +372,7 @@ def upsert_daily_report(conn: Connection, values: Mapping[str, Any]) -> None:
             "member_entries": values.get("member_entries", 0),
             "coach_entries": values.get("coach_entries", 0),
             "staff_entries": values.get("staff_entries", 0),
+            "class_member_entries": values.get("class_member_entries", 0),
             "stranger_entries": values.get("stranger_entries", 0),
             "unknown_known_entries": values.get("unknown_known_entries", 0),
             "notification_sent_count": values.get("notification_sent_count", 0),

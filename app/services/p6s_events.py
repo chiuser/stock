@@ -241,7 +241,7 @@ def _handle_known_face(
     person = _parse_matched_person(person_info_value)
     person_type = attendance.person_type_for_role(person.role.code)
     person_ref_id = None if person.person_id_missing else person.person_id
-    if person_type in {"member", "coach", "staff"} and not person_ref_id:
+    if person_type in {"member", "coach", "staff", "class_member"} and not person_ref_id:
         person_type = "unknown_known"
     face_images = _save_face_reco_images(
         info,
@@ -975,6 +975,8 @@ def _title_for_person_type(person_type: str | None) -> str:
         return "🧑‍🏫 教练入场提醒"
     if person_type == "staff":
         return "🧑‍💼 员工入场提醒"
+    if person_type == "class_member":
+        return "📚 上课会员入场提醒"
     return "人员入场提醒"
 
 
@@ -985,6 +987,8 @@ def _role_name_for_person_type(person_type: str | None) -> str:
         return "教练"
     if person_type == "staff":
         return "员工"
+    if person_type == "class_member":
+        return "上课会员"
     return ""
 
 
@@ -1094,6 +1098,13 @@ def _configured_person_roles() -> list[PersonRole]:
             "P6S_FACE_GROUP_STAFF_NAME",
             "员工",
             "🧑‍💼 员工入场提醒",
+        ),
+        (
+            "class_members",
+            "P6S_FACE_GROUP_CLASS_MEMBERS_ID",
+            "P6S_FACE_GROUP_CLASS_MEMBERS_NAME",
+            "上课会员",
+            "📚 上课会员入场提醒",
         ),
     ):
         group_id = os.environ.get(id_env, "").strip()

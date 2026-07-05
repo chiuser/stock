@@ -716,6 +716,14 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
         </tbody>
       </table>
       <p class="small">该逻辑必须插入在图片保存和 InsightFace 复核之后、<code>attendance_events</code> 写入和主飞书通知之前，否则无法正确影响通知去重。</p>
+      <h3>低质量未知分层</h3>
+      <p>陌生人提醒必须进一步拆分为“确认陌生人”和“低质量未知”。低质量未知不是熟人，也不是确认陌生人；它代表当前单帧无法可靠判断身份，只写处理记录和监控后台，不触发主飞书陌生人提醒。</p>
+      <ul>
+        <li><strong>本期实现：</strong>新增 <code>face_near_border</code>、<code>motion_blur</code>、<code>low_identity_confidence</code> 三类降噪信号。</li>
+        <li><strong>确认陌生人：</strong>质量可用、未贴边、未运动模糊，即使 Gallery Top1 分数低，也可以按陌生人触发，避免漏掉真正陌生人。</li>
+        <li><strong>低质量未知：</strong>未高置信命中熟人，且存在贴边裁切或运动模糊；低身份置信度用于增强解释和辅助过滤，但不能单独作为所有陌生人过滤条件。</li>
+        <li><strong>暂不实现：</strong>不启用 <code>unknown_face_too_small</code>，避免小脸线索被过早过滤；不做 3-5 秒短窗口聚合，避免引入状态管理复杂度。</li>
+      </ul>
     </section>
 
     <section class="panel">

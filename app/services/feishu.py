@@ -656,7 +656,8 @@ def _gallery_candidates_text(candidates: list[dict[str, Any]]) -> str:
         group_name = str(candidate.get("group_name") or "").strip()
         similarity = candidate.get("similarity", "unknown")
         rank = candidate.get("rank", len(items) + 1)
-        identity = " / ".join(part for part in (name, person_type, group_name, person_id) if part)
+        role_name = group_name or person_type
+        identity = " / ".join(part for part in (name, role_name, person_id) if part)
         items.append(f"{rank}. {identity} / {similarity}")
     return "; ".join(items)
 

@@ -22,6 +22,8 @@ ROLE_TO_PERSON_TYPE = {
     "coaches": "coach",
     "coach": "coach",
     "staff": "staff",
+    "class_members": "class_member",
+    "class_member": "class_member",
 }
 
 
@@ -232,7 +234,7 @@ def record_event(
 
     with transaction(cfg) as conn:
         person_ref_id = draft.person.person_ref_id
-        if draft.person.person_type in {"member", "coach", "staff"} and person_ref_id:
+        if draft.person.person_type in {"member", "coach", "staff", "class_member"} and person_ref_id:
             attendance_repo.upsert_known_person(
                 conn,
                 person_type=draft.person.person_type,

@@ -19,15 +19,17 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.services import face_gallery, face_recheck
 
-PERSON_SOURCES: tuple[tuple[Literal["member", "staff", "coach"], str, str], ...] = (
+PERSON_SOURCES: tuple[tuple[Literal["member", "staff", "coach", "class_member"], str, str], ...] = (
     ("member", "会员", "styd_member_faces_full_p6s_named"),
     ("staff", "员工", "staff_p6s_named"),
     ("coach", "教练", "teacher_p6s_named"),
+    ("class_member", "上课会员", "unregister_class_member"),
 )
 GROUP_ID_ENV = {
     "member": "P6S_FACE_GROUP_MEMBERS_ID",
     "staff": "P6S_FACE_GROUP_STAFF_ID",
     "coach": "P6S_FACE_GROUP_COACHES_ID",
+    "class_member": "P6S_FACE_GROUP_CLASS_MEMBERS_ID",
 }
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 
@@ -47,6 +49,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--coach-dir",
         default=str(PROJECT_ROOT / "teacher_p6s_named"),
+    )
+    parser.add_argument(
+        "--class-member-dir",
+        default=str(PROJECT_ROOT / "unregister_class_member"),
     )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument(
@@ -98,6 +104,7 @@ def _source_sets(args: argparse.Namespace) -> list[dict[str, Any]]:
         "member": Path(args.member_dir).expanduser(),
         "staff": Path(args.staff_dir).expanduser(),
         "coach": Path(args.coach_dir).expanduser(),
+        "class_member": Path(args.class_member_dir).expanduser(),
     }
     sets: list[dict[str, Any]] = []
     for person_type, group_name, default_dir in PERSON_SOURCES:

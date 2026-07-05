@@ -33,6 +33,7 @@ const recheckStatusLabels = {
 
 const roleLabels = {
   member: "会员",
+  class_member: "上课会员",
   staff: "员工",
   coach: "教练",
 };
@@ -148,7 +149,7 @@ function initElements() {
     "nav-username", "nav-logout", "btn-refresh", "monitor-summary-text", "monitor-refresh-state",
     "stat-total", "stat-conflict", "stat-missed", "stat-same", "stat-filtered", "stat-no-face",
     "filter-date", "filter-classification", "filter-camera-result", "filter-recheck-status",
-    "filter-reason", "filter-person", "filter-accepted", "btn-apply-filters", "btn-reset-filters",
+    "filter-reason", "filter-person", "filter-person-type", "filter-accepted", "btn-apply-filters", "btn-reset-filters",
     "quality-days", "quality-desc", "quality-conflict-rate", "quality-missed-rate",
     "quality-filtered-rate", "quality-trends", "quality-reasons", "quality-examples",
     "page-size", "events-body", "monitor-list-desc", "btn-prev-page", "btn-next-page", "page-state",
@@ -174,7 +175,7 @@ function initFilters() {
   });
   els["btn-reset-filters"].addEventListener("click", () => {
     els["filter-date"].value = localDateValue();
-    ["filter-classification", "filter-camera-result", "filter-recheck-status", "filter-accepted"].forEach(id => {
+    ["filter-classification", "filter-camera-result", "filter-recheck-status", "filter-person-type", "filter-accepted"].forEach(id => {
       els[id].value = "";
     });
     els["filter-reason"].value = "";
@@ -185,7 +186,7 @@ function initFilters() {
     loadDashboard();
   });
 
-  ["filter-date", "filter-classification", "filter-camera-result", "filter-recheck-status", "filter-accepted"].forEach(id => {
+  ["filter-date", "filter-classification", "filter-camera-result", "filter-recheck-status", "filter-person-type", "filter-accepted"].forEach(id => {
     els[id].addEventListener("change", () => {
       state.page = 1;
       loadDashboard();
@@ -250,6 +251,7 @@ function currentFilters() {
     recheck_status: els["filter-recheck-status"].value,
     reason: els["filter-reason"].value.trim(),
     person: els["filter-person"].value.trim(),
+    person_type: els["filter-person-type"].value,
     accepted: els["filter-accepted"].value,
   };
 }

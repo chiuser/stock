@@ -566,6 +566,30 @@
             <td>基于 InsightFace 3D landmark 输出的 <code>pose[0]</code> pitch。小于该值说明明显低头/头顶，标记 <code>head_pitch_bad</code>，属于复核不可用。</td>
           </tr>
           <tr>
+            <td><code>FACE_RECHECK_BORDER_MARGIN_RATIO</code></td>
+            <td><code>0.02</code></td>
+            <td><code>FaceQualityGate</code></td>
+            <td>人脸框任一边距离图片边缘小于图片宽高的该比例时，标记 <code>face_near_border</code>。用于识别边缘裁切、半张脸入镜等低质量未知。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_MOTION_BLUR_THRESHOLD</code></td>
+            <td><code>待真实样本校准</code></td>
+            <td><code>FaceQualityGate</code></td>
+            <td>运动模糊分数低于阈值时，标记 <code>motion_blur</code>。该指标与现有 Laplacian 虚焦模糊不同，目标是拦截移动拖影、夜间压缩噪声导致的身份不稳定。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_LOW_IDENTITY_SIMILARITY</code></td>
+            <td><code>0.28</code></td>
+            <td><code>FinalRecognitionDecision</code></td>
+            <td>Gallery Top1 相似度低于该值时，标记 <code>low_identity_confidence</code>。该标记不能单独过滤清晰陌生人，只作为低质量未知解释和组合降噪条件。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_LOW_IDENTITY_GAP</code></td>
+            <td><code>0.04</code></td>
+            <td><code>FinalRecognitionDecision</code></td>
+            <td>Gallery Top1 与 Top2 分差小于该值时，表示候选不稳定；与低 Top1 分数共同标记 <code>low_identity_confidence</code>。</td>
+          </tr>
+          <tr>
             <td><code>FACE_RECHECK_SIMILARITY_THRESHOLD</code></td>
             <td><code>0.50</code></td>
             <td><code>FaceGalleryService</code></td>
@@ -907,6 +931,27 @@ def should_fallback_to_capture(result, capture_path, settings):
             <td>抑制；不得当作确认陌生人，也不得参与身份覆盖。</td>
           </tr>
           <tr>
+            <td><code>face_near_border</code></td>
+            <td>人脸框过于靠近图片边缘，疑似半张脸、边缘裁切或快速经过。</td>
+            <td>记录边距、bbox 和 shadow。</td>
+            <td>若未高置信命中熟人，则降级为低质量未知；若已高置信命中熟人，可继续按熟人触发。</td>
+            <td>同 filter；不得把贴边未命中的人脸当作确认陌生人。</td>
+          </tr>
+          <tr>
+            <td><code>motion_blur</code></td>
+            <td>运动模糊指标低于阈值，典型场景是入场移动中拖影、夜间模糊和压缩噪声。</td>
+            <td>记录运动模糊分数和 shadow。</td>
+            <td>若未高置信命中熟人，则降级为低质量未知；若已高置信命中熟人，可继续按熟人触发。</td>
+            <td>同 filter；不得把运动模糊未命中的人脸当作确认陌生人。</td>
+          </tr>
+          <tr>
+            <td><code>low_identity_confidence</code></td>
+            <td>Gallery Top1 分数低，且 Top1/Top2 分差小，说明身份候选不稳定。</td>
+            <td>记录 Top1、Top2、分差和 shadow。</td>
+            <td>不单独过滤清晰陌生人；与 <code>face_near_border</code> 或 <code>motion_blur</code> 组合时，辅助解释低质量未知。</td>
+            <td>同 filter；低身份置信度不能把陌生人改成熟人，也不能单独覆盖摄像头。</td>
+          </tr>
+          <tr>
             <td><code>multiple_faces</code></td>
             <td>背景图中检测到多张脸。</td>
             <td>记录每张脸的质量、bbox、TopN 和建议动作。</td>
@@ -1121,6 +1166,11 @@ def should_fallback_to_capture(result, capture_path, settings):
             <td>可以按陌生人触发。</td>
           </tr>
           <tr>
+            <td><code>IF-LQ-U</code></td>
+            <td>InsightFace 检测到人脸且未高置信命中熟人，但存在贴边裁切、运动模糊等导致身份不可确认的低质量未知状态。</td>
+            <td>不触发主飞书；只记录为低质量未知，供监控后台查看。</td>
+          </tr>
+          <tr>
             <td><code>IF-NA</code></td>
             <td><code>no_face</code>、模糊、小脸、侧脸、低检测分、图片读取失败、模型异常等复核不可用状态。</td>
             <td>不触发主飞书；只记录过滤原因。</td>
@@ -1161,6 +1211,13 @@ def should_fallback_to_capture(result, capture_path, settings):
           </tr>
           <tr>
             <td><code>C-K(A)</code></td>
+            <td><code>IF-LQ-U</code></td>
+            <td>原流程继续，shadow 标记低质量未知。</td>
+            <td>抑制陌生人触发，只记录低质量未知。</td>
+            <td>抑制陌生人触发，只记录低质量未知；不得纠偏为陌生人。</td>
+          </tr>
+          <tr>
+            <td><code>C-K(A)</code></td>
             <td><code>IF-NA</code></td>
             <td>原流程继续，发送 shadow。</td>
             <td>抑制写库和主飞书，记录过滤原因。</td>
@@ -1182,6 +1239,13 @@ def should_fallback_to_capture(result, capture_path, settings):
           </tr>
           <tr>
             <td><code>C-U</code></td>
+            <td><code>IF-LQ-U</code></td>
+            <td>原流程继续，shadow 标记低质量未知。</td>
+            <td>抑制写库和主飞书，只记录低质量未知。</td>
+            <td>抑制写库和主飞书，只记录低质量未知；不得当作确认陌生人。</td>
+          </tr>
+          <tr>
+            <td><code>C-U</code></td>
             <td><code>IF-NA</code></td>
             <td>原流程继续，发送 shadow。</td>
             <td>抑制写库和主飞书，记录过滤原因。</td>
@@ -1192,7 +1256,7 @@ def should_fallback_to_capture(result, capture_path, settings):
             <td>多脸，包含多个 <code>IF-K</code> / <code>IF-U</code> / <code>IF-NA</code></td>
             <td>原流程继续，shadow 展示逐脸结果。</td>
             <td>只处理质量合格的有效脸；<code>IF-NA</code> 只记录。</td>
-            <td>逐脸触发：<code>IF-K</code> 按熟人触发，<code>IF-U</code> 按陌生人触发，<code>IF-NA</code> 只记录。同一人员同一事件内去重。</td>
+            <td>逐脸触发：<code>IF-K</code> 按熟人触发，<code>IF-U</code> 按确认陌生人触发，<code>IF-LQ-U</code> / <code>IF-NA</code> 只记录。同一人员同一事件内去重。</td>
           </tr>
           <tr>
             <td><code>parse_error</code></td>
@@ -1215,19 +1279,19 @@ def should_fallback_to_capture(result, capture_path, settings):
     route_result: str,
     face_images: SavedFaceRecoImages,
     camera_person: dict[str, Any] | None,
-) -> tuple[face_recheck.FaceRecheckResult, dict[str, Any]]:
+) -> face_recheck.FaceRecheckResult:
     # 1. 组装 FaceRecheckInput。
     # 2. 调用 face_recheck.run_face_recheck(input)。
-    # 3. 调用 feishu.notify_face_recheck_shadow(...)。
-    # 4. 返回 result 和 shadow feishu 摘要。</code></pre>
+    # 3. 返回 result；shadow 必须等 final_decision 生成后再发送。</code></pre>
       <h3>known 分支顺序</h3>
       <pre><code>face_images = _save_face_reco_images(...)
-recheck_result, shadow_result = _run_face_recheck_for_event(...)
+recheck_result = _run_face_recheck_for_event(...)
 final_decision = face_recheck_decision.build_final_decision(
     camera_result="known",
     camera_person=person,
     recheck_result=recheck_result,
 )
+shadow_result = _notify_face_recheck_shadow_for_event(..., final_decision=final_decision)
 
 if final_decision.action == "suppress":
     ack = _face_reco_ack(...)
@@ -1245,12 +1309,13 @@ for trigger in final_decision.primary_and_extra_triggers:
 ...</code></pre>
       <h3>stranger 分支顺序</h3>
       <pre><code>face_images = _save_face_reco_images(...)
-recheck_result, shadow_result = _run_face_recheck_for_event(...)
+recheck_result = _run_face_recheck_for_event(...)
 final_decision = face_recheck_decision.build_final_decision(
     camera_result="stranger",
     camera_person=None,
     recheck_result=recheck_result,
 )
+shadow_result = _notify_face_recheck_shadow_for_event(..., final_decision=final_decision)
 
 if final_decision.action == "suppress":
     return filtered result
@@ -1294,6 +1359,60 @@ for trigger in final_decision.primary_and_extra_triggers:
     "status_code": 200
   }
 }</code></pre>
+    </section>
+
+    <section class="panel">
+      <h2>十补充、低质量未知降噪 LLD</h2>
+      <p>本节只实现单帧质量降噪，不引入跨事件状态管理。目标是避免 1235 这类贴边、运动模糊、低身份置信度的人脸被直接当作确认陌生人，同时不降低清晰陌生人的召回。</p>
+      <h3>数据结构</h3>
+      <ul>
+        <li><code>FaceRecheckSettings</code> 新增 <code>border_margin_ratio</code>、<code>motion_blur_threshold</code>、<code>low_identity_similarity</code>、<code>low_identity_gap</code>。</li>
+        <li><code>DetectedFaceSummary</code> 新增 <code>border_margin_ratio</code>、<code>motion_blur_score</code>。</li>
+        <li><code>FinalRecognitionTrigger</code> 不新增字段；低质量未知不生成 trigger。</li>
+        <li><code>SuppressedFaceDecision.reason</code> 使用 <code>low_quality_unknown:face_near_border</code>、<code>low_quality_unknown:motion_blur</code>、<code>low_quality_unknown:low_identity_confidence</code> 等可读原因。</li>
+      </ul>
+      <h3>质量计算</h3>
+      <pre><code>def _border_margin_ratio(face_bbox, image_width, image_height):
+    left = x1 / image_width
+    right = (image_width - x2) / image_width
+    top = y1 / image_height
+    bottom = (image_height - y2) / image_height
+    return min(left, right, top, bottom)
+
+def _motion_blur_score(face_crop):
+    # V1 使用 Sobel 方向梯度各向异性 + 去噪后高频能量组合。
+    # 分数越低代表越像运动拖影。阈值必须用真实回放校准。
+    return score</code></pre>
+      <ul>
+        <li><code>face_near_border</code>：<code>border_margin_ratio &lt; FACE_RECHECK_BORDER_MARGIN_RATIO</code>。</li>
+        <li><code>motion_blur</code>：<code>motion_blur_score &lt; FACE_RECHECK_MOTION_BLUR_THRESHOLD</code>；首版先在回放中输出分数，阈值确认后再启用强过滤。</li>
+        <li><code>low_identity_confidence</code>：仅在 Gallery 未通过时计算；<code>top1_similarity &lt; FACE_RECHECK_LOW_IDENTITY_SIMILARITY</code> 且 <code>top1_similarity - top2_similarity &lt; FACE_RECHECK_LOW_IDENTITY_GAP</code>。</li>
+      </ul>
+      <h3>最终决策</h3>
+      <pre><code>def _unknown_quality_suppression_reason(face):
+    if gallery_accepted(face.gallery_match):
+        return ""
+    flags = set(face.selected_face.quality_flags)
+    if "face_near_border" in flags:
+        return "low_quality_unknown:face_near_border"
+    if "motion_blur" in flags:
+        return "low_quality_unknown:motion_blur"
+    if "low_identity_confidence" in flags and flags.intersection({"face_near_border", "motion_blur"}):
+        return "low_quality_unknown:low_identity_confidence"
+    return ""</code></pre>
+      <ul>
+        <li><code>IF-K</code> 高置信熟人不因 <code>low_identity_confidence</code> 降级；贴边/运动模糊只影响未命中熟人的陌生人触发。</li>
+        <li>清晰、居中、质量合格但 Gallery 未命中的人脸仍然是 <code>IF-U</code>，继续触发陌生人，避免漏掉真正陌生人。</li>
+        <li><code>unknown_face_too_small</code> 本期不实现；现有 <code>face_too_small</code> 全局逻辑保持不变。</li>
+        <li>3-5 秒短窗口聚合本期不实现，避免新增 Redis/DB 状态、定时清理和跨事件合并复杂度。</li>
+      </ul>
+      <h3>验证样本</h3>
+      <ul>
+        <li>事件 <code>1235</code>：Capture Top1 刘彩玲但相似度约 <code>0.223</code>，且现场图运动模糊/边缘裁切；期望最终为低质量未知，不触发陌生人。</li>
+        <li>清晰陌生人样本：Gallery 未命中但未贴边、未运动模糊；仍应触发陌生人。</li>
+        <li>清晰熟人样本：Gallery 高置信命中；仍应触发熟人。</li>
+        <li>低质量熟人样本：若 Gallery 高置信命中，可按熟人触发；若未高置信命中，只记录低质量未知。</li>
+      </ul>
     </section>
 
     <section class="panel">
@@ -1411,6 +1530,8 @@ Gallery 候选集: 1. 小明 / staff / 3427976339944670 / 0.63; 2. 苏苏 / memb
 
     <section class="panel">
       <h2>十三、部署步骤</h2>
+      <h3>新增上课会员类型部署前置</h3>
+      <p>如果本次发布包含 <code>class_member</code>，必须先完成 Alembic 迁移，再替换 Gallery 资产。否则 InsightFace 虽可命中上课会员，但主链路写 <code>attendance_events</code> 时会被 <code>ck_attendance_events_person_type</code> 拦截。</p>
       <h3>本地准备</h3>
       <ol>
         <li>确认本地模型目录存在：<code>/Users/congming/.insightface/models/buffalo_l</code>。</li>
@@ -1439,6 +1560,287 @@ FACE_RECHECK_SHADOW_FEISHU_WEBHOOK_SECRET=&lt;真实值&gt;</code></pre>
         <li>切换 <code>FACE_RECHECK_ENABLED=true</code>、<code>FACE_RECHECK_MODE=shadow</code>。</li>
         <li>重启服务并观察 shadow 机器人消息与主机器人消息时间戳是否对齐。</li>
         <li>收集真实样本报告后，再评审是否进入 <code>filter</code>。</li>
+      </ol>
+    </section>
+
+    <section class="panel">
+      <h2>十三补充、上课会员 class_member LLD</h2>
+      <p>本节承接技术方案“新增人员类型：上课会员”，只描述代码级改动和验证边界。该类型是服务器侧 Gallery 与入场统计的新人员类型，不写摄像头人脸库、不创建摄像头脸库分组、不修改摄像头配置。</p>
+
+      <h3>1. 类型定义</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>字段</th>
+            <th>值</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>展示名称</td>
+            <td><code>上课会员</code></td>
+            <td>面向用户展示，用于主飞书、shadow 飞书、监控后台和日报。</td>
+          </tr>
+          <tr>
+            <td>内部类型</td>
+            <td><code>class_member</code></td>
+            <td>新增 <code>person_type</code>，与 <code>member</code>、<code>coach</code>、<code>staff</code> 同级。</td>
+          </tr>
+          <tr>
+            <td>Gallery 来源目录</td>
+            <td><code>unregister_class_member</code></td>
+            <td>只存放 P6S 命名图片，目录必须被 Git 忽略。</td>
+          </tr>
+          <tr>
+            <td>通知标题</td>
+            <td><code>📚 上课会员入场提醒</code></td>
+            <td>高置信命中时作为熟人通知，不走陌生人标题。</td>
+          </tr>
+          <tr>
+            <td>样本</td>
+            <td><code>I杜全浩紫发会员#S0#T2#M2026070501.png</code></td>
+            <td>姓名 <code>杜全浩紫发会员</code>，人员 ID <code>2026070501</code>。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>2. 代码改动点</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>文件</th>
+            <th>改动</th>
+            <th>验收点</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>app/services/face_gallery.py</code></td>
+            <td>新增 <code>class_member</code> 到 <code>PERSON_TYPE_GROUPS</code>；把 <code>GallerySourcePerson</code>、<code>GalleryCandidateResult</code>、<code>GallerySearchResult</code> 中的 <code>Literal["member", "coach", "staff"]</code> 扩展为包含 <code>class_member</code>。</td>
+            <td><code>parse_p6s_named_image(..., person_type="class_member")</code> 返回 <code>group_name=上课会员</code>。</td>
+          </tr>
+          <tr>
+            <td><code>scripts/build_face_gallery.py</code></td>
+            <td>新增 <code>--class-member-dir</code> 参数，默认 <code>PROJECT_ROOT / "unregister_class_member"</code>；<code>PERSON_SOURCES</code> 新增 <code>("class_member", "上课会员", "unregister_class_member")</code>；<code>GROUP_ID_ENV</code> 不强依赖摄像头组，可留空或使用 <code>P6S_FACE_GROUP_CLASS_MEMBERS_ID</code> 占位。</td>
+            <td>precheck 报告 source_sets 中出现 <code>person_type=class_member</code>，样本 valid_files=1。</td>
+          </tr>
+          <tr>
+            <td><code>app/services/face_recheck.py</code></td>
+            <td>扩展 <code>GalleryCandidate</code>、<code>GalleryMatch</code>、<code>FinalRecognitionTrigger.person_type</code> 类型范围；<code>_known_trigger()</code> 无需特殊分支，沿用 Gallery 命中生成熟人 trigger。</td>
+            <td>摄像头陌生人 + Gallery 命中 <code>class_member</code> 时，<code>FinalRecognitionDecision.primary_trigger.kind=known</code> 且 <code>person_type=class_member</code>。</td>
+          </tr>
+          <tr>
+            <td><code>app/services/p6s_events.py</code></td>
+            <td><code>_notification_title_for_person_type()</code> 或等价标题选择逻辑新增 <code>class_member -> 📚 上课会员入场提醒</code>；最终确认触发写 attendance 时传入 <code>person_type=class_member</code>、<code>group_name=上课会员</code>。</td>
+            <td>主飞书标题为 <code>📚 上课会员入场提醒</code>，不是陌生人提醒，也不是正式会员提醒。</td>
+          </tr>
+          <tr>
+            <td><code>app/services/attendance.py</code></td>
+            <td>把 <code>class_member</code> 纳入非陌生熟人类型集合；<code>record_event()</code> 中 known-person upsert 条件由 <code>{"member","coach","staff"}</code> 扩展为包含 <code>class_member</code>。</td>
+            <td>同一上课会员 2 小时内仍执行非陌生人去重。</td>
+          </tr>
+          <tr>
+            <td><code>app/db/attendance_repo.py</code></td>
+            <td><code>KNOWN_PERSON_TABLES</code> 新增 <code>"class_member": ("class_members", "class_member_id")</code>。</td>
+            <td><code>upsert_known_person()</code> 能写入 <code>class_members</code>。</td>
+          </tr>
+          <tr>
+            <td><code>app/services/reports.py</code>、<code>scripts/generate_attendance_report.py</code></td>
+            <td>日报统计 SQL 新增 <code>class_member_entries</code>，飞书日报文案新增“上课会员入场次数”。</td>
+            <td>每天 22:00 日报包含上课会员统计，且正式会员统计不包含该类型。</td>
+          </tr>
+          <tr>
+            <td><code>app/services/recognition_monitor.py</code>、<code>app/static/recognition-monitor.js</code></td>
+            <td>人员类型标签、筛选选项、Gallery 候选集和最终结论展示新增 <code>class_member -> 上课会员</code>。</td>
+            <td>监控后台详情页逐脸 Gallery 展示“上课会员”，列表筛选可选该类型。</td>
+          </tr>
+          <tr>
+            <td><code>app/services/feishu.py</code></td>
+            <td>Shadow 模板不需新增字段，但候选分组文本必须正常显示 <code>上课会员</code>；主飞书模板复用 known face 模板。</td>
+            <td>Shadow “主触发”和“Gallery 候选”显示上课会员，不显示内部英文类型。</td>
+          </tr>
+          <tr>
+            <td><code>.gitignore</code></td>
+            <td>确保 <code>unregister_class_member/</code> 被忽略。</td>
+            <td><code>git status --short --untracked-files=all</code> 不出现真实人脸图片。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>3. Alembic 迁移</h3>
+      <p>新增迁移建议命名为 <code>20260705_0006_add_class_member_person_type.py</code>，<code>down_revision</code> 指向当前 head。迁移需要兼容 PostgreSQL check constraint 的重建，不直接修改已有迁移文件。</p>
+      <h4>upgrade SQL</h4>
+      <pre><code>create table class_members (
+  class_member_id text primary key,
+  name text not null,
+  face_group_id text,
+  camera_person_id integer,
+  is_active boolean not null default true,
+  last_seen_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table attendance_events
+  drop constraint ck_attendance_events_person_type;
+
+alter table attendance_events
+  add constraint ck_attendance_events_person_type
+  check (person_type in (
+    'member', 'coach', 'staff', 'class_member', 'stranger', 'unknown_known'
+  ));
+
+alter table daily_attendance_reports
+  add column class_member_entries integer not null default 0;</code></pre>
+      <h4>downgrade SQL</h4>
+      <pre><code>-- downgrade 前必须确认不存在 class_member 事件，否则会违反旧约束。
+delete from feishu_notifications
+where attendance_event_id in (
+  select event_id from attendance_events where person_type = 'class_member'
+);
+
+delete from attendance_events
+where person_type = 'class_member';
+
+alter table attendance_events
+  drop constraint ck_attendance_events_person_type;
+
+alter table attendance_events
+  add constraint ck_attendance_events_person_type
+  check (person_type in (
+    'member', 'coach', 'staff', 'stranger', 'unknown_known'
+  ));
+
+alter table daily_attendance_reports
+  drop column class_member_entries;
+
+drop table class_members;</code></pre>
+      <div class="callout warn">
+        <p><strong>注意：</strong>downgrade 删除 <code>class_member</code> 事件会造成业务数据丢失。生产回滚优先恢复旧 Gallery 或切回 <code>shadow</code>，只有明确确认不再需要这些事件时才执行 downgrade。</p>
+      </div>
+
+      <h3>4. 接口和字段</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>接口/记录</th>
+            <th>字段变化</th>
+            <th>兼容性</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>Gallery manifest records[]</code></td>
+            <td><code>person_type</code> 允许 <code>class_member</code>；<code>group_name=上课会员</code>；<code>group_id</code> 可为空。</td>
+            <td>旧 manifest 仍可加载；新代码必须兼容旧三类。</td>
+          </tr>
+          <tr>
+            <td><code>face_recheck.gallery_match</code></td>
+            <td><code>person_type=class_member</code>、<code>group_name=上课会员</code>。</td>
+            <td>JSON 结构不变，只扩展枚举值。</td>
+          </tr>
+          <tr>
+            <td><code>final_recognition_decision.primary_trigger</code></td>
+            <td><code>person_type=class_member</code>、<code>kind=known</code>、<code>name=杜全浩紫发会员</code>。</td>
+            <td>主链路按熟人 trigger 处理。</td>
+          </tr>
+          <tr>
+            <td><code>attendance_events</code></td>
+            <td><code>person_type=class_member</code>、<code>person_ref_id=2026070501</code>、<code>person_name=杜全浩紫发会员</code>、<code>face_group_name=上课会员</code>。</td>
+            <td>需要 Alembic 先放开 check 约束。</td>
+          </tr>
+          <tr>
+            <td><code>recognition_events</code></td>
+            <td><code>gallery_person_type=class_member</code>、<code>gallery_group_name=上课会员</code>。</td>
+            <td>表字段是 text，无需迁移。</td>
+          </tr>
+          <tr>
+            <td><code>recognition_event_faces</code></td>
+            <td><code>gallery_person_type=class_member</code>、<code>gallery_group_name=上课会员</code>。</td>
+            <td>表字段是 text，无需迁移。</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/attendance/events</code></td>
+            <td><code>person_type</code> 查询参数允许 <code>class_member</code>。</td>
+            <td>旧客户端不传该值时无变化。</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/attendance/daily-summary</code></td>
+            <td>响应新增 <code>class_member_entries</code>。</td>
+            <td>前端/飞书日报可显示；旧字段保持不变。</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/recognition-monitor/events</code></td>
+            <td>筛选和返回中的 Gallery/最终结论可能出现 <code>class_member</code>。</td>
+            <td>监控页需把英文类型翻译成“上课会员”。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>5. Gallery 构建与部署流程</h3>
+      <pre><code>python3 scripts/build_face_gallery.py \
+  --member-dir /Users/congming/github/stock/styd_member_faces_full_p6s_named \
+  --staff-dir /Users/congming/github/stock/staff_p6s_named \
+  --coach-dir /Users/congming/github/stock/teacher_p6s_named \
+  --class-member-dir /Users/congming/github/stock/unregister_class_member \
+  --output-dir /private/tmp/face-gallery-with-class-member \
+  --model-root /Users/congming/.insightface</code></pre>
+      <ul>
+        <li>构建报告中 <code>source_sets</code> 必须包含 <code>class_member</code> 且 <code>valid_files=1</code>。</li>
+        <li>manifest 中必须出现 <code>person_type=class_member</code>、<code>name=杜全浩紫发会员</code>、<code>person_id=2026070501</code>。</li>
+        <li>远程部署 Gallery 前备份 <code>/var/lib/camera-face-guard/face-gallery</code>。</li>
+        <li>替换远程 Gallery 后重启服务，确认 manifest 记录数与 <code>gallery.npz</code> embedding 行数一致。</li>
+      </ul>
+
+      <h3>6. 验证命令</h3>
+      <h4>静态检查</h4>
+      <pre><code>python3 -m py_compile \
+  app/services/face_gallery.py \
+  app/services/face_recheck.py \
+  app/services/attendance.py \
+  app/db/attendance_repo.py \
+  app/services/p6s_events.py \
+  app/services/reports.py \
+  app/services/recognition_monitor.py \
+  scripts/build_face_gallery.py \
+  scripts/validate_p6s_event_flow.py \
+  scripts/validate_attendance_flow.py</code></pre>
+      <h4>图片质量复核</h4>
+      <pre><code>python3 scripts/validate_insightface_recheck.py \
+  --image /Users/congming/github/stock/unregister_class_member/I杜全浩紫发会员#S0#T2#M2026070501.png \
+  --model-root /Users/congming/.insightface \
+  --mode verify_and_override</code></pre>
+      <h4>Gallery 预检</h4>
+      <pre><code>python3 scripts/build_face_gallery.py \
+  --class-member-dir /Users/congming/github/stock/unregister_class_member \
+  --output-dir /private/tmp/face-gallery-class-member-precheck \
+  --model-root /Users/congming/.insightface \
+  --precheck-only</code></pre>
+      <h4>Alembic 本地验证</h4>
+      <pre><code>DATABASE_URL=&lt;local-test-postgres-url&gt; alembic upgrade head
+DATABASE_URL=&lt;local-test-postgres-url&gt; alembic downgrade -1
+DATABASE_URL=&lt;local-test-postgres-url&gt; alembic upgrade head</code></pre>
+      <h4>事件流 fixture</h4>
+      <pre><code>python3 scripts/validate_p6s_event_flow.py
+python3 scripts/validate_attendance_flow.py</code></pre>
+      <h4>远程只读确认</h4>
+      <pre><code>ssh qypower-prod 'cd /opt/camera-face-guard &amp;&amp; .venv/bin/python - &lt;&lt;PY
+import json, numpy as np
+from pathlib import Path
+manifest = json.loads(Path("/var/lib/camera-face-guard/face-gallery/gallery_manifest.json").read_text())
+records = manifest["records"]
+print(any(r["person_type"] == "class_member" and r["person_id"] == "2026070501" for r in records))
+with np.load("/var/lib/camera-face-guard/face-gallery/gallery.npz", allow_pickle=False) as data:
+    print(data["embeddings"].shape[0], len(records))
+PY'</code></pre>
+
+      <h3>7. 回滚</h3>
+      <ol>
+        <li>Gallery 回滚：恢复远程 <code>/var/lib/camera-face-guard/face-gallery</code> 备份并重启服务。</li>
+        <li>模式回滚：设置 <code>FACE_RECHECK_MODE=shadow</code>，只观察命中，不写 <code>class_member</code> 入场。</li>
+        <li>代码回滚：回滚本次 <code>class_member</code> 提交并重新部署。</li>
+        <li>数据库回滚：仅在确认可删除上课会员入场记录时执行 Alembic downgrade；生产优先保留新增表和字段。</li>
       </ol>
     </section>
 

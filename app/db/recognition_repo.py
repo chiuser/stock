@@ -368,6 +368,7 @@ def list_events(
     recheck_status: str | None = None,
     reason: str | None = None,
     person: str | None = None,
+    person_type: str | None = None,
     accepted: bool | None = None,
     limit: int = 30,
     offset: int = 0,
@@ -379,6 +380,7 @@ def list_events(
         recheck_status=recheck_status,
         reason=reason,
         person=person,
+        person_type=person_type,
         accepted=accepted,
     )
     params["limit"] = max(1, min(limit, 100))
@@ -626,6 +628,7 @@ def _event_filters(
     recheck_status: str | None,
     reason: str | None,
     person: str | None,
+    person_type: str | None,
     accepted: bool | None,
 ) -> tuple[list[str], dict[str, Any]]:
     filters = ["event_date = :event_date"]
@@ -644,6 +647,21 @@ def _event_filters(
         params["reason"] = reason
     if accepted is not None:
         filters.append("accepted_face_count > 0" if accepted else "accepted_face_count = 0")
+    if person_type:
+        filters.append(
+            """
+            (
+              gallery_person_type = :person_type
+              or exists (
+                select 1
+                from recognition_event_faces ref
+                where ref.recognition_event_id = recognition_events.recognition_event_id
+                  and ref.gallery_person_type = :person_type
+              )
+            )
+            """
+        )
+        params["person_type"] = person_type
     if person:
         filters.append(
             """

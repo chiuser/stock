@@ -861,6 +861,30 @@ async def validate_final_decision_flow(request_meta: RequestMeta) -> None:
     assert record["camera_result"] == "stranger"
     assert record["final_recognition_decision"]["primary_trigger"]["kind"] == "known"
 
+    class_member_match = _result_for_faces(
+        [
+            _known_face(
+                name="杜全浩紫发会员",
+                person_id="2026070501",
+                person_type="class_member",
+                group_id="",
+                group_name="上课会员",
+                camera_identity_status="camera_unknown",
+            )
+        ]
+    )
+    handled, record = await run_case(stranger_payload, class_member_match)
+    assert handled.result == "known"
+    primary = record["final_recognition_decision"]["primary_trigger"]
+    assert primary["kind"] == "known"
+    assert primary["person_type"] == "class_member"
+    assert primary["group_name"] == "上课会员"
+    assert record["final_trigger_results"][0]["title"] == "📚 上课会员入场提醒"
+    face_rows = recognition_monitor.build_event_face_rows(record)
+    assert face_rows[0]["gallery_person_type"] == "class_member"
+    assert face_rows[0]["gallery_group_name"] == "上课会员"
+    assert face_rows[0]["business_action"] == "known_trigger"
+
     unknown_face = _result_for_faces([_unknown_face(face_index=0)])
     handled, record = await run_case(stranger_payload, unknown_face)
     assert handled.result == "stranger"

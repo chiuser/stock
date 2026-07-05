@@ -14,7 +14,7 @@ from app.services import reports
 
 router = APIRouter()
 
-PERSON_TYPES = {"member", "coach", "staff", "stranger", "unknown_known"}
+PERSON_TYPES = {"member", "coach", "staff", "class_member", "stranger", "unknown_known"}
 
 
 class SnapshotRequest(BaseModel):

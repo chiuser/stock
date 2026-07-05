@@ -66,6 +66,7 @@ def parse_args() -> argparse.Namespace:
 def run_validation(prefix: str, settings: AttendanceDbSettings) -> dict[str, Any]:
     base_time = datetime(2099, 1, 1, 10, 0, tzinfo=LOCAL_TZ)
     member_id = f"{prefix}-member"
+    class_member_id = f"{prefix}-class-member"
     dedup_settings = replace(settings, attendance_notify_dedup_enabled=True)
 
     first = attendance.record_event(
@@ -123,6 +124,40 @@ def run_validation(prefix: str, settings: AttendanceDbSettings) -> dict[str, Any
     )
     assert stranger.inserted and stranger.should_notify and not stranger.notification_suppressed
 
+    class_member = attendance.record_event(
+        known_draft(
+            prefix=prefix,
+            suffix="class-member-1",
+            event_time=base_time + timedelta(minutes=40),
+            person_ref_id=class_member_id,
+            camera_person_id="2026070501",
+            person_type="class_member",
+            name="验证上课会员",
+            face_group_id="validation-class-members",
+            face_group_name="上课会员",
+        ),
+        settings=dedup_settings,
+    )
+    assert class_member.inserted and class_member.should_notify and not class_member.notification_suppressed
+
+    class_member_deduped = attendance.record_event(
+        known_draft(
+            prefix=prefix,
+            suffix="class-member-2",
+            event_time=base_time + timedelta(minutes=50),
+            person_ref_id=class_member_id,
+            camera_person_id="2026070501",
+            person_type="class_member",
+            name="验证上课会员",
+            face_group_id="validation-class-members",
+            face_group_name="上课会员",
+        ),
+        settings=dedup_settings,
+    )
+    assert class_member_deduped.inserted and not class_member_deduped.should_notify
+    assert class_member_deduped.notification_suppressed
+    assert class_member_deduped.suppressed_reason == "known_person_2h_window"
+
     report = reports.generate_daily_report(
         VALIDATION_DATE,
         save_snapshot=True,
@@ -131,15 +166,19 @@ def run_validation(prefix: str, settings: AttendanceDbSettings) -> dict[str, Any
     )
     summary = report.summary
     assert summary["member_entries"] >= 3
+    assert summary["class_member_entries"] >= 2
     assert summary["stranger_entries"] >= 1
-    assert summary["notification_suppressed_count"] >= 1
+    assert summary["notification_suppressed_count"] >= 2
     assert fetch_member_camera_person_id(member_id, settings) == "3427976339944670"
+    assert fetch_class_member_camera_person_id(class_member_id, settings) == "2026070501"
 
     return {
         "first_known": first.to_dict(),
         "second_known_deduped": second.to_dict(),
         "third_known_no_dedup": third.to_dict(),
         "stranger": stranger.to_dict(),
+        "class_member": class_member.to_dict(),
+        "class_member_deduped": class_member_deduped.to_dict(),
         "daily_report": report.to_dict(),
     }
 
@@ -151,18 +190,22 @@ def known_draft(
     event_time: datetime,
     person_ref_id: str,
     camera_person_id: str | None,
+    person_type: str = "member",
+    name: str = "验证会员",
+    face_group_id: str = "validation-members",
+    face_group_name: str = "会员",
 ) -> attendance.AttendanceEventDraft:
     identity = identity_for(prefix=prefix, suffix=suffix, event_time=event_time)
     raw_file = raw_file_for(prefix, suffix)
     return attendance.build_known_draft(
         identity=identity,
         raw_file=raw_file,
-        person_type="member",
+        person_type=person_type,
         person_ref_id=person_ref_id,
-        name="验证会员",
+        name=name,
         camera_person_id=camera_person_id,
-        face_group_id="validation-members",
-        face_group_name="会员",
+        face_group_id=face_group_id,
+        face_group_name=face_group_name,
         match_number=1,
     )
 
@@ -221,6 +264,7 @@ def cleanup(prefix: str, settings: AttendanceDbSettings) -> None:
         conn.execute(text("delete from daily_attendance_reports where report_date = :report_date"), {"report_date": VALIDATION_DATE})
         conn.execute(text("delete from strangers where image_url like :prefix"), {"prefix": f"%/{prefix}/%"})
         conn.execute(text("delete from members where member_id like :prefix"), {"prefix": f"{prefix}%"})
+        conn.execute(text("delete from class_members where class_member_id like :prefix"), {"prefix": f"{prefix}%"})
 
 
 def fetch_member_camera_person_id(member_id: str, settings: AttendanceDbSettings) -> str | None:
@@ -228,6 +272,15 @@ def fetch_member_camera_person_id(member_id: str, settings: AttendanceDbSettings
         row = conn.execute(
             text("select camera_person_id from members where member_id = :member_id"),
             {"member_id": member_id},
+        ).first()
+    return str(row[0]) if row and row[0] is not None else None
+
+
+def fetch_class_member_camera_person_id(class_member_id: str, settings: AttendanceDbSettings) -> str | None:
+    with transaction(settings) as conn:
+        row = conn.execute(
+            text("select camera_person_id from class_members where class_member_id = :class_member_id"),
+            {"class_member_id": class_member_id},
         ).first()
     return str(row[0]) if row and row[0] is not None else None
 

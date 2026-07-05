@@ -8,10 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+GalleryPersonType = Literal["member", "coach", "staff", "class_member"]
+
 PERSON_TYPE_GROUPS: dict[str, tuple[str, str]] = {
     "member": ("会员", "P6S_FACE_GROUP_MEMBERS_ID"),
     "staff": ("员工", "P6S_FACE_GROUP_STAFF_ID"),
     "coach": ("教练", "P6S_FACE_GROUP_COACHES_ID"),
+    "class_member": ("上课会员", "P6S_FACE_GROUP_CLASS_MEMBERS_ID"),
 }
 
 _IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
@@ -31,7 +34,7 @@ class GallerySourcePerson:
     credential_type: str
     name: str
     sex: str
-    person_type: Literal["member", "coach", "staff"]
+    person_type: GalleryPersonType
     group_id: str
     group_name: str
     source_filename: str
@@ -62,7 +65,7 @@ class GalleryCandidateResult:
     credential_type: str
     name: str
     sex: str
-    person_type: Literal["member", "coach", "staff"]
+    person_type: GalleryPersonType
     group_id: str
     group_name: str
     similarity: float
@@ -75,7 +78,7 @@ class GallerySearchResult:
     credential_type: str
     name: str
     sex: str
-    person_type: Literal["member", "coach", "staff"]
+    person_type: GalleryPersonType
     group_id: str
     group_name: str
     similarity: float
@@ -191,7 +194,7 @@ class FaceGalleryIndex:
 def parse_p6s_named_image(
     path: Path,
     *,
-    person_type: Literal["member", "coach", "staff"],
+    person_type: GalleryPersonType,
     group_id: str = "",
 ) -> GallerySourcePerson:
     """Parse a P6S-named face image path into gallery identity metadata."""
@@ -349,9 +352,9 @@ def _normalize_identity_text(value: Any) -> str:
     return str(value or "").strip()
 
 
-def _person_type(value: Any) -> Literal["member", "coach", "staff"]:
+def _person_type(value: Any) -> GalleryPersonType:
     text = str(value or "").strip()
-    if text in {"member", "coach", "staff"}:
+    if text in PERSON_TYPE_GROUPS:
         return text  # type: ignore[return-value]
     return "member"
 

@@ -14,6 +14,8 @@ from typing import Any, Literal
 
 from app.services import event_store
 
+GalleryPersonType = Literal["member", "coach", "staff", "class_member"]
+
 _FACE_ANALYSIS_SINGLETON: Any | None = None
 _FACE_ANALYSIS_KEY: tuple[str, str, str, float] | None = None
 _REQUIRED_MODEL_FILES = ("det_10g.onnx", "w600k_r50.onnx")
@@ -209,7 +211,7 @@ class GalleryCandidate:
     credential_type: str
     name: str
     sex: str
-    person_type: Literal["member", "coach", "staff"]
+    person_type: GalleryPersonType
     group_id: str
     group_name: str
     similarity: float
@@ -236,7 +238,7 @@ class GalleryMatch:
     credential_type: str
     name: str
     sex: str
-    person_type: Literal["member", "coach", "staff"]
+    person_type: GalleryPersonType
     group_id: str
     group_name: str
     similarity: float
@@ -368,7 +370,7 @@ class FinalRecognitionTrigger:
     image_source: str
     face_index: int
     reason: str
-    person_type: Literal["member", "coach", "staff"] | None = None
+    person_type: GalleryPersonType | None = None
     person_id: str | None = None
     name: str | None = None
     group_id: str | None = None
