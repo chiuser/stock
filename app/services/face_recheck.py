@@ -15,6 +15,7 @@ from typing import Any, Literal
 from app.services import event_store
 
 GalleryPersonType = Literal["member", "coach", "staff", "class_member"]
+FaceSourceRole = Literal["scene_face", "camera_target_crop", "camera_target_fallback"]
 
 _FACE_ANALYSIS_SINGLETON: Any | None = None
 _FACE_ANALYSIS_KEY: tuple[str, str, str, float] | None = None
@@ -323,13 +324,18 @@ class FaceRecheckFaceResult:
     gallery_match: GalleryMatch | None
     crop: FaceCropSummary = field(default_factory=FaceCropSummary)
     error_type: str | None = None
+    source_role: FaceSourceRole | None = None
+    business_trigger_eligible: bool | None = None
 
     def with_crop(self, crop: FaceCropSummary) -> "FaceRecheckFaceResult":
         return replace(self, crop=crop)
 
     def to_dict(self) -> dict[str, Any]:
+        source_role = _face_source_role(self)
         return {
             "image_source": self.image_source,
+            "source_role": source_role,
+            "business_trigger_eligible": _face_business_trigger_eligible(self),
             "face_index": self.face_index,
             "face_key": self.face_key,
             "selected_face": self.selected_face.to_dict() if self.selected_face else None,
@@ -389,6 +395,7 @@ class FinalRecognitionTrigger:
     face_key: str
     image_source: str
     face_index: int
+    source_role: str
     reason: str
     person_type: GalleryPersonType | None = None
     person_id: str | None = None
@@ -403,6 +410,7 @@ class FinalRecognitionTrigger:
             "face_key": self.face_key,
             "image_source": self.image_source,
             "face_index": self.face_index,
+            "source_role": self.source_role,
             "reason": self.reason,
             "person_type": self.person_type,
             "person_id": self.person_id,
@@ -418,6 +426,7 @@ class SuppressedFaceDecision:
     face_key: str
     image_source: str
     face_index: int
+    source_role: str
     reason: str
     quality_flags: list[str] = field(default_factory=list)
 
@@ -426,6 +435,7 @@ class SuppressedFaceDecision:
             "face_key": self.face_key,
             "image_source": self.image_source,
             "face_index": self.face_index,
+            "source_role": self.source_role,
             "reason": self.reason,
             "quality_flags": list(self.quality_flags),
         }
@@ -493,15 +503,22 @@ def run_face_recheck(
         recheck_input,
         image_path=Path(recheck_input.background_image_path) if recheck_input.background_image_path else None,
         image_source="background",
+        source_role="scene_face",
         inactive_mode_reason=inactive_mode_reason,
     )
     capture_faces: list[FaceRecheckFaceResult] = []
     if _should_analyze_capture(background_faces, recheck_input, cfg):
+        capture_role: FaceSourceRole = (
+            "camera_target_fallback"
+            if not _has_usable_scene_face(background_faces, None, None)
+            else "camera_target_crop"
+        )
         capture_faces = _analyze_image_faces(
             cfg,
             recheck_input,
             image_path=Path(recheck_input.capture_image_path) if recheck_input.capture_image_path else None,
             image_source="capture",
+            source_role=capture_role,
             inactive_mode_reason=inactive_mode_reason,
         )
     return _build_event_result(
@@ -538,29 +555,56 @@ def build_final_recognition_decision(
         recheck_result,
         camera_person,
     )
-    for face in recheck_result.faces:
-        if _face_unavailable(face, recheck_result, camera_person):
-            suppressed.append(_suppressed_face(face))
-            continue
-        if _gallery_accepted(face.gallery_match):
-            triggers.append(_known_trigger(face))
-        elif face.selected_face is not None:
-            extra_unknown_reason = _known_event_extra_unknown_suppression_reason(
+    scene_faces = [face for face in recheck_result.faces if _face_source_role(face) == "scene_face"]
+    target_crops = [face for face in recheck_result.faces if _face_source_role(face) == "camera_target_crop"]
+    fallback_faces = [
+        face for face in recheck_result.faces if _face_source_role(face) == "camera_target_fallback"
+    ]
+
+    if _has_usable_scene_face(scene_faces, recheck_result, camera_person):
+        for face in scene_faces:
+            _append_face_decision(
                 face,
+                triggers=triggers,
+                suppressed=suppressed,
                 camera_result=camera_result,
                 camera_target_available=camera_target_available,
                 thresholds=recheck_result.thresholds,
+                recheck_result=recheck_result,
+                camera_person=camera_person,
             )
-            if extra_unknown_reason:
-                suppressed.append(_suppressed_face(face, reason=extra_unknown_reason))
-                continue
-            low_quality_unknown_reason = _unknown_quality_suppression_reason(face)
-            if low_quality_unknown_reason:
-                suppressed.append(_suppressed_face(face, reason=low_quality_unknown_reason))
-                continue
-            triggers.append(_stranger_trigger(face))
-        else:
+        _apply_target_crop_evidence(
+            target_crops,
+            triggers=triggers,
+            suppressed=suppressed,
+            scene_faces=scene_faces,
+            recheck_result=recheck_result,
+            camera_person=camera_person,
+        )
+    elif fallback_faces:
+        for face in scene_faces:
             suppressed.append(_suppressed_face(face))
+        for face in fallback_faces:
+            _append_face_decision(
+                face,
+                triggers=triggers,
+                suppressed=suppressed,
+                camera_result=camera_result,
+                camera_target_available=camera_target_available,
+                thresholds=recheck_result.thresholds,
+                recheck_result=recheck_result,
+                camera_person=camera_person,
+            )
+        for face in target_crops:
+            suppressed.append(_suppressed_face(face, reason="capture_supporting_evidence_only"))
+    else:
+        for face in scene_faces:
+            suppressed.append(_suppressed_face(face))
+        for face in target_crops:
+            if _face_unavailable(face, recheck_result, camera_person):
+                suppressed.append(_suppressed_face(face))
+            else:
+                suppressed.append(_suppressed_face(face, reason="capture_supporting_evidence_only"))
 
     triggers = _dedupe_known_triggers(triggers)
     if not triggers:
@@ -593,8 +637,10 @@ def _analyze_image_faces(
     *,
     image_path: Path | None,
     image_source: Literal["background", "capture"],
+    source_role: FaceSourceRole | None = None,
     inactive_mode_reason: str,
 ) -> list[FaceRecheckFaceResult]:
+    resolved_source_role = source_role or _default_source_role(image_source)
     if image_path is None or not image_path.exists():
         return [
             FaceRecheckFaceResult(
@@ -606,6 +652,7 @@ def _analyze_image_faces(
                 reason=_join_reasons("image_missing", inactive_mode_reason),
                 gallery_match=None,
                 error_type="FileNotFoundError",
+                source_role=resolved_source_role,
             )
         ]
     try:
@@ -625,6 +672,7 @@ def _analyze_image_faces(
                 reason=_join_reasons(_error_reason(exc), inactive_mode_reason),
                 gallery_match=None,
                 error_type=type(exc).__name__,
+                source_role=resolved_source_role,
             )
         ]
     if not raw_faces:
@@ -658,6 +706,7 @@ def _analyze_image_faces(
                 status=status,
                 reason=_join_reasons(reason, inactive_mode_reason),
                 gallery_match=gallery_match,
+                source_role=resolved_source_role,
             )
         )
     return results
@@ -678,6 +727,7 @@ def _run_single_image_recheck(
         recheck_input,
         image_path=image_path,
         image_source=image_source,
+        source_role=_default_source_role(image_source),
         inactive_mode_reason=inactive_mode_reason,
     )
     return _build_event_result(
@@ -745,14 +795,171 @@ def _build_event_result(
 
 
 def _event_face_count(faces: list[FaceRecheckFaceResult]) -> int:
-    background_count = sum(1 for face in faces if face.image_source == "background" and face.selected_face is not None)
+    background_count = sum(
+        1
+        for face in faces
+        if _face_source_role(face) == "scene_face" and face.selected_face is not None
+    )
     if background_count:
         return background_count
-    return sum(1 for face in faces if face.selected_face is not None)
+    return sum(
+        1
+        for face in faces
+        if _face_source_role(face) == "camera_target_fallback" and face.selected_face is not None
+    )
 
 
 def _face_status(summary: DetectedFaceSummary) -> Literal["passed", "filtered"]:
     return "filtered" if any(flag in _BLOCKING_QUALITY_FLAGS for flag in summary.quality_flags) else "passed"
+
+
+def _default_source_role(image_source: Literal["background", "capture"]) -> FaceSourceRole:
+    return "scene_face" if image_source == "background" else "camera_target_crop"
+
+
+def _face_source_role(face: FaceRecheckFaceResult) -> FaceSourceRole:
+    if face.source_role in {"scene_face", "camera_target_crop", "camera_target_fallback"}:
+        return face.source_role
+    return _default_source_role(face.image_source)
+
+
+def _face_business_trigger_eligible(face: FaceRecheckFaceResult) -> bool:
+    return _face_source_role(face) in {"scene_face", "camera_target_fallback"}
+
+
+def _has_usable_scene_face(
+    faces: list[FaceRecheckFaceResult],
+    recheck_result: FaceRecheckResult | None,
+    camera_person: dict[str, Any] | None,
+) -> bool:
+    for face in faces:
+        if _face_source_role(face) != "scene_face":
+            continue
+        if face.selected_face is None:
+            continue
+        if recheck_result is None:
+            if face.status == "passed":
+                return True
+            continue
+        if not _face_unavailable(face, recheck_result, camera_person):
+            return True
+    return False
+
+
+def _append_face_decision(
+    face: FaceRecheckFaceResult,
+    *,
+    triggers: list[FinalRecognitionTrigger],
+    suppressed: list[SuppressedFaceDecision],
+    camera_result: str,
+    camera_target_available: bool,
+    thresholds: FaceRecheckThresholds | None,
+    recheck_result: FaceRecheckResult,
+    camera_person: dict[str, Any] | None,
+) -> None:
+    if not _face_business_trigger_eligible(face):
+        suppressed.append(_suppressed_face(face, reason="capture_supporting_evidence_only"))
+        return
+    if _face_unavailable(face, recheck_result, camera_person):
+        suppressed.append(_suppressed_face(face))
+        return
+    if _gallery_accepted(face.gallery_match):
+        triggers.append(_known_trigger(face))
+        return
+    if face.selected_face is None:
+        suppressed.append(_suppressed_face(face))
+        return
+
+    extra_unknown_reason = _known_event_extra_unknown_suppression_reason(
+        face,
+        camera_result=camera_result,
+        camera_target_available=camera_target_available,
+        thresholds=thresholds,
+    )
+    if extra_unknown_reason:
+        suppressed.append(_suppressed_face(face, reason=extra_unknown_reason))
+        return
+    low_quality_unknown_reason = _unknown_quality_suppression_reason(face)
+    if low_quality_unknown_reason:
+        suppressed.append(_suppressed_face(face, reason=low_quality_unknown_reason))
+        return
+    triggers.append(_stranger_trigger(face))
+
+
+def _apply_target_crop_evidence(
+    target_crops: list[FaceRecheckFaceResult],
+    *,
+    triggers: list[FinalRecognitionTrigger],
+    suppressed: list[SuppressedFaceDecision],
+    scene_faces: list[FaceRecheckFaceResult],
+    recheck_result: FaceRecheckResult,
+    camera_person: dict[str, Any] | None,
+) -> None:
+    scene_by_key = {face.face_key: face for face in scene_faces}
+    for face in target_crops:
+        if _face_unavailable(face, recheck_result, camera_person):
+            suppressed.append(_suppressed_face(face))
+            continue
+        if not _gallery_accepted(face.gallery_match):
+            suppressed.append(_suppressed_face(face, reason="capture_supporting_evidence_only"))
+            continue
+
+        if _has_same_known_trigger(triggers, face):
+            suppressed.append(_suppressed_face(face, reason="capture_duplicate_of_known_target"))
+            continue
+
+        replacement_index = _target_replacement_index(triggers, scene_by_key, camera_person)
+        if replacement_index is not None:
+            old_trigger = triggers.pop(replacement_index)
+            old_face = scene_by_key.get(old_trigger.face_key)
+            if old_face is not None:
+                suppressed.append(_suppressed_face(old_face, reason="overridden_by_capture_target"))
+        triggers.append(_known_trigger(face, reason="capture_target_gallery_match"))
+
+
+def _has_same_known_trigger(
+    triggers: list[FinalRecognitionTrigger],
+    face: FaceRecheckFaceResult,
+) -> bool:
+    match = face.gallery_match
+    if match is None:
+        return False
+    return any(
+        trigger.kind == "known"
+        and trigger.person_type == match.person_type
+        and trigger.person_id == match.person_id
+        for trigger in triggers
+    )
+
+
+def _target_replacement_index(
+    triggers: list[FinalRecognitionTrigger],
+    scene_by_key: dict[str, FaceRecheckFaceResult],
+    camera_person: dict[str, Any] | None,
+) -> int | None:
+    if camera_person is not None:
+        camera_match_indexes = [
+            index
+            for index, trigger in enumerate(triggers)
+            if trigger.face_key in scene_by_key
+            and _gallery_identity_matched(scene_by_key[trigger.face_key].gallery_match)
+        ]
+        if camera_match_indexes:
+            return max(
+                camera_match_indexes,
+                key=lambda index: _face_selection_score(scene_by_key[triggers[index].face_key]),
+            )
+    unknown_indexes = [
+        index
+        for index, trigger in enumerate(triggers)
+        if trigger.kind == "stranger" and trigger.face_key in scene_by_key
+    ]
+    if not unknown_indexes:
+        return None
+    return max(
+        unknown_indexes,
+        key=lambda index: _face_selection_score(scene_by_key[triggers[index].face_key]),
+    )
 
 
 def _face_unavailable(
@@ -837,7 +1044,11 @@ def _unknown_quality_suppression_reason(face: FaceRecheckFaceResult) -> str | No
     return None
 
 
-def _known_trigger(face: FaceRecheckFaceResult) -> FinalRecognitionTrigger:
+def _known_trigger(
+    face: FaceRecheckFaceResult,
+    *,
+    reason: str = "gallery_high_confidence_match",
+) -> FinalRecognitionTrigger:
     match = face.gallery_match
     if match is None:
         return _stranger_trigger(face)
@@ -846,7 +1057,8 @@ def _known_trigger(face: FaceRecheckFaceResult) -> FinalRecognitionTrigger:
         face_key=face.face_key,
         image_source=face.image_source,
         face_index=face.face_index,
-        reason="gallery_high_confidence_match",
+        source_role=_face_source_role(face),
+        reason=reason,
         person_type=match.person_type,
         person_id=match.person_id,
         name=match.name,
@@ -862,6 +1074,7 @@ def _stranger_trigger(face: FaceRecheckFaceResult) -> FinalRecognitionTrigger:
         face_key=face.face_key,
         image_source=face.image_source,
         face_index=face.face_index,
+        source_role=_face_source_role(face),
         reason="valid_face_without_gallery_match",
     )
 
@@ -872,6 +1085,7 @@ def _suppressed_face(face: FaceRecheckFaceResult, *, reason: str | None = None) 
         face_key=face.face_key,
         image_source=face.image_source,
         face_index=face.face_index,
+        source_role=_face_source_role(face),
         reason=reason or face.reason or face.status,
         quality_flags=flags,
     )
@@ -882,6 +1096,7 @@ def _event_suppression(recheck_result: FaceRecheckResult) -> SuppressedFaceDecis
         face_key="none:0",
         image_source=recheck_result.image_source,
         face_index=0,
+        source_role="camera_target_fallback" if recheck_result.image_source == "capture" else "scene_face",
         reason=recheck_result.reason or recheck_result.status,
         quality_flags=_reason_flags(recheck_result.reason),
     )
@@ -941,11 +1156,11 @@ def _should_analyze_capture(
     valid_background_faces = [face for face in background_faces if face.selected_face is not None]
     if not valid_background_faces:
         return True
-    if len(valid_background_faces) > 1 and recheck_input.route_result == "known":
+    if len(valid_background_faces) > 1:
         return True
     if len(valid_background_faces) == 1:
         match = valid_background_faces[0].gallery_match
-        return match is not None and match.similarity < settings.similarity_threshold
+        return match is None or match.similarity < settings.similarity_threshold
     return False
 
 

@@ -266,11 +266,14 @@ recognition_event_faces:
 
     <section>
       <h2>六、图片处理策略</h2>
+      <div class="callout warn">
+        <strong>图源语义：</strong><code>BackgroundImage</code> 是摄像头采集的原始全图，用来判断画面里有多少张独立人脸；<code>CaptureImage</code> 是摄像头从同一张全图上裁剪出的目标人脸图。它不是第二个独立图源，也不能默认增加一名入场人员。
+      </div>
       <ol>
         <li>默认对 <code>BackgroundImage</code> 检测全部人脸并逐脸识别。</li>
         <li>每张背景图人脸都生成一个 InsightFace crop，crop 绑定到对应子表行。</li>
-        <li>如果背景图没有检测到人脸，且存在 <code>CaptureImage</code>，则对 <code>CaptureImage</code> 执行同样的逐脸识别。</li>
-        <li>如果背景图检测到多张脸，且摄像头有 known 结果，可以额外处理 <code>CaptureImage</code> 作为 <code>image_source=capture</code> 的辅助行，但不覆盖背景图逐脸结果。</li>
+        <li>如果背景图没有检测到有效人脸，且存在 <code>CaptureImage</code>，则允许对 <code>CaptureImage</code> 做一次兜底识别，并且最多生成一个摄像头目标脸业务触发。</li>
+        <li>如果背景图已经检测到有效人脸，额外处理 <code>CaptureImage</code> 时只能作为摄像头目标脸辅助证据，用于纠偏或解释，不覆盖背景图逐脸结果，也不新增独立陌生人/熟人数量。</li>
         <li><code>recognizeImage</code> 本期仍不纳入主流程，除非后续确认它比 Capture 图更适合作为摄像头目标脸。</li>
       </ol>
     </section>
@@ -295,10 +298,11 @@ Capture 图：
       <p>后续进入 <code>filter</code> / <code>verify_and_override</code> 时，多人脸不再压缩成一个主脸判断，而是逐脸生成业务触发结果。该补充只定义决策口径，不授权本方案阶段直接切换运行模式。</p>
       <ul>
         <li>陌生人召回优先：熟人必须由 InsightFace 对有效人脸高置信命中 Gallery 才能按熟人处理。</li>
-        <li>有效人脸但 Gallery 未高置信命中熟人时，按陌生人触发；多个有效未知脸按未知人脸数量触发。</li>
+        <li>有效背景人脸但 Gallery 未高置信命中熟人时，按陌生人触发；多个有效未知背景脸按未知人脸数量触发。</li>
         <li><code>no_face</code>、模糊、小脸、侧脸、低检测分、图片读取失败、模型异常属于复核不可用，不等同于确认陌生人。</li>
         <li>复核不可用的人脸可以过滤掉主飞书和 <code>attendance_events</code>，但必须写入处理记录、质量指标、过滤原因和监控后台。</li>
-        <li>同一事件中同一熟人可能同时出现在 <code>BackgroundImage</code> 和 <code>CaptureImage</code>，必须按 <code>person_type + person_id</code> 去重，避免重复触发熟人通知。</li>
+        <li><code>CaptureImage</code> 是摄像头目标脸裁剪图，不参与“多人脸数量”计算。它只能作为目标脸辅助复核、身份纠偏、或背景图无有效脸时的单一 fallback。</li>
+        <li>同一事件中同一人同时出现在 <code>BackgroundImage</code> 和 <code>CaptureImage</code> 时，必须合并为同一个业务对象，避免重复触发熟人或陌生人通知。</li>
       </ul>
     </section>
 

@@ -326,7 +326,7 @@
         <div class="card">
           <h3>目标</h3>
           <ul>
-            <li>对每条 <code>FaceReco</code> 事件保存后的 <code>BackgroundImage</code> 做人脸检测，判断是否真的有人脸；当背景图无人脸，或单人脸 Gallery 相似度低于阈值时，再用 <code>CaptureImage</code> 做 fallback 复核。</li>
+            <li>对每条 <code>FaceReco</code> 事件保存后的 <code>BackgroundImage</code> 做场景级人脸检测，判断全图中有几张独立人脸；<code>CaptureImage</code> 是摄像头从同一张 <code>BackgroundImage</code> 裁剪出的目标人脸，只能作为摄像头目标脸的辅助复核或无背景有效脸时的兜底，不能默认当作第二个独立人员。</li>
             <li>过滤侧脸、过小人脸、模糊图、低置信度检测等噪音事件。</li>
             <li>可选启用二次人脸比对，用服务器侧人脸特征库纠正摄像头把已知人员识别成陌生人的情况。</li>
             <li>保留当前双图飞书链接、入场记录、日报和去重逻辑的主流程，只在其前面增加一层可开关的二次判断。</li>
@@ -349,6 +349,9 @@
     <section class="panel">
       <h2>三、当前链路与接入点</h2>
       <p>现有链路已经能够接收 P6S <code>FaceReco</code> 事件，保存 <code>BackgroundImage</code> 和 <code>CaptureImage</code>，生成 token 图片链接，写入入场记录，并发送飞书通知。</p>
+      <div class="callout warn" style="margin-top: 14px;">
+        <p><strong>图源语义修正：</strong><code>BackgroundImage</code> 是摄像头采集到的原始全图，是判断“画面里有几张独立人脸”的唯一主图源；<code>CaptureImage</code> 是摄像头做人脸识别时从这张全图上裁剪出的目标人脸图。两者不是两个独立事件、也不是两个独立人员。后续所有主飞书、<code>attendance_events</code>、日报和去重触发，都必须以“独立人员”为单位，不能因为同一张脸同时出现在 <code>BackgroundImage</code> 和 <code>CaptureImage</code> 中而重复触发。</p>
+      </div>
       <div class="flow">
         <div class="flow-step">
           <div class="num">1</div>
@@ -368,7 +371,7 @@
           <div class="num">3</div>
           <div>
             <strong>新增 InsightFace 二次判断层</strong>
-            <p class="small">建议插入在图片保存之后、写入 <code>attendance_events</code> 和发送飞书之前。主输入使用 <code>BackgroundImage</code>；仅当背景图 <code>no_face</code>，或背景图只检测到 1 张脸但 Gallery 相似度低于 <code>FACE_RECHECK_SIMILARITY_THRESHOLD</code> 时，才 fallback 使用 <code>CaptureImage</code>。</p>
+            <p class="small">建议插入在图片保存之后、写入 <code>attendance_events</code> 和发送飞书之前。主输入使用 <code>BackgroundImage</code> 做场景级逐脸识别；<code>CaptureImage</code> 只用于摄像头目标脸辅助复核、身份纠偏或背景图无有效脸时的单一兜底，不新增独立人员数量。</p>
           </div>
         </div>
         <div class="flow-step">
@@ -637,7 +640,7 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
             <td>多人脸</td>
             <td>同一背景图中检测到多张脸。</td>
             <td>逐脸识别、逐脸决策、逐脸触发</td>
-            <td>不能再压缩成一张主脸。熟人按人员去重触发，未知有效人脸按未知人脸数量触发陌生人通知；低质量脸只记录过滤原因。</td>
+            <td>不能再压缩成一张主脸。熟人按人员去重触发，背景图中的未知有效人脸按未知人脸数量触发陌生人通知；<code>CaptureImage</code> 只作为摄像头目标裁剪辅助证据，不额外增加人数；低质量脸只记录过滤原因。</td>
           </tr>
         </tbody>
       </table>
@@ -706,7 +709,7 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
           <tr>
             <td>任意</td>
             <td>多张有效脸</td>
-            <td>逐脸决策：高置信命中熟人的脸按熟人触发；未高置信命中的有效脸按陌生人逐张触发；同一人员在同一事件内去重。</td>
+            <td>以 <code>BackgroundImage</code> 检测出的独立人脸逐脸决策：高置信命中熟人的脸按熟人触发；未高置信命中的有效背景脸按陌生人逐张触发；同一人员在同一事件内去重。<code>CaptureImage</code> 只辅助摄像头目标脸，不额外增加陌生人或熟人触发。</td>
           </tr>
           <tr>
             <td>任意</td>
@@ -716,6 +719,14 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
         </tbody>
       </table>
       <p class="small">该逻辑必须插入在图片保存和 InsightFace 复核之后、<code>attendance_events</code> 写入和主飞书通知之前，否则无法正确影响通知去重。</p>
+      <h3>Background / Capture 业务触发口径</h3>
+      <ul>
+        <li><strong><code>BackgroundImage</code>：</strong>场景级事实来源。画面中独立人脸数量、多人脸逐脸触发、陌生人数统计，都以背景图检测结果为准。</li>
+        <li><strong><code>CaptureImage</code>：</strong>摄像头目标脸裁剪图。它可以提升目标脸识别准确率，也可以在摄像头陌生人但服务器命中熟人时纠偏，但默认不生成额外业务 trigger。</li>
+        <li><strong>兜底例外：</strong>如果 <code>BackgroundImage</code> 无有效人脸或读取失败，而 <code>CaptureImage</code> 有质量合格人脸，则允许 <code>CaptureImage</code> 作为本事件唯一目标脸触发一次业务动作。</li>
+        <li><strong>重复禁止：</strong>如果背景图已经产生某个人脸的熟人或陌生人 trigger，同事件中的 <code>CaptureImage</code> 只能作为 <code>supporting_evidence</code> 或 <code>target_override</code>，不得再生成第二条陌生人/熟人通知。</li>
+        <li><strong>事件 1235 类问题：</strong>背景图有效未知脸 + 裁剪图有效未知脸，本质上仍是同一摄像头目标脸，应只发送一条陌生人提醒，并在同一条提醒中保留“查看背景全图”和“查看人脸图”两个链接。</li>
+      </ul>
       <h3>低质量未知分层</h3>
       <p>陌生人提醒必须进一步拆分为“确认陌生人”和“低质量未知”。低质量未知不是熟人，也不是确认陌生人；它代表当前单帧无法可靠判断身份，只写处理记录和监控后台，不触发主飞书陌生人提醒。</p>
       <ul>

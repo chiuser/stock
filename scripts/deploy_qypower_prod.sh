@@ -89,6 +89,7 @@ PY_FILES=(
   alembic/versions/20260705_0004_create_recognition_event_faces.py
   alembic/versions/20260705_0005_add_final_recognition_decision.py
   alembic/versions/20260705_0006_add_class_member_person_type.py
+  alembic/versions/20260705_0007_add_recognition_face_source_role.py
   scripts/build_face_gallery.py
   scripts/cleanup_p6s_event_store.py
   scripts/backfill_recognition_events.py
@@ -217,6 +218,7 @@ if [[ "$SKIP_REMOTE_CHECK" -eq 0 ]]; then
     alembic/versions/20260705_0004_create_recognition_event_faces.py \
     alembic/versions/20260705_0005_add_final_recognition_decision.py \
     alembic/versions/20260705_0006_add_class_member_person_type.py \
+    alembic/versions/20260705_0007_add_recognition_face_source_role.py \
     scripts/build_face_gallery.py \
     scripts/cleanup_p6s_event_store.py \
     scripts/backfill_recognition_events.py \

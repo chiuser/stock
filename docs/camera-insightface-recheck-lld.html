@@ -390,7 +390,7 @@
           <tr>
             <td>陌生人召回优先</td>
             <td>熟人必须高置信确认</td>
-            <td>Gallery 相似度未达到熟人阈值时，不按熟人放行；如果该脸是有效人脸，则按陌生人触发。多人脸事件逐脸决策，多个有效未知脸按未知人脸数量触发陌生人通知。</td>
+            <td>Gallery 相似度未达到熟人阈值时，不按熟人放行；如果该脸是背景图独立有效人脸或 Capture 兜底目标脸，则按陌生人触发。多人脸事件逐脸决策只统计 <code>BackgroundImage</code> 中的独立有效未知脸；<code>CaptureImage</code> 默认只作为摄像头目标裁剪辅助证据。</td>
           </tr>
           <tr>
             <td>复核不可用语义</td>
@@ -777,11 +777,32 @@ class FaceRecheckResult:
     elapsed_ms: int | None
     error_type: str | None = None
     thresholds: FaceRecheckThresholds | None = None</code></pre>
+      <h3>图源角色结构</h3>
+      <pre><code>@dataclass(frozen=True)
+class FaceRecheckFaceResult:
+    image_source: Literal["background", "capture"]
+    # scene_face: BackgroundImage 中检测到的独立场景人脸。
+    # camera_target_crop: CaptureImage 中摄像头裁剪出的目标人脸，只能作为辅助证据。
+    # camera_target_fallback: BackgroundImage 无有效脸时，CaptureImage 作为唯一兜底目标脸。
+    source_role: Literal["scene_face", "camera_target_crop", "camera_target_fallback"]
+    face_index: int
+    face_key: str
+    selected_face: DetectedFaceSummary | None
+    gallery_match: GalleryMatch | None
+    status: Literal["passed", "filtered", "error"]
+    reason: str
+    # 只有 scene_face 和 camera_target_fallback 默认可生成业务 trigger。
+    # camera_target_crop 只能纠偏/增强摄像头目标脸，不能默认新增独立人员。
+    business_trigger_eligible: bool</code></pre>
+      <div class="callout warn">
+        <p><strong>实现约束：</strong><code>BackgroundImage</code> 是场景全图，负责独立人脸数量；<code>CaptureImage</code> 是从同一张背景图裁剪出的摄像头目标脸。<code>FaceRecheckResult.faces</code> 可以同时保留两类分析结果，但最终确认逻辑必须根据 <code>source_role</code> 决定是否允许生成主飞书和 <code>attendance_events</code> 触发。</p>
+      </div>
       <h3>最终确认结构</h3>
       <pre><code>@dataclass(frozen=True)
 class FinalRecognitionTrigger:
     kind: Literal["known", "stranger"]
     face_key: str
+    source_role: Literal["scene_face", "camera_target_crop", "camera_target_fallback"]
     person_type: Literal["member", "coach", "staff"] | None
     person_id: str | None
     name: str | None
@@ -790,6 +811,7 @@ class FinalRecognitionTrigger:
 @dataclass(frozen=True)
 class SuppressedFaceDecision:
     face_key: str
+    source_role: str
     reason: str
     quality_flags: list[str]
 
@@ -844,7 +866,7 @@ def get_face_analysis(settings: FaceRecheckSettings) -> FaceAnalysis:
           </tr>
           <tr>
             <td>输入图片</td>
-            <td>先跑 <code>BackgroundImage</code>。如果背景图返回 <code>no_face</code>，或只检测到 1 张脸但 Gallery 相似度低于 <code>FACE_RECHECK_SIMILARITY_THRESHOLD</code>，并且存在 <code>CaptureImage</code>，则 fallback 跑 <code>CaptureImage</code>。如果背景图检测到多张脸，不自动 fallback，避免把全图多人场景误收敛到摄像头裁剪小图。</td>
+            <td>先跑 <code>BackgroundImage</code>，它是场景级主图源。<code>CaptureImage</code> 只在需要复核摄像头目标脸时处理：背景图无有效脸时作为 <code>camera_target_fallback</code>；背景图有脸但目标身份需要纠偏时作为 <code>camera_target_crop</code> 辅助证据。无论哪种情况，<code>CaptureImage</code> 都不得默认新增独立人员数量。</td>
           </tr>
           <tr>
             <td>读取方式</td>
@@ -853,22 +875,34 @@ def get_face_analysis(settings: FaceRecheckSettings) -> FaceAnalysis:
         </tbody>
       </table>
       <h3>检测流程</h3>
-      <pre><code>def analyze_image(input: FaceRecheckInput, settings: FaceRecheckSettings) -> FaceRecheckResult:
-    background = analyze_single_image(input.background_image_path)
-    if should_fallback_to_capture(background, input.capture_image_path, settings):
-        return analyze_single_image(input.capture_image_path)
-    return background
+      <pre><code>def run_face_recheck(input: FaceRecheckInput, settings: FaceRecheckSettings) -> FaceRecheckResult:
+    background_faces = analyze_background_scene_faces(input.background_image_path)
+    capture_faces = []
 
-def should_fallback_to_capture(result, capture_path, settings):
-    if capture_path is None:
-        return False
-    reasons = set(result.reason.split(","))
-    if "no_face" in reasons:
-        return True
-    if result.face_count == 1 and result.gallery_match:
-        return result.gallery_match.similarity &lt; settings.similarity_threshold
-    return False</code></pre>
-      <p class="small">fallback 只改变 InsightFace recheck 选择的图片，不改变主飞书、attendance、摄像头原始结果或双图保存链路。处理记录中的 <code>image_source</code> 会显示最终使用的是 <code>background</code> 还是 <code>capture</code>。</p>
+    if should_analyze_capture_target(background_faces, input, settings):
+        role = "camera_target_fallback" if no_valid_background_face(background_faces) else "camera_target_crop"
+        capture_faces = analyze_capture_target(input.capture_image_path, source_role=role)
+
+    return build_event_result(background_faces=background_faces, capture_faces=capture_faces)
+
+def build_final_recognition_decision(result, camera_result, camera_person):
+    scene_faces = [f for f in result.faces if f.source_role == "scene_face"]
+    target_crop = first_face(result.faces, source_role="camera_target_crop")
+    fallback_target = first_face(result.faces, source_role="camera_target_fallback")
+
+    if scene_faces:
+        # 只对背景图中的独立人脸生成业务触发。
+        triggers = triggers_from_scene_faces(scene_faces)
+        # Capture 只能纠偏或增强摄像头目标脸，不能新增第二个陌生人 trigger。
+        triggers = apply_target_crop_override(triggers, target_crop, camera_result, camera_person)
+        return decision_from_triggers(triggers)
+
+    if fallback_target:
+        # 背景图无有效脸时，Capture 才允许作为本事件唯一目标脸触发一次。
+        return decision_from_single_target(fallback_target)
+
+    return suppress("no_valid_face_trigger")</code></pre>
+      <p class="small">fallback 不再表示“用 CaptureImage 替换整条事件的图片源”。正确含义是：<code>CaptureImage</code> 作为摄像头目标脸的辅助复核结果，只有在背景图没有有效人脸时才具备独立触发资格。</p>
     </section>
 
     <section class="panel">
@@ -1163,7 +1197,7 @@ def should_fallback_to_capture(result, capture_path, settings):
           <tr>
             <td><code>IF-U</code></td>
             <td>InsightFace 检测到质量合格的有效人脸，但 Gallery 未高置信命中任何熟人。</td>
-            <td>可以按陌生人触发。</td>
+            <td>仅当该脸来自 <code>scene_face</code> 或 <code>camera_target_fallback</code> 时可以按陌生人触发；<code>camera_target_crop</code> 只作为辅助证据，不新增陌生人。</td>
           </tr>
           <tr>
             <td><code>IF-LQ-U</code></td>
@@ -1174,6 +1208,37 @@ def should_fallback_to_capture(result, capture_path, settings):
             <td><code>IF-NA</code></td>
             <td><code>no_face</code>、模糊、小脸、侧脸、低检测分、图片读取失败、模型异常等复核不可用状态。</td>
             <td>不触发主飞书；只记录过滤原因。</td>
+          </tr>
+        </tbody>
+      </table>
+      <h3>source_role 触发资格</h3>
+      <table>
+        <thead>
+          <tr>
+            <th><code>source_role</code></th>
+            <th>来源</th>
+            <th>是否可直接触发业务</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>scene_face</code></td>
+            <td><code>BackgroundImage</code> 中检测出的独立人脸。</td>
+            <td>是。</td>
+            <td>多人脸数量、陌生人数、熟人额外入场都以这类结果为准。</td>
+          </tr>
+          <tr>
+            <td><code>camera_target_crop</code></td>
+            <td><code>CaptureImage</code> 中检测出的摄像头目标脸。</td>
+            <td>默认否。</td>
+            <td>只能用于纠偏摄像头目标身份、补充置信度、解释摄像头为何选中该脸；不得因为它是有效未知脸就额外发陌生人。</td>
+          </tr>
+          <tr>
+            <td><code>camera_target_fallback</code></td>
+            <td>背景图无有效人脸时，使用 <code>CaptureImage</code> 兜底得到的目标脸。</td>
+            <td>是，但每事件最多一次。</td>
+            <td>这是兜底例外，避免背景图检测失败导致整条真实人脸事件丢失。</td>
           </tr>
         </tbody>
       </table>
@@ -1256,7 +1321,7 @@ def should_fallback_to_capture(result, capture_path, settings):
             <td>多脸，包含多个 <code>IF-K</code> / <code>IF-U</code> / <code>IF-NA</code></td>
             <td>原流程继续，shadow 展示逐脸结果。</td>
             <td>只处理质量合格的有效脸；<code>IF-NA</code> 只记录。</td>
-            <td>逐脸触发：<code>IF-K</code> 按熟人触发，<code>IF-U</code> 按确认陌生人触发，<code>IF-LQ-U</code> / <code>IF-NA</code> 只记录。同一人员同一事件内去重。</td>
+            <td>逐脸触发仅面向 <code>scene_face</code> 和 <code>camera_target_fallback</code>：<code>IF-K</code> 按熟人触发，<code>IF-U</code> 按确认陌生人触发，<code>IF-LQ-U</code> / <code>IF-NA</code> 只记录。<code>camera_target_crop</code> 只辅助目标脸纠偏，不额外触发。同一人员同一事件内去重。</td>
           </tr>
           <tr>
             <td><code>parse_error</code></td>
@@ -1267,6 +1332,9 @@ def should_fallback_to_capture(result, capture_path, settings):
           </tr>
         </tbody>
       </table>
+      <div class="callout warn" style="margin-top: 14px;">
+        <p><strong>重复通知防线：</strong>同一事件中如果 <code>BackgroundImage</code> 已经为目标脸生成陌生人 trigger，而 <code>CaptureImage</code> 也被判断为有效未知脸，则 <code>CaptureImage</code> 必须进入 <code>suppressed_faces</code>，原因建议为 <code>capture_duplicate_of_camera_target</code> 或 <code>capture_supporting_evidence_only</code>。这类情况不应生成第二条 <code>attendance_events</code>，也不应发送第二条主飞书。</p>
+      </div>
       <p class="small">最终确认逻辑必须在 <code>_run_face_recheck_for_event()</code> 之后、<code>attendance.safe_record_event()</code> 和主飞书通知之前执行。只在 <code>recognition_events</code> / <code>recognition_event_faces</code> 中分类已经太晚，无法影响去重和主通知。</p>
     </section>
 

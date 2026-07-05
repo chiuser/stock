@@ -122,6 +122,7 @@ def build_event_face_rows(record: Mapping[str, Any]) -> list[dict[str, Any]]:
         rows.append(
             {
                 "image_source": _text(face_payload.get("image_source")) or "background",
+                "source_role": _face_source_role(face_payload),
                 "face_index": _int(face_payload.get("face_index") if "face_index" in face_payload else fallback_index),
                 "face_key": face_key,
                 "bbox": bbox,
@@ -331,9 +332,12 @@ def row_to_event(
 def face_row_to_event(row: Mapping[str, Any]) -> dict[str, Any]:
     bbox = _json_list(row.get("bbox"))
     crop_relative_path = _text(row.get("crop_relative_path"))
+    source_role = _source_role_from_row(row)
     return {
         "face_key": _text(row.get("face_key")),
         "image_source": _text(row.get("image_source")) or "background",
+        "source_role": source_role,
+        "source_role_label": _source_role_label(source_role),
         "face_index": _int(row.get("face_index")),
         "bbox": bbox,
         "position_hint": _position_hint(row),
@@ -539,8 +543,38 @@ def _face_business_action(
         return "trigger", None
     if face_key and face_key in suppress_map:
         suppression = _dict(suppress_map[face_key])
-        return "suppressed", _text(suppression.get("reason")) or "suppressed"
+        reason = _text(suppression.get("reason")) or "suppressed"
+        if _face_source_role(face_payload) == "camera_target_crop" and reason in {
+            "capture_supporting_evidence_only",
+            "capture_duplicate_of_known_target",
+        }:
+            return "supporting_evidence", reason
+        return "suppressed", reason
     return None, None
+
+
+def _face_source_role(face_payload: Mapping[str, Any]) -> str:
+    source_role = _text(face_payload.get("source_role"))
+    if source_role:
+        return source_role
+    image_source = _text(face_payload.get("image_source")) or "background"
+    return "scene_face" if image_source == "background" else "camera_target_crop"
+
+
+def _source_role_from_row(row: Mapping[str, Any]) -> str:
+    source_role = _text(row.get("source_role"))
+    if source_role:
+        return source_role
+    image_source = _text(row.get("image_source")) or "background"
+    return "scene_face" if image_source == "background" else "camera_target_crop"
+
+
+def _source_role_label(source_role: str) -> str:
+    return {
+        "scene_face": "背景图独立人脸",
+        "camera_target_crop": "摄像头裁剪辅助图",
+        "camera_target_fallback": "摄像头裁剪兜底目标",
+    }.get(source_role, source_role)
 
 
 def _image_record(record: Mapping[str, Any], key: str) -> dict[str, Any]:

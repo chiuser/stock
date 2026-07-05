@@ -294,10 +294,12 @@ def analyze_image_faces(image_path, image_source):
 
       <h3>CaptureImage 触发规则</h3>
       <ul>
-        <li>背景图无脸：处理 Capture 图。</li>
-        <li>背景图有多脸且摄像头结果是 known：处理 Capture 图作为摄像头目标脸辅助证据。</li>
-        <li>背景图单脸但 Gallery 相似度低于阈值：沿用当前 fallback 规则处理 Capture 图。</li>
-        <li>Capture 图结果不覆盖背景图结果，只作为额外 <code>image_source=capture</code> 行保存。</li>
+        <li><code>BackgroundImage</code> 是场景全图，负责独立人脸数量和多人脸逐脸触发。</li>
+        <li><code>CaptureImage</code> 是摄像头从 <code>BackgroundImage</code> 裁剪出的目标人脸图，不是第二个独立图源。</li>
+        <li>背景图无有效脸：处理 Capture 图，并标记为 <code>source_role=camera_target_fallback</code>；此时每个事件最多允许生成一个业务触发。</li>
+        <li>背景图有有效脸：处理 Capture 图时标记为 <code>source_role=camera_target_crop</code>，只能作为摄像头目标脸辅助证据，用于目标身份纠偏、同人救援或 shadow/监控解释。</li>
+        <li>背景图单脸但 Gallery 相似度低于阈值：可以分析 Capture 图辅助判断目标身份；如果 Capture 图仍是有效未知脸，不得在背景图已触发陌生人的基础上再触发第二条陌生人。</li>
+        <li>Capture 图结果可以作为额外 <code>image_source=capture</code> 行保存，但默认 <code>business_action=supporting_evidence</code> 或 <code>suppress_reason=capture_supporting_evidence_only</code>，不能覆盖背景图逐脸结果，也不能新增独立人员数量。</li>
       </ul>
 
       <h3>事件级 primary_face 兼容选择</h3>
@@ -508,12 +510,13 @@ Gallery：董小双 / 会员 / 0.219165 / 未通过 / Top1 与摄像头一致</c
         </tbody>
       </table>
       <ul>
-        <li>多人脸事件逐脸触发：多个有效未知脸按未知人脸数量触发陌生人通知。</li>
+        <li>多人脸事件逐脸触发的“多人脸”只统计 <code>BackgroundImage</code> 中的独立场景人脸；多个有效未知背景脸按未知人脸数量触发陌生人通知。</li>
         <li>摄像头 known 与 InsightFace 高置信命中其他熟人冲突时，后续 <code>verify_and_override</code> 以 InsightFace 为准。</li>
         <li>但当摄像头 known 的同人候选已经出现在 Gallery Top5，且与 Top1 分差极小，应优先保留摄像头同人候选，避免近似并列候选误纠偏成其他熟人。</li>
         <li>摄像头 known 的 Capture 图如果命中摄像头同人，只能在仅有 <code>face_too_small</code> 且满足救援尺寸时放行；<code>side_face</code>、<code>blurred</code>、<code>low_det_score</code> 仍然必须过滤。</li>
         <li>摄像头 known 且已确认目标脸时，其他未命中 Gallery 的额外未知脸需要满足更严格的额外陌生脸尺寸门槛，否则只记录 <code>suppress_reason=extra_unknown_too_small_for_known_event</code>。</li>
-        <li>同一事件中同一熟人跨 <code>background</code> / <code>capture</code> 重复出现时，按 <code>person_type + person_id</code> 去重。</li>
+        <li>同一事件中同一人跨 <code>background</code> / <code>capture</code> 重复出现时，合并为同一个业务对象；<code>capture</code> 行只保留为目标裁剪证据，避免熟人或陌生人重复触发。</li>
+        <li>如果 <code>BackgroundImage</code> 已生成陌生人 trigger，而 <code>CaptureImage</code> 也是有效未知脸，<code>capture</code> 行必须写为 <code>business_action=suppressed</code> 或 <code>supporting_evidence</code>，<code>suppress_reason=capture_duplicate_of_camera_target</code>；不得新增第二条陌生人通知。</li>
         <li>最终确认必须发生在主链路写 <code>attendance_events</code> 和发送主飞书之前；监控表只负责记录和展示，不反向驱动主流程。</li>
       </ul>
     </section>

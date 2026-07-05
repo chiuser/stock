@@ -805,6 +805,34 @@ async def validate_final_decision_flow(request_meta: RequestMeta) -> None:
     assert record["final_recognition_decision"]["primary_trigger"]["name"] == "苏苏"
     assert record["final_recognition_decision"]["primary_trigger"]["person_type"] == "member"
 
+    background_a_capture_b = _result_for_faces(
+        [
+            _known_face(
+                name="小明",
+                person_id="3427976339944670",
+                person_type="staff",
+                group_id="4dcafc2c9fbd4d1fa267ccbf145c8861",
+                group_name="员工",
+                camera_identity_status="name_and_id_matched",
+                image_source="background",
+            ),
+            _known_face(
+                name="苏苏",
+                person_id="3785841386866689",
+                person_type="member",
+                group_id="c1e42a1f2531467bae464da8a79dad53",
+                group_name="会员",
+                camera_identity_status="identity_conflict",
+                image_source="capture",
+                source_role="camera_target_crop",
+            ),
+        ]
+    )
+    handled, record = await run_case(known_payload, background_a_capture_b)
+    assert handled.result == "known"
+    assert [item["trigger"]["name"] for item in record["final_trigger_results"]] == ["苏苏"]
+    assert record["final_recognition_decision"]["suppressed_faces"][0]["reason"] == "overridden_by_capture_target"
+
     capture_small_camera_match = _known_face(
         name="小明",
         person_id="3427976339944670",
@@ -988,6 +1016,54 @@ async def validate_final_decision_flow(request_meta: RequestMeta) -> None:
     face_rows = recognition_monitor.build_event_face_rows(record)
     assert [row["business_action"] for row in face_rows] == ["known_trigger", "stranger_trigger"]
 
+    background_unknown_with_capture_unknown = _result_for_faces(
+        [
+            _unknown_face(face_index=0),
+            _unknown_face(
+                face_index=0,
+                image_source="capture",
+                source_role="camera_target_crop",
+            ),
+        ]
+    )
+    handled, record = await run_case(stranger_payload, background_unknown_with_capture_unknown)
+    assert handled.result == "stranger"
+    assert [item["trigger"]["kind"] for item in record["final_trigger_results"]] == ["stranger"]
+    assert record["final_recognition_decision"]["suppressed_faces"][0]["face_key"] == "capture:0"
+    assert record["final_recognition_decision"]["suppressed_faces"][0]["reason"] == "capture_supporting_evidence_only"
+    face_rows = recognition_monitor.build_event_face_rows(record)
+    assert [row["source_role"] for row in face_rows] == ["scene_face", "camera_target_crop"]
+    assert [row["business_action"] for row in face_rows] == ["stranger_trigger", "supporting_evidence"]
+
+    multi_known_unknown_with_capture_unknown = _result_for_faces(
+        [
+            _known_face(
+                name="小明",
+                person_id="3427976339944670",
+                person_type="staff",
+                group_id="4dcafc2c9fbd4d1fa267ccbf145c8861",
+                group_name="员工",
+                camera_identity_status="camera_unknown",
+                face_index=0,
+            ),
+            _unknown_face(face_index=1),
+            _unknown_face(
+                face_index=0,
+                image_source="capture",
+                source_role="camera_target_crop",
+            ),
+        ]
+    )
+    handled, record = await run_case(stranger_payload, multi_known_unknown_with_capture_unknown)
+    assert handled.result == "known"
+    assert [item["trigger"]["kind"] for item in record["final_trigger_results"]] == ["known", "stranger"]
+    face_rows = recognition_monitor.build_event_face_rows(record)
+    assert [row["business_action"] for row in face_rows] == [
+        "known_trigger",
+        "stranger_trigger",
+        "supporting_evidence",
+    ]
+
     multi_unknown = _result_for_faces([_unknown_face(face_index=0), _unknown_face(face_index=1)])
     handled, record = await run_case(stranger_payload, multi_unknown)
     assert handled.result == "stranger"
@@ -1166,6 +1242,7 @@ def _known_face(
     face_index: int = 0,
     similarity: float = 0.91,
     image_source: str = "background",
+    source_role: str | None = None,
     status: str = "passed",
     quality_flags: list[str] | None = None,
     width: float = 100.0,
@@ -1214,12 +1291,15 @@ def _known_face(
         status=status,  # type: ignore[arg-type]
         reason=",".join(selected_face.quality_flags) if selected_face.quality_flags else "quality_passed",
         gallery_match=gallery_match,
+        source_role=source_role,  # type: ignore[arg-type]
     )
 
 
 def _unknown_face(
     *,
     face_index: int,
+    image_source: str = "background",
+    source_role: str | None = None,
     width: float = 100.0,
     height: float = 120.0,
     quality_flags: list[str] | None = None,
@@ -1235,13 +1315,14 @@ def _unknown_face(
         motion_blur_score=motion_blur_score,
     )
     return face_recheck.FaceRecheckFaceResult(
-        image_source="background",
+        image_source=image_source,  # type: ignore[arg-type]
         face_index=face_index,
-        face_key=f"background:{face_index}",
+        face_key=f"{image_source}:{face_index}",
         selected_face=selected_face,
         status="passed",
         reason=",".join(selected_face.quality_flags) if selected_face.quality_flags else "quality_passed",
         gallery_match=None,
+        source_role=source_role,  # type: ignore[arg-type]
     )
 
 

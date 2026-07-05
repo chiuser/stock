@@ -640,7 +640,7 @@ function renderFaces(faces) {
   }
   const groups = [
     ["background", "背景图人脸"],
-    ["capture", "摄像头人脸图"],
+    ["capture", "摄像头裁剪辅助图"],
   ];
   els["modal-faces"].innerHTML = groups.map(([source, title]) => {
     const items = faces.filter(face => face.image_source === source);
@@ -676,6 +676,7 @@ function faceCardHtml(face) {
       </div>
       <div class="monitor-face-card-body">
         <strong>${html(text(face.face_key))} · ${html(text(face.position_hint, ""))}</strong>
+        <small>${html(text(face.source_role_label, sourceRoleLabel(face.source_role)))}</small>
         <small>${html(label(recheckStatusLabels, face.status))} · ${html(text(face.reason))}</small>
         <small>${html(galleryTitle)} · ${gallery.accepted ? "通过" : "未通过"}</small>
         <small>相似度 ${html(numberText(gallery.similarity))} · 第二名 ${html(numberText(gallery.second_similarity))}</small>
@@ -684,6 +685,14 @@ function faceCardHtml(face) {
       </div>
     </button>
   `;
+}
+
+function sourceRoleLabel(sourceRole) {
+  return {
+    scene_face: "背景图独立人脸",
+    camera_target_crop: "摄像头裁剪辅助图",
+    camera_target_fallback: "摄像头裁剪兜底目标",
+  }[sourceRole] || "";
 }
 
 function candidateOneLine(candidates) {

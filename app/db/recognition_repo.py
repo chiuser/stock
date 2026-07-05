@@ -199,6 +199,7 @@ def upsert_recognition_event_faces(
                 insert into recognition_event_faces (
                   recognition_event_id,
                   image_source,
+                  source_role,
                   face_index,
                   face_key,
                   bbox,
@@ -229,6 +230,7 @@ def upsert_recognition_event_faces(
                 ) values (
                   :recognition_event_id,
                   :image_source,
+                  :source_role,
                   :face_index,
                   :face_key,
                   cast(:bbox as jsonb),
@@ -258,6 +260,7 @@ def upsert_recognition_event_faces(
                   now()
                 )
                 on conflict (recognition_event_id, image_source, face_index) do update set
+                  source_role = excluded.source_role,
                   face_key = excluded.face_key,
                   bbox = excluded.bbox,
                   center_x = excluded.center_x,
@@ -336,6 +339,12 @@ def list_recognition_event_faces(
             where recognition_event_id = :recognition_event_id
             order by
               case image_source when 'background' then 0 when 'capture' then 1 else 2 end,
+              case source_role
+                when 'scene_face' then 0
+                when 'camera_target_fallback' then 1
+                when 'camera_target_crop' then 2
+                else 3
+              end,
               face_index asc;
             """
         ),
@@ -740,9 +749,14 @@ def _face_params(*, recognition_event_id: int, values: Mapping[str, Any]) -> dic
     bbox = values.get("bbox")
     if not isinstance(bbox, list):
         bbox = []
+    image_source = _text_or_none(values.get("image_source")) or "background"
+    source_role = _text_or_none(values.get("source_role"))
+    if not source_role:
+        source_role = "scene_face" if image_source == "background" else "camera_target_crop"
     return {
         "recognition_event_id": recognition_event_id,
-        "image_source": _text_or_none(values.get("image_source")) or "background",
+        "image_source": image_source,
+        "source_role": source_role,
         "face_index": int(values.get("face_index") or 0),
         "face_key": _text_or_none(values.get("face_key")) or "background:0",
         "bbox": _json(bbox, default=[]),
