@@ -589,6 +589,10 @@ def _fallback_settings() -> face_recheck.FaceRecheckSettings:
         camera_match_rescue_min_face_height=50,
         known_extra_unknown_min_face_width=80,
         known_extra_unknown_min_face_height=80,
+        border_margin_ratio=0.02,
+        motion_blur_threshold=None,
+        low_identity_similarity=0.28,
+        low_identity_gap=0.04,
         similarity_margin=0.0,
         gallery_path="/tmp/gallery.npz",
         gallery_manifest_path="/tmp/gallery_manifest.json",
@@ -642,6 +646,8 @@ def _fallback_face(
             width=100.0,
             height=120.0,
             blur_score=100.0,
+            border_margin_ratio=0.2,
+            motion_blur_score=12.0,
             frontal_score=0.1,
             head_pitch=None,
             quality_flags=[] if status == "passed" else [reason],
@@ -720,6 +726,18 @@ async def validate_final_decision_flow(request_meta: RequestMeta) -> None:
         "FEISHU_WEBHOOK_URL": "",
         "FEISHU_WEBHOOK_SECRET": "",
     }
+    with patched_env(
+        {
+            "FACE_RECHECK_ENABLED": "true",
+            "FACE_RECHECK_MODE": "verify_and_override",
+            "FACE_RECHECK_MOTION_BLUR_THRESHOLD": "",
+        }
+    ):
+        settings = face_recheck.FaceRecheckSettings.from_env()
+    assert settings.border_margin_ratio == 0.02
+    assert settings.motion_blur_threshold is None
+    assert settings.low_identity_similarity == 0.28
+    assert settings.low_identity_gap == 0.04
 
     async def run_case(payload: dict, result: face_recheck.FaceRecheckResult) -> tuple[p6s_events.EventHandleResult, dict]:
         with patched_env(env), tempfile.TemporaryDirectory() as temp_dir:
@@ -890,6 +908,65 @@ async def validate_final_decision_flow(request_meta: RequestMeta) -> None:
     assert handled.result == "stranger"
     assert record["result"] == "stranger"
     assert record["final_recognition_decision"]["primary_trigger"]["kind"] == "stranger"
+    assert "border_margin_ratio" in record["face_recheck"]["faces"][0]["selected_face"]
+    assert "motion_blur_score" in record["face_recheck"]["faces"][0]["selected_face"]
+
+    near_border_unknown = _result_for_faces(
+        [
+            _unknown_face(
+                face_index=0,
+                quality_flags=["face_near_border", "low_identity_confidence"],
+                border_margin_ratio=0.01,
+            )
+        ]
+    )
+    handled, record = await run_case(stranger_payload, near_border_unknown)
+    assert handled.result == "filtered"
+    assert record["final_recognition_decision"]["action"] == "suppress"
+    assert record["final_recognition_decision"]["suppressed_faces"][0]["reason"] == "low_quality_unknown:face_near_border"
+    face_rows = recognition_monitor.build_event_face_rows(record)
+    assert face_rows[0]["business_action"] == "suppressed"
+    assert face_rows[0]["suppress_reason"] == "low_quality_unknown:face_near_border"
+
+    motion_blur_observed = _result_for_faces([_unknown_face(face_index=0, motion_blur_score=0.001)])
+    handled, record = await run_case(stranger_payload, motion_blur_observed)
+    assert handled.result == "stranger"
+    assert record["final_recognition_decision"]["primary_trigger"]["kind"] == "stranger"
+
+    motion_blur_unknown = _result_for_faces(
+        [
+            _unknown_face(
+                face_index=0,
+                quality_flags=["motion_blur", "low_identity_confidence"],
+                motion_blur_score=0.001,
+            )
+        ]
+    )
+    handled, record = await run_case(stranger_payload, motion_blur_unknown)
+    assert handled.result == "filtered"
+    assert record["final_recognition_decision"]["suppressed_faces"][0]["reason"] == "low_quality_unknown:motion_blur"
+
+    low_identity_only = _result_for_faces([_unknown_face(face_index=0, quality_flags=["low_identity_confidence"])])
+    handled, record = await run_case(stranger_payload, low_identity_only)
+    assert handled.result == "stranger"
+    assert record["final_recognition_decision"]["primary_trigger"]["kind"] == "stranger"
+
+    high_confidence_known_near_border = _result_for_faces(
+        [
+            _known_face(
+                name="小明",
+                person_id="3427976339944670",
+                person_type="staff",
+                group_id="4dcafc2c9fbd4d1fa267ccbf145c8861",
+                group_name="员工",
+                camera_identity_status="camera_unknown",
+                quality_flags=["face_near_border"],
+            )
+        ]
+    )
+    handled, record = await run_case(stranger_payload, high_confidence_known_near_border)
+    assert handled.result == "known"
+    assert record["final_recognition_decision"]["primary_trigger"]["kind"] == "known"
 
     multi_known_unknown = _result_for_faces(
         [
@@ -943,6 +1020,8 @@ def _mock_recheck_result() -> face_recheck.FaceRecheckResult:
         width=100.0,
         height=120.0,
         blur_score=132.4,
+        border_margin_ratio=0.2,
+        motion_blur_score=12.0,
         frontal_score=0.12,
         head_pitch=None,
         quality_flags=[],
@@ -1013,6 +1092,10 @@ def _mock_recheck_result() -> face_recheck.FaceRecheckResult:
             camera_match_rescue_min_face_height=50,
             known_extra_unknown_min_face_width=80,
             known_extra_unknown_min_face_height=80,
+            border_margin_ratio=0.02,
+            motion_blur_threshold=None,
+            low_identity_similarity=0.28,
+            low_identity_gap=0.04,
             similarity_margin=0.03,
         ),
         faces=[
@@ -1139,14 +1222,25 @@ def _unknown_face(
     face_index: int,
     width: float = 100.0,
     height: float = 120.0,
+    quality_flags: list[str] | None = None,
+    border_margin_ratio: float = 0.2,
+    motion_blur_score: float = 12.0,
 ) -> face_recheck.FaceRecheckFaceResult:
+    selected_face = _detected_face(
+        face_index,
+        width=width,
+        height=height,
+        quality_flags=quality_flags,
+        border_margin_ratio=border_margin_ratio,
+        motion_blur_score=motion_blur_score,
+    )
     return face_recheck.FaceRecheckFaceResult(
         image_source="background",
         face_index=face_index,
         face_key=f"background:{face_index}",
-        selected_face=_detected_face(face_index, width=width, height=height),
+        selected_face=selected_face,
         status="passed",
-        reason="quality_passed",
+        reason=",".join(selected_face.quality_flags) if selected_face.quality_flags else "quality_passed",
         gallery_match=None,
     )
 
@@ -1174,6 +1268,8 @@ def _detected_face(
     width: float = 100.0,
     height: float = 120.0,
     head_pitch: float | None = None,
+    border_margin_ratio: float = 0.2,
+    motion_blur_score: float = 12.0,
 ) -> face_recheck.DetectedFaceSummary:
     x1 = 1.0 + (face_index * 20.0)
     y1 = 2.0
@@ -1184,6 +1280,8 @@ def _detected_face(
         width=width,
         height=height,
         blur_score=132.4,
+        border_margin_ratio=border_margin_ratio,
+        motion_blur_score=motion_blur_score,
         frontal_score=0.12,
         head_pitch=head_pitch,
         quality_flags=quality_flags or [],

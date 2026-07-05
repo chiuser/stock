@@ -57,6 +57,10 @@ class FaceRecheckSettings:
     camera_match_rescue_min_face_height: int
     known_extra_unknown_min_face_width: int
     known_extra_unknown_min_face_height: int
+    border_margin_ratio: float
+    motion_blur_threshold: float | None
+    low_identity_similarity: float
+    low_identity_gap: float
     similarity_margin: float
     gallery_path: str
     gallery_manifest_path: str
@@ -109,6 +113,10 @@ class FaceRecheckSettings:
                 80,
                 minimum=1,
             ),
+            border_margin_ratio=_env_float("FACE_RECHECK_BORDER_MARGIN_RATIO", 0.02),
+            motion_blur_threshold=_env_optional_float("FACE_RECHECK_MOTION_BLUR_THRESHOLD"),
+            low_identity_similarity=_env_float("FACE_RECHECK_LOW_IDENTITY_SIMILARITY", 0.28),
+            low_identity_gap=_env_float("FACE_RECHECK_LOW_IDENTITY_GAP", 0.04),
             similarity_margin=_env_float("FACE_RECHECK_SIMILARITY_MARGIN", 0.0),
             gallery_path=os.environ.get(
                 "FACE_RECHECK_GALLERY_PATH",
@@ -149,6 +157,8 @@ class DetectedFaceSummary:
     width: float
     height: float
     blur_score: float | None
+    border_margin_ratio: float | None
+    motion_blur_score: float | None
     frontal_score: float | None
     head_pitch: float | None
     quality_flags: list[str]
@@ -161,6 +171,8 @@ class DetectedFaceSummary:
             "width": round(self.width, 3),
             "height": round(self.height, 3),
             "blur_score": _rounded_or_none(self.blur_score),
+            "border_margin_ratio": _rounded_or_none(self.border_margin_ratio),
+            "motion_blur_score": _rounded_or_none(self.motion_blur_score),
             "frontal_score": _rounded_or_none(self.frontal_score),
             "head_pitch": _rounded_or_none(self.head_pitch),
             "quality_flags": list(self.quality_flags),
@@ -182,6 +194,10 @@ class FaceRecheckThresholds:
     camera_match_rescue_min_face_height: int
     known_extra_unknown_min_face_width: int
     known_extra_unknown_min_face_height: int
+    border_margin_ratio: float
+    motion_blur_threshold: float | None
+    low_identity_similarity: float
+    low_identity_gap: float
     similarity_margin: float
 
     def to_dict(self) -> dict[str, Any]:
@@ -199,6 +215,10 @@ class FaceRecheckThresholds:
             "camera_match_rescue_min_face_height": self.camera_match_rescue_min_face_height,
             "known_extra_unknown_min_face_width": self.known_extra_unknown_min_face_width,
             "known_extra_unknown_min_face_height": self.known_extra_unknown_min_face_height,
+            "border_margin_ratio": round(self.border_margin_ratio, 6),
+            "motion_blur_threshold": _rounded_or_none(self.motion_blur_threshold),
+            "low_identity_similarity": round(self.low_identity_similarity, 6),
+            "low_identity_gap": round(self.low_identity_gap, 6),
             "similarity_margin": round(self.similarity_margin, 6),
         }
 
@@ -534,6 +554,10 @@ def build_final_recognition_decision(
             if extra_unknown_reason:
                 suppressed.append(_suppressed_face(face, reason=extra_unknown_reason))
                 continue
+            low_quality_unknown_reason = _unknown_quality_suppression_reason(face)
+            if low_quality_unknown_reason:
+                suppressed.append(_suppressed_face(face, reason=low_quality_unknown_reason))
+                continue
             triggers.append(_stranger_trigger(face))
         else:
             suppressed.append(_suppressed_face(face))
@@ -617,8 +641,13 @@ def _analyze_image_faces(
             settings=cfg,
             multiple_faces=multiple_faces,
         )
-        status = _face_status(summary)
         gallery_match = _match_gallery(cfg, face, recheck_input.camera_person)
+        summary = _with_identity_quality_flags(
+            summary,
+            gallery_match=gallery_match,
+            settings=cfg,
+        )
+        status = _face_status(summary)
         reason = ",".join(summary.quality_flags) if summary.quality_flags else "quality_passed"
         results.append(
             FaceRecheckFaceResult(
@@ -792,6 +821,19 @@ def _known_event_extra_unknown_suppression_reason(
         or face.selected_face.height < thresholds.known_extra_unknown_min_face_height
     ):
         return "extra_unknown_too_small_for_known_event"
+    return None
+
+
+def _unknown_quality_suppression_reason(face: FaceRecheckFaceResult) -> str | None:
+    if face.selected_face is None or _gallery_accepted(face.gallery_match):
+        return None
+    flags = set(face.selected_face.quality_flags)
+    if "face_near_border" in flags:
+        return "low_quality_unknown:face_near_border"
+    if "motion_blur" in flags:
+        return "low_quality_unknown:motion_blur"
+    if "low_identity_confidence" in flags and flags.intersection({"face_near_border", "motion_blur"}):
+        return "low_quality_unknown:low_identity_confidence"
     return None
 
 
@@ -1058,6 +1100,12 @@ def _legacy_single_image_recheck(
             else "passed"
         )
         gallery_match = _match_gallery(cfg, selected_face, recheck_input.camera_person)
+        summary = _with_identity_quality_flags(
+            summary,
+            gallery_match=gallery_match,
+            settings=cfg,
+        )
+        status = _face_status(summary)
         reason = ",".join(summary.quality_flags) if summary.quality_flags else "quality_passed"
         return _result(
             cfg,
@@ -1200,6 +1248,8 @@ def _summarize_face(
     height = max(0.0, y2 - y1)
     det_score = float(getattr(face, "det_score", 0.0) or 0.0)
     blur_score = _blur_score(cv2, img, x1, y1, x2, y2)
+    border_margin_ratio = _border_margin_ratio(img, x1, y1, x2, y2)
+    motion_blur_score = _motion_blur_score(cv2, img, x1, y1, x2, y2)
     frontal_score = _frontal_score(face)
     head_pitch = _head_pitch(face)
     flags: list[str] = []
@@ -1211,6 +1261,14 @@ def _summarize_face(
         flags.append("face_too_small")
     if blur_score is not None and blur_score < settings.blur_threshold:
         flags.append("blurred")
+    if border_margin_ratio is not None and border_margin_ratio < settings.border_margin_ratio:
+        flags.append("face_near_border")
+    if (
+        settings.motion_blur_threshold is not None
+        and motion_blur_score is not None
+        and motion_blur_score < settings.motion_blur_threshold
+    ):
+        flags.append("motion_blur")
     if frontal_score is not None and frontal_score > settings.frontal_max_yaw_score:
         flags.append("side_face")
     if head_pitch is not None and head_pitch < settings.head_pitch_min:
@@ -1222,9 +1280,39 @@ def _summarize_face(
         width=width,
         height=height,
         blur_score=blur_score,
+        border_margin_ratio=border_margin_ratio,
+        motion_blur_score=motion_blur_score,
         frontal_score=frontal_score,
         head_pitch=head_pitch,
         quality_flags=flags,
+    )
+
+
+def _with_identity_quality_flags(
+    summary: DetectedFaceSummary,
+    *,
+    gallery_match: GalleryMatch | None,
+    settings: FaceRecheckSettings,
+) -> DetectedFaceSummary:
+    if _gallery_accepted(gallery_match) or gallery_match is None:
+        return summary
+    if not _low_identity_confidence(gallery_match, settings):
+        return summary
+    if "low_identity_confidence" in summary.quality_flags:
+        return summary
+    return replace(summary, quality_flags=[*summary.quality_flags, "low_identity_confidence"])
+
+
+def _low_identity_confidence(
+    match: GalleryMatch,
+    settings: FaceRecheckSettings,
+) -> bool:
+    if match.second_similarity is None:
+        return False
+    similarity_gap = match.similarity - match.second_similarity
+    return (
+        match.similarity < settings.low_identity_similarity
+        and similarity_gap < settings.low_identity_gap
     )
 
 
@@ -1236,6 +1324,46 @@ def _bbox(face: Any) -> tuple[float, float, float, float]:
 
 
 def _blur_score(cv2: Any, img: Any, x1: float, y1: float, x2: float, y2: float) -> float | None:
+    face_crop = _face_crop(img, x1, y1, x2, y2)
+    if face_crop is None:
+        return None
+    gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
+    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+
+def _border_margin_ratio(img: Any, x1: float, y1: float, x2: float, y2: float) -> float | None:
+    height, width = img.shape[:2]
+    if width <= 0 or height <= 0:
+        return None
+    return min(
+        x1 / width,
+        (width - x2) / width,
+        y1 / height,
+        (height - y2) / height,
+    )
+
+
+def _motion_blur_score(cv2: Any, img: Any, x1: float, y1: float, x2: float, y2: float) -> float | None:
+    face_crop = _face_crop(img, x1, y1, x2, y2)
+    if face_crop is None:
+        return None
+    gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
+    if gray.size <= 1:
+        return None
+    denoised = cv2.GaussianBlur(gray, (3, 3), 0)
+    grad_x = cv2.Sobel(denoised, cv2.CV_64F, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(denoised, cv2.CV_64F, 0, 1, ksize=3)
+    energy_x = float((grad_x * grad_x).mean())
+    energy_y = float((grad_y * grad_y).mean())
+    max_energy = max(energy_x, energy_y)
+    if max_energy <= 0:
+        return None
+    direction_balance = min(energy_x, energy_y) / max_energy
+    high_frequency = float(cv2.Laplacian(denoised, cv2.CV_64F).var())
+    return direction_balance * (high_frequency**0.5)
+
+
+def _face_crop(img: Any, x1: float, y1: float, x2: float, y2: float) -> Any | None:
     height, width = img.shape[:2]
     left = max(0, min(width, int(x1)))
     right = max(0, min(width, int(x2)))
@@ -1243,9 +1371,7 @@ def _blur_score(cv2: Any, img: Any, x1: float, y1: float, x2: float, y2: float) 
     bottom = max(0, min(height, int(y2)))
     if right <= left or bottom <= top:
         return None
-    face_crop = img[top:bottom, left:right]
-    gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
-    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    return img[top:bottom, left:right]
 
 
 def _frontal_score(face: Any) -> float | None:
@@ -1391,6 +1517,10 @@ def _thresholds(settings: FaceRecheckSettings) -> FaceRecheckThresholds:
         camera_match_rescue_min_face_height=settings.camera_match_rescue_min_face_height,
         known_extra_unknown_min_face_width=settings.known_extra_unknown_min_face_width,
         known_extra_unknown_min_face_height=settings.known_extra_unknown_min_face_height,
+        border_margin_ratio=settings.border_margin_ratio,
+        motion_blur_threshold=settings.motion_blur_threshold,
+        low_identity_similarity=settings.low_identity_similarity,
+        low_identity_gap=settings.low_identity_gap,
         similarity_margin=settings.similarity_margin,
     )
 
@@ -1457,6 +1587,19 @@ def _env_float(name: str, default: float) -> float:
         return float(raw.strip())
     except ValueError:
         return default
+
+
+def _env_optional_float(name: str) -> float | None:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        value = float(raw.strip())
+    except ValueError:
+        return None
+    if value <= 0:
+        return None
+    return value
 
 
 def _rounded_or_none(value: float | None) -> float | None:

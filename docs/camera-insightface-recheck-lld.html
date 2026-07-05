@@ -575,7 +575,7 @@
             <td><code>FACE_RECHECK_MOTION_BLUR_THRESHOLD</code></td>
             <td><code>待真实样本校准</code></td>
             <td><code>FaceQualityGate</code></td>
-            <td>运动模糊分数低于阈值时，标记 <code>motion_blur</code>。该指标与现有 Laplacian 虚焦模糊不同，目标是拦截移动拖影、夜间压缩噪声导致的身份不稳定。</td>
+            <td>运动模糊分数低于阈值时，标记 <code>motion_blur</code>。该指标与现有 Laplacian 虚焦模糊不同，目标是拦截移动拖影、夜间压缩噪声导致的身份不稳定。首版不配置强过滤阈值时只输出观测分数，不生成阻断性质量标记。</td>
           </tr>
           <tr>
             <td><code>FACE_RECHECK_LOW_IDENTITY_SIMILARITY</code></td>
@@ -1364,6 +1364,12 @@ for trigger in final_decision.primary_and_extra_triggers:
     <section class="panel">
       <h2>十补充、低质量未知降噪 LLD</h2>
       <p>本节只实现单帧质量降噪，不引入跨事件状态管理。目标是避免 1235 这类贴边、运动模糊、低身份置信度的人脸被直接当作确认陌生人，同时不降低清晰陌生人的召回。</p>
+      <h3>已确认默认项</h3>
+      <ul>
+        <li><code>face_near_border</code> 默认阈值为 <code>0.02</code>；该标记可以把未命中熟人的人脸降级为低质量未知。</li>
+        <li><code>motion_blur</code> 首版先观测，不配置强过滤阈值；回放样本足够后再决定是否启用阻断。</li>
+        <li>低质量未知不写入 <code>attendance_events</code>，不进入日报统计，不触发主飞书；只写原始事件、处理记录、<code>recognition_events</code> 和 <code>recognition_event_faces</code>。</li>
+      </ul>
       <h3>数据结构</h3>
       <ul>
         <li><code>FaceRecheckSettings</code> 新增 <code>border_margin_ratio</code>、<code>motion_blur_threshold</code>、<code>low_identity_similarity</code>、<code>low_identity_gap</code>。</li>

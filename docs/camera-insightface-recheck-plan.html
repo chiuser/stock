@@ -724,6 +724,12 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
         <li><strong>低质量未知：</strong>未高置信命中熟人，且存在贴边裁切或运动模糊；低身份置信度用于增强解释和辅助过滤，但不能单独作为所有陌生人过滤条件。</li>
         <li><strong>暂不实现：</strong>不启用 <code>unknown_face_too_small</code>，避免小脸线索被过早过滤；不做 3-5 秒短窗口聚合，避免引入状态管理复杂度。</li>
       </ul>
+      <h3>本轮确认决策</h3>
+      <ul>
+        <li><strong><code>face_near_border</code>：</strong>默认阈值采用 <code>0.02</code>，用于拦截贴边、半张脸、边缘裁切导致的低质量未知。</li>
+        <li><strong><code>motion_blur</code>：</strong>首版先进入观测模式，只记录运动模糊分数和 shadow 解释，不立即作为强过滤；等真实回放样本确认阈值后再启用拦截。</li>
+        <li><strong>低质量未知落库：</strong>不写入 <code>attendance_events</code>，不进入日报统计，不触发主飞书；只保留原始事件、处理记录和识别监控后台记录。</li>
+      </ul>
     </section>
 
     <section class="panel">
