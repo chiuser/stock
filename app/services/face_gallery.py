@@ -105,6 +105,7 @@ class FaceGalleryIndex:
         *,
         similarity_threshold: float,
         camera_match_similarity_threshold: float,
+        camera_match_gap_threshold: float,
         similarity_margin: float,
         camera_person: dict[str, Any] | None,
     ) -> GallerySearchResult | None:
@@ -124,39 +125,61 @@ class FaceGalleryIndex:
         order = np.argsort(similarities)[::-1]
         best_index = int(order[0])
         best_similarity = float(similarities[best_index])
-        second_similarity = (
-            float(similarities[int(order[1])]) if len(order) > 1 else None
-        )
-        record = self.records[best_index]
-        camera_identity_status = compare_camera_identity(record, camera_person)
+        ranked_items = [
+            (
+                rank,
+                int(index),
+                self.records[int(index)],
+                float(similarities[int(index)]),
+            )
+            for rank, index in enumerate(order[:_GALLERY_CANDIDATE_LIMIT], start=1)
+        ]
+        selected_index = best_index
+        selected_similarity = best_similarity
+        selected_record = self.records[selected_index]
+        camera_identity_status = compare_camera_identity(selected_record, camera_person)
+        camera_override = False
+        camera_item = _find_camera_matched_item(ranked_items, camera_person)
+        if (
+            camera_person is not None
+            and camera_identity_status == "identity_conflict"
+            and camera_item is not None
+            and camera_item[3] >= camera_match_similarity_threshold
+            and best_similarity - camera_item[3] <= camera_match_gap_threshold
+        ):
+            _, selected_index, selected_record, selected_similarity = camera_item
+            camera_identity_status = compare_camera_identity(selected_record, camera_person)
+            camera_override = True
         accepted_threshold = _accepted_threshold(
             similarity_threshold=similarity_threshold,
             camera_match_similarity_threshold=camera_match_similarity_threshold,
             camera_identity_status=camera_identity_status,
         )
+        second_similarity = _second_similarity(similarities, selected_index)
         margin_ok = (
-            second_similarity is None
-            or best_similarity - second_similarity >= similarity_margin
+            camera_override
+            or second_similarity is None
+            or selected_similarity - second_similarity >= similarity_margin
         )
-        accepted = best_similarity >= accepted_threshold and margin_ok
+        accepted = selected_similarity >= accepted_threshold and margin_ok
         candidates = [
             _candidate_from_record(
                 rank=rank,
-                record=self.records[int(index)],
-                similarity=float(similarities[int(index)]),
+                record=record,
+                similarity=similarity,
             )
-            for rank, index in enumerate(order[:_GALLERY_CANDIDATE_LIMIT], start=1)
+            for rank, _, record, similarity in ranked_items
         ]
         return GallerySearchResult(
-            person_id=str(record.get("person_id") or ""),
-            credential_no=str(record.get("credential_no") or record.get("person_id") or ""),
-            credential_type=str(record.get("credential_type") or ""),
-            name=str(record.get("name") or ""),
-            sex=str(record.get("sex") or ""),
-            person_type=_person_type(record.get("person_type")),
-            group_id=str(record.get("group_id") or ""),
-            group_name=str(record.get("group_name") or ""),
-            similarity=best_similarity,
+            person_id=str(selected_record.get("person_id") or ""),
+            credential_no=str(selected_record.get("credential_no") or selected_record.get("person_id") or ""),
+            credential_type=str(selected_record.get("credential_type") or ""),
+            name=str(selected_record.get("name") or ""),
+            sex=str(selected_record.get("sex") or ""),
+            person_type=_person_type(selected_record.get("person_type")),
+            group_id=str(selected_record.get("group_id") or ""),
+            group_name=str(selected_record.get("group_name") or ""),
+            similarity=selected_similarity,
             second_similarity=second_similarity,
             accepted=accepted,
             accepted_threshold=accepted_threshold,
@@ -278,6 +301,29 @@ def compare_camera_identity(
     if name_matched:
         return "name_matched"
     return "identity_conflict"
+
+
+def _find_camera_matched_item(
+    ranked_items: list[tuple[int, int, dict[str, Any], float]],
+    camera_person: dict[str, Any] | None,
+) -> tuple[int, int, dict[str, Any], float] | None:
+    if camera_person is None:
+        return None
+    for item in ranked_items:
+        if compare_camera_identity(item[2], camera_person) in _CAMERA_MATCHED_STATUSES:
+            return item
+    return None
+
+
+def _second_similarity(similarities: Any, selected_index: int) -> float | None:
+    np = _import_numpy()
+    values = np.asarray(similarities, dtype=np.float32).reshape(-1)
+    if values.size <= 1:
+        return None
+    masked = np.delete(values, selected_index)
+    if masked.size == 0:
+        return None
+    return float(np.max(masked))
 
 
 def _accepted_threshold(

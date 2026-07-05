@@ -48,6 +48,11 @@ class FaceRecheckSettings:
     frontal_max_yaw_score: float
     similarity_threshold: float
     camera_match_similarity_threshold: float
+    camera_match_gap_threshold: float
+    camera_match_rescue_min_face_width: int
+    camera_match_rescue_min_face_height: int
+    known_extra_unknown_min_face_width: int
+    known_extra_unknown_min_face_height: int
     similarity_margin: float
     gallery_path: str
     gallery_manifest_path: str
@@ -74,6 +79,30 @@ class FaceRecheckSettings:
             camera_match_similarity_threshold=_env_float(
                 "FACE_RECHECK_CAMERA_MATCH_SIMILARITY_THRESHOLD",
                 0.30,
+            ),
+            camera_match_gap_threshold=_env_float(
+                "FACE_RECHECK_CAMERA_MATCH_GAP_THRESHOLD",
+                0.03,
+            ),
+            camera_match_rescue_min_face_width=_env_int(
+                "FACE_RECHECK_CAMERA_MATCH_RESCUE_MIN_FACE_WIDTH",
+                40,
+                minimum=1,
+            ),
+            camera_match_rescue_min_face_height=_env_int(
+                "FACE_RECHECK_CAMERA_MATCH_RESCUE_MIN_FACE_HEIGHT",
+                50,
+                minimum=1,
+            ),
+            known_extra_unknown_min_face_width=_env_int(
+                "FACE_RECHECK_KNOWN_EXTRA_UNKNOWN_MIN_FACE_WIDTH",
+                80,
+                minimum=1,
+            ),
+            known_extra_unknown_min_face_height=_env_int(
+                "FACE_RECHECK_KNOWN_EXTRA_UNKNOWN_MIN_FACE_HEIGHT",
+                80,
+                minimum=1,
             ),
             similarity_margin=_env_float("FACE_RECHECK_SIMILARITY_MARGIN", 0.0),
             gallery_path=os.environ.get(
@@ -140,6 +169,11 @@ class FaceRecheckThresholds:
     frontal_max_yaw_score: float
     similarity_threshold: float
     camera_match_similarity_threshold: float
+    camera_match_gap_threshold: float
+    camera_match_rescue_min_face_width: int
+    camera_match_rescue_min_face_height: int
+    known_extra_unknown_min_face_width: int
+    known_extra_unknown_min_face_height: int
     similarity_margin: float
 
     def to_dict(self) -> dict[str, Any]:
@@ -151,6 +185,11 @@ class FaceRecheckThresholds:
             "frontal_max_yaw_score": round(self.frontal_max_yaw_score, 6),
             "similarity_threshold": round(self.similarity_threshold, 6),
             "camera_match_similarity_threshold": round(self.camera_match_similarity_threshold, 6),
+            "camera_match_gap_threshold": round(self.camera_match_gap_threshold, 6),
+            "camera_match_rescue_min_face_width": self.camera_match_rescue_min_face_width,
+            "camera_match_rescue_min_face_height": self.camera_match_rescue_min_face_height,
+            "known_extra_unknown_min_face_width": self.known_extra_unknown_min_face_width,
+            "known_extra_unknown_min_face_height": self.known_extra_unknown_min_face_height,
             "similarity_margin": round(self.similarity_margin, 6),
         }
 
@@ -466,13 +505,26 @@ def build_final_recognition_decision(
 
     triggers: list[FinalRecognitionTrigger] = []
     suppressed: list[SuppressedFaceDecision] = []
+    camera_target_available = _has_available_camera_target_face(
+        recheck_result,
+        camera_person,
+    )
     for face in recheck_result.faces:
-        if _face_unavailable(face):
+        if _face_unavailable(face, recheck_result, camera_person):
             suppressed.append(_suppressed_face(face))
             continue
         if _gallery_accepted(face.gallery_match):
             triggers.append(_known_trigger(face))
         elif face.selected_face is not None:
+            extra_unknown_reason = _known_event_extra_unknown_suppression_reason(
+                face,
+                camera_result=camera_result,
+                camera_target_available=camera_target_available,
+                thresholds=recheck_result.thresholds,
+            )
+            if extra_unknown_reason:
+                suppressed.append(_suppressed_face(face, reason=extra_unknown_reason))
+                continue
             triggers.append(_stranger_trigger(face))
         else:
             suppressed.append(_suppressed_face(face))
@@ -665,8 +717,73 @@ def _face_status(summary: DetectedFaceSummary) -> Literal["passed", "filtered"]:
     return "filtered" if any(flag in _BLOCKING_QUALITY_FLAGS for flag in summary.quality_flags) else "passed"
 
 
-def _face_unavailable(face: FaceRecheckFaceResult) -> bool:
-    return face.status != "passed" or face.selected_face is None
+def _face_unavailable(
+    face: FaceRecheckFaceResult,
+    recheck_result: FaceRecheckResult,
+    camera_person: dict[str, Any] | None,
+) -> bool:
+    if face.selected_face is None:
+        return True
+    if face.status == "passed":
+        return False
+    return not _camera_match_rescued(face, recheck_result.thresholds, camera_person)
+
+
+def _camera_match_rescued(
+    face: FaceRecheckFaceResult,
+    thresholds: FaceRecheckThresholds | None,
+    camera_person: dict[str, Any] | None,
+) -> bool:
+    if thresholds is None or camera_person is None:
+        return False
+    if face.image_source != "capture" or face.selected_face is None:
+        return False
+    if not _gallery_accepted(face.gallery_match) or not _gallery_identity_matched(face.gallery_match):
+        return False
+    flags = set(face.selected_face.quality_flags)
+    if "face_too_small" not in flags:
+        return False
+    if flags.intersection({"low_det_score", "blurred", "side_face"}):
+        return False
+    return (
+        face.selected_face.width >= thresholds.camera_match_rescue_min_face_width
+        and face.selected_face.height >= thresholds.camera_match_rescue_min_face_height
+    )
+
+
+def _has_available_camera_target_face(
+    recheck_result: FaceRecheckResult,
+    camera_person: dict[str, Any] | None,
+) -> bool:
+    if camera_person is None:
+        return False
+    return any(
+        _gallery_identity_matched(face.gallery_match)
+        and not _face_unavailable(face, recheck_result, camera_person)
+        for face in recheck_result.faces
+    )
+
+
+def _known_event_extra_unknown_suppression_reason(
+    face: FaceRecheckFaceResult,
+    *,
+    camera_result: str,
+    camera_target_available: bool,
+    thresholds: FaceRecheckThresholds | None,
+) -> str | None:
+    if (
+        camera_result != "known"
+        or not camera_target_available
+        or thresholds is None
+        or face.selected_face is None
+    ):
+        return None
+    if (
+        face.selected_face.width < thresholds.known_extra_unknown_min_face_width
+        or face.selected_face.height < thresholds.known_extra_unknown_min_face_height
+    ):
+        return "extra_unknown_too_small_for_known_event"
+    return None
 
 
 def _known_trigger(face: FaceRecheckFaceResult) -> FinalRecognitionTrigger:
@@ -698,13 +815,13 @@ def _stranger_trigger(face: FaceRecheckFaceResult) -> FinalRecognitionTrigger:
     )
 
 
-def _suppressed_face(face: FaceRecheckFaceResult) -> SuppressedFaceDecision:
+def _suppressed_face(face: FaceRecheckFaceResult, *, reason: str | None = None) -> SuppressedFaceDecision:
     flags = list(face.selected_face.quality_flags) if face.selected_face else []
     return SuppressedFaceDecision(
         face_key=face.face_key,
         image_source=face.image_source,
         face_index=face.face_index,
-        reason=face.reason or face.status,
+        reason=reason or face.reason or face.status,
         quality_flags=flags,
     )
 
@@ -1180,6 +1297,7 @@ def _match_gallery(
             embedding,
             similarity_threshold=settings.similarity_threshold,
             camera_match_similarity_threshold=settings.camera_match_similarity_threshold,
+            camera_match_gap_threshold=settings.camera_match_gap_threshold,
             similarity_margin=settings.similarity_margin,
             camera_person=camera_person,
         )
@@ -1244,6 +1362,11 @@ def _thresholds(settings: FaceRecheckSettings) -> FaceRecheckThresholds:
         frontal_max_yaw_score=settings.frontal_max_yaw_score,
         similarity_threshold=settings.similarity_threshold,
         camera_match_similarity_threshold=settings.camera_match_similarity_threshold,
+        camera_match_gap_threshold=settings.camera_match_gap_threshold,
+        camera_match_rescue_min_face_width=settings.camera_match_rescue_min_face_width,
+        camera_match_rescue_min_face_height=settings.camera_match_rescue_min_face_height,
+        known_extra_unknown_min_face_width=settings.known_extra_unknown_min_face_width,
+        known_extra_unknown_min_face_height=settings.known_extra_unknown_min_face_height,
         similarity_margin=settings.similarity_margin,
     )
 

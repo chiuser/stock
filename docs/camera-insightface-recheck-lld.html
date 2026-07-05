@@ -578,6 +578,36 @@
             <td>预留的候选领先分差阈值。当前按用户拍板不作为强约束；后续出现明显 badcase 时再调大并启用。</td>
           </tr>
           <tr>
+            <td><code>FACE_RECHECK_CAMERA_MATCH_GAP_THRESHOLD</code></td>
+            <td><code>0.03</code></td>
+            <td><code>FaceGalleryService</code></td>
+            <td>摄像头 known 场景下，Gallery Top5 中摄像头同人候选与 Top1 的最大允许分差。分差足够小且同人候选达到 <code>FACE_RECHECK_CAMERA_MATCH_SIMILARITY_THRESHOLD</code> 时，优先保留摄像头同人候选，避免极小分差误纠偏。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_CAMERA_MATCH_RESCUE_MIN_FACE_WIDTH</code></td>
+            <td><code>40</code></td>
+            <td><code>FinalRecognitionDecision</code></td>
+            <td>摄像头 known 的 Capture 目标脸救援最小宽度。只允许救援已匹配摄像头人员且仅因 <code>face_too_small</code> 被过滤的小图。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_CAMERA_MATCH_RESCUE_MIN_FACE_HEIGHT</code></td>
+            <td><code>50</code></td>
+            <td><code>FinalRecognitionDecision</code></td>
+            <td>摄像头 known 的 Capture 目标脸救援最小高度。侧脸、模糊、低检测分不得被救援。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_KNOWN_EXTRA_UNKNOWN_MIN_FACE_WIDTH</code></td>
+            <td><code>80</code></td>
+            <td><code>FinalRecognitionDecision</code></td>
+            <td>摄像头 known 且已找到摄像头目标脸时，额外未知脸触发陌生人通知所需的最小宽度。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_KNOWN_EXTRA_UNKNOWN_MIN_FACE_HEIGHT</code></td>
+            <td><code>80</code></td>
+            <td><code>FinalRecognitionDecision</code></td>
+            <td>摄像头 known 且已找到摄像头目标脸时，额外未知脸触发陌生人通知所需的最小高度。低于该门槛只记录为过滤原因，不触发主飞书。</td>
+          </tr>
+          <tr>
             <td><code>FACE_RECHECK_GALLERY_PATH</code></td>
             <td><code>/var/lib/camera-face-guard/face-gallery/gallery.npz</code></td>
             <td><code>FaceGalleryService</code></td>
@@ -1036,6 +1066,7 @@ def should_fallback_to_capture(result, capture_path, settings):
         <li>摄像头事件里如果返回姓名，则优先用 <code>name</code> 与 Gallery 命中姓名判断是否一致。</li>
         <li>摄像头事件里如果返回人员 ID 或证件号，则同时与 Gallery 的 <code>person_id</code> / <code>credential_no</code> 比对。</li>
         <li>当摄像头已识别为 known，且 Gallery Top1 与摄像头姓名或 ID 对齐时，accepted 相似度阈值使用 <code>FACE_RECHECK_CAMERA_MATCH_SIMILARITY_THRESHOLD</code>，当前用于 shadow 调参默认值为 <code>0.30</code>。</li>
+        <li>当摄像头已识别为 known，但 Gallery Top1 是另一个人时，如果 Top5 中存在摄像头同人候选，且同人候选分数达到同人阈值、与 Top1 分差不超过 <code>FACE_RECHECK_CAMERA_MATCH_GAP_THRESHOLD</code>，则返回摄像头同人候选作为本次 <code>GalleryMatch</code>。候选列表仍保留原 Top5，便于 shadow 和监控后台解释。</li>
         <li>姓名一致但 ID 缺失时，shadow 消息标记为 <code>name_matched</code>；姓名或 ID 冲突时标记为 <code>identity_conflict</code>。进入 <code>verify_and_override</code> 后，冲突不再只记录，而是以高置信 Gallery 命中结果纠偏。</li>
         <li>目录角色决定 Gallery 身份类型：会员、员工、教练；不从文件名或摄像头返回字段反推角色。</li>
       </ul>

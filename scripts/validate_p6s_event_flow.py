@@ -374,6 +374,7 @@ def validate_face_gallery_matching() -> None:
         np.array([1.0, 0.0], dtype=np.float32),
         similarity_threshold=0.5,
         camera_match_similarity_threshold=0.3,
+        camera_match_gap_threshold=0.03,
         similarity_margin=0.03,
         camera_person={"name": "小明", "person_id": "3427976339944670"},
     )
@@ -388,6 +389,7 @@ def validate_face_gallery_matching() -> None:
         np.array([1.0, 0.0], dtype=np.float32),
         similarity_threshold=0.5,
         camera_match_similarity_threshold=0.3,
+        camera_match_gap_threshold=0.03,
         similarity_margin=0.03,
         camera_person={"name": "其他人", "person_id": "000"},
     )
@@ -398,6 +400,7 @@ def validate_face_gallery_matching() -> None:
         np.array([0.51, 0.49], dtype=np.float32),
         similarity_threshold=0.8,
         camera_match_similarity_threshold=0.3,
+        camera_match_gap_threshold=0.03,
         similarity_margin=0.03,
         camera_person=None,
     )
@@ -414,6 +417,7 @@ def validate_face_gallery_matching() -> None:
         np.array([0.31, 0.10, 0.9454626], dtype=np.float32),
         similarity_threshold=0.35,
         camera_match_similarity_threshold=0.30,
+        camera_match_gap_threshold=0.03,
         similarity_margin=0.0,
         camera_person={"name": "小明", "person_id": "3427976339944670"},
     )
@@ -426,6 +430,7 @@ def validate_face_gallery_matching() -> None:
         np.array([0.31, 0.10, 0.9454626], dtype=np.float32),
         similarity_threshold=0.35,
         camera_match_similarity_threshold=0.30,
+        camera_match_gap_threshold=0.03,
         similarity_margin=0.0,
         camera_person={"name": "其他人", "person_id": "000"},
     )
@@ -433,6 +438,20 @@ def validate_face_gallery_matching() -> None:
     assert low_conflict.camera_identity_status == "identity_conflict"
     assert low_conflict.accepted is False
     assert low_conflict.accepted_threshold == 0.35
+
+    near_tie_camera_match = index.match(
+        np.array([0.49, 0.51], dtype=np.float32),
+        similarity_threshold=0.35,
+        camera_match_similarity_threshold=0.30,
+        camera_match_gap_threshold=0.03,
+        similarity_margin=0.0,
+        camera_person={"name": "小明", "person_id": "3427976339944670"},
+    )
+    assert near_tie_camera_match is not None
+    assert near_tie_camera_match.name == "小明"
+    assert near_tie_camera_match.camera_identity_status == "name_and_id_matched"
+    assert near_tie_camera_match.accepted is True
+    assert near_tie_camera_match.candidates[0].name == "苏苏"
 
 
 def validate_face_recheck_fallback_order() -> None:
@@ -533,6 +552,11 @@ def _fallback_settings() -> face_recheck.FaceRecheckSettings:
         frontal_max_yaw_score=0.35,
         similarity_threshold=0.35,
         camera_match_similarity_threshold=0.30,
+        camera_match_gap_threshold=0.03,
+        camera_match_rescue_min_face_width=40,
+        camera_match_rescue_min_face_height=50,
+        known_extra_unknown_min_face_width=80,
+        known_extra_unknown_min_face_height=80,
         similarity_margin=0.0,
         gallery_path="/tmp/gallery.npz",
         gallery_manifest_path="/tmp/gallery_manifest.json",
@@ -730,6 +754,51 @@ async def validate_final_decision_flow(request_meta: RequestMeta) -> None:
     assert record["final_recognition_decision"]["primary_trigger"]["name"] == "苏苏"
     assert record["final_recognition_decision"]["primary_trigger"]["person_type"] == "member"
 
+    capture_small_camera_match = _known_face(
+        name="小明",
+        person_id="3427976339944670",
+        person_type="staff",
+        group_id="4dcafc2c9fbd4d1fa267ccbf145c8861",
+        group_name="员工",
+        camera_identity_status="name_and_id_matched",
+        image_source="capture",
+        status="filtered",
+        quality_flags=["face_too_small"],
+        width=43.0,
+        height=55.0,
+        similarity=0.318,
+    )
+    handled, record = await run_case(
+        known_payload,
+        _result_for_faces([
+            _unknown_face(face_index=1, width=96.0, height=66.0),
+            capture_small_camera_match,
+        ]),
+    )
+    assert handled.result == "known"
+    assert record["final_recognition_decision"]["primary_trigger"]["name"] == "小明"
+    assert record["final_recognition_decision"]["primary_trigger"]["face_key"] == "capture:0"
+    assert record["final_recognition_decision"]["suppressed_faces"][0]["reason"] == "extra_unknown_too_small_for_known_event"
+
+    side_capture_camera_match = _known_face(
+        name="小明",
+        person_id="3427976339944670",
+        person_type="staff",
+        group_id="4dcafc2c9fbd4d1fa267ccbf145c8861",
+        group_name="员工",
+        camera_identity_status="name_and_id_matched",
+        image_source="capture",
+        status="filtered",
+        quality_flags=["face_too_small", "side_face"],
+        width=43.0,
+        height=55.0,
+        similarity=0.318,
+    )
+    handled, record = await run_case(known_payload, _result_for_faces([side_capture_camera_match]))
+    assert handled.result == "filtered"
+    assert record["final_recognition_decision"]["action"] == "suppress"
+    assert "side_face" in record["final_recognition_decision"]["suppressed_faces"][0]["reason"]
+
     handled, record = await run_case(stranger_payload, same_person)
     assert handled.result == "known"
     assert record["result"] == "known"
@@ -859,6 +928,11 @@ def _mock_recheck_result() -> face_recheck.FaceRecheckResult:
             frontal_max_yaw_score=0.35,
             similarity_threshold=0.5,
             camera_match_similarity_threshold=0.3,
+            camera_match_gap_threshold=0.03,
+            camera_match_rescue_min_face_width=40,
+            camera_match_rescue_min_face_height=50,
+            known_extra_unknown_min_face_width=80,
+            known_extra_unknown_min_face_height=80,
             similarity_margin=0.03,
         ),
         faces=[
@@ -928,8 +1002,18 @@ def _known_face(
     camera_identity_status: str,
     face_index: int = 0,
     similarity: float = 0.91,
+    image_source: str = "background",
+    status: str = "passed",
+    quality_flags: list[str] | None = None,
+    width: float = 100.0,
+    height: float = 120.0,
 ) -> face_recheck.FaceRecheckFaceResult:
-    selected_face = _detected_face(face_index)
+    selected_face = _detected_face(
+        face_index,
+        quality_flags=quality_flags,
+        width=width,
+        height=height,
+    )
     gallery_match = face_recheck.GalleryMatch(
         person_id=person_id,
         credential_no=person_id,
@@ -960,22 +1044,27 @@ def _known_face(
         ],
     )
     return face_recheck.FaceRecheckFaceResult(
-        image_source="background",
+        image_source=image_source,  # type: ignore[arg-type]
         face_index=face_index,
-        face_key=f"background:{face_index}",
+        face_key=f"{image_source}:{face_index}",
         selected_face=selected_face,
-        status="passed",
-        reason="quality_passed",
+        status=status,  # type: ignore[arg-type]
+        reason=",".join(selected_face.quality_flags) if selected_face.quality_flags else "quality_passed",
         gallery_match=gallery_match,
     )
 
 
-def _unknown_face(*, face_index: int) -> face_recheck.FaceRecheckFaceResult:
+def _unknown_face(
+    *,
+    face_index: int,
+    width: float = 100.0,
+    height: float = 120.0,
+) -> face_recheck.FaceRecheckFaceResult:
     return face_recheck.FaceRecheckFaceResult(
         image_source="background",
         face_index=face_index,
         face_key=f"background:{face_index}",
-        selected_face=_detected_face(face_index),
+        selected_face=_detected_face(face_index, width=width, height=height),
         status="passed",
         reason="quality_passed",
         gallery_match=None,
@@ -998,13 +1087,17 @@ def _detected_face(
     face_index: int,
     *,
     quality_flags: list[str] | None = None,
+    width: float = 100.0,
+    height: float = 120.0,
 ) -> face_recheck.DetectedFaceSummary:
+    x1 = 1.0 + (face_index * 20.0)
+    y1 = 2.0
     return face_recheck.DetectedFaceSummary(
         index=face_index,
-        bbox=(1.0 + (face_index * 20.0), 2.0, 101.0 + (face_index * 20.0), 122.0),
+        bbox=(x1, y1, x1 + width, y1 + height),
         det_score=0.91,
-        width=100.0,
-        height=120.0,
+        width=width,
+        height=height,
         blur_score=132.4,
         frontal_score=0.12,
         quality_flags=quality_flags or [],

@@ -492,6 +492,9 @@ def analyze_image_faces(image_path, image_source):
       <ul>
         <li>多人脸事件逐脸触发：多个有效未知脸按未知人脸数量触发陌生人通知。</li>
         <li>摄像头 known 与 InsightFace 高置信命中其他熟人冲突时，后续 <code>verify_and_override</code> 以 InsightFace 为准。</li>
+        <li>但当摄像头 known 的同人候选已经出现在 Gallery Top5，且与 Top1 分差极小，应优先保留摄像头同人候选，避免近似并列候选误纠偏成其他熟人。</li>
+        <li>摄像头 known 的 Capture 图如果命中摄像头同人，只能在仅有 <code>face_too_small</code> 且满足救援尺寸时放行；<code>side_face</code>、<code>blurred</code>、<code>low_det_score</code> 仍然必须过滤。</li>
+        <li>摄像头 known 且已确认目标脸时，其他未命中 Gallery 的额外未知脸需要满足更严格的额外陌生脸尺寸门槛，否则只记录 <code>suppress_reason=extra_unknown_too_small_for_known_event</code>。</li>
         <li>同一事件中同一熟人跨 <code>background</code> / <code>capture</code> 重复出现时，按 <code>person_type + person_id</code> 去重。</li>
         <li>最终确认必须发生在主链路写 <code>attendance_events</code> 和发送主飞书之前；监控表只负责记录和展示，不反向驱动主流程。</li>
       </ul>
