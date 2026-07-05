@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,7 +18,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.services import face_gallery, face_recheck, feishu, image_links, p6s_events, recognition_monitor
-from app.services.event_store import RequestMeta
+from app.services.event_store import EventIdentity, RequestMeta
 
 FIXTURE_DIR = PROJECT_ROOT / "tests" / "fixtures"
 
@@ -203,6 +204,7 @@ async def validate() -> None:
 
         validate_feishu_payloads()
         validate_face_gallery_matching()
+        validate_face_recheck_fallback_order()
         await validate_face_recheck_shadow_flow(request_meta)
         validate_recognition_monitor_backfill(root)
         validate_recognition_monitor_api_helpers(root, known_monitor_row)
@@ -383,6 +385,182 @@ def validate_face_gallery_matching() -> None:
     assert low_confidence is not None
     assert low_confidence.accepted is False
     assert low_confidence.camera_identity_status == "camera_unknown"
+
+
+def validate_face_recheck_fallback_order() -> None:
+    settings = _fallback_settings()
+    background_path = Path("/tmp/p6s-background.jpg")
+    capture_path = Path("/tmp/p6s-capture.jpg")
+    recheck_input = _fallback_input(background_path, capture_path)
+
+    attempts = face_recheck._image_attempts(recheck_input)  # noqa: SLF001
+    assert attempts == [(background_path, "background"), (capture_path, "capture")]
+
+    background_no_face = _fallback_result(
+        reason="no_face",
+        image_source="background",
+        face_count=0,
+    )
+    capture_passed = _fallback_result(
+        reason="quality_passed",
+        image_source="capture",
+        face_count=1,
+        similarity=0.51,
+        status="passed",
+    )
+    with patch.object(
+        face_recheck,
+        "_run_single_image_recheck",
+        side_effect=[background_no_face, capture_passed],
+    ) as run_single:
+        result = face_recheck.run_face_recheck(recheck_input, settings=settings)
+    assert result.image_source == "capture"
+    assert run_single.call_count == 2
+    assert run_single.call_args_list[0].kwargs["image_source"] == "background"
+    assert run_single.call_args_list[1].kwargs["image_source"] == "capture"
+
+    background_low_similarity = _fallback_result(
+        reason="quality_passed",
+        image_source="background",
+        face_count=1,
+        similarity=0.34,
+        status="passed",
+    )
+    with patch.object(
+        face_recheck,
+        "_run_single_image_recheck",
+        side_effect=[background_low_similarity, capture_passed],
+    ) as run_single:
+        result = face_recheck.run_face_recheck(recheck_input, settings=settings)
+    assert result.image_source == "capture"
+    assert run_single.call_count == 2
+
+    background_ok_similarity = _fallback_result(
+        reason="quality_passed",
+        image_source="background",
+        face_count=1,
+        similarity=0.35,
+        status="passed",
+    )
+    with patch.object(
+        face_recheck,
+        "_run_single_image_recheck",
+        return_value=background_ok_similarity,
+    ) as run_single:
+        result = face_recheck.run_face_recheck(recheck_input, settings=settings)
+    assert result.image_source == "background"
+    assert run_single.call_count == 1
+
+    background_multi_face = _fallback_result(
+        reason="multiple_faces",
+        image_source="background",
+        face_count=2,
+        similarity=0.20,
+        status="filtered",
+    )
+    with patch.object(
+        face_recheck,
+        "_run_single_image_recheck",
+        return_value=background_multi_face,
+    ) as run_single:
+        result = face_recheck.run_face_recheck(recheck_input, settings=settings)
+    assert result.image_source == "background"
+    assert run_single.call_count == 1
+
+
+def _fallback_settings() -> face_recheck.FaceRecheckSettings:
+    return face_recheck.FaceRecheckSettings(
+        enabled=True,
+        mode=face_recheck.FaceRecheckMode.SHADOW,
+        model_name="buffalo_l",
+        model_root="/tmp/insightface",
+        provider="CPUExecutionProvider",
+        det_score_threshold=0.55,
+        min_face_width=45,
+        min_face_height=60,
+        blur_threshold=80.0,
+        frontal_max_yaw_score=0.35,
+        similarity_threshold=0.35,
+        similarity_margin=0.0,
+        gallery_path="/tmp/gallery.npz",
+        gallery_manifest_path="/tmp/gallery_manifest.json",
+        fail_open=True,
+        timeout_seconds=3,
+    )
+
+
+def _fallback_input(
+    background_path: Path,
+    capture_path: Path | None,
+) -> face_recheck.FaceRecheckInput:
+    return face_recheck.FaceRecheckInput(
+        identity=EventIdentity(
+            dedupe_key="fallback-fixture",
+            operator="FaceReco",
+            serial_number="SN-FIXTURE-001",
+            event_id="fallback-fixture",
+            picture_md5="",
+            event_time="2026-07-05 08:12:14",
+            event_time_compact="20260705081214",
+            received_at=datetime(2026, 7, 5, 8, 12, 14),
+            event_day="2026-07-05",
+        ),
+        route_result="known",
+        camera_person={"name": "菊", "person_id": "fixture-person"},
+        primary_image_path=capture_path,
+        background_image_path=background_path,
+        capture_image_path=capture_path,
+        background_view_url=None,
+        capture_view_url=None,
+    )
+
+
+def _fallback_result(
+    *,
+    reason: str,
+    image_source: str,
+    face_count: int,
+    similarity: float | None = None,
+    status: str = "filtered",
+) -> face_recheck.FaceRecheckResult:
+    return face_recheck.FaceRecheckResult(
+        enabled=True,
+        mode="shadow",
+        status=status,  # type: ignore[arg-type]
+        decision="allow_original",
+        reason=reason,
+        image_source=image_source,  # type: ignore[arg-type]
+        face_count=face_count,
+        selected_face=None,
+        gallery_match=_fallback_gallery_match(similarity) if similarity is not None else None,
+        elapsed_ms=1,
+        thresholds=face_recheck.FaceRecheckThresholds(
+            det_score_threshold=0.55,
+            min_face_width=45,
+            min_face_height=60,
+            blur_threshold=80.0,
+            frontal_max_yaw_score=0.35,
+            similarity_threshold=0.35,
+            similarity_margin=0.0,
+        ),
+    )
+
+
+def _fallback_gallery_match(similarity: float) -> face_recheck.GalleryMatch:
+    return face_recheck.GalleryMatch(
+        person_id="fixture-person",
+        credential_no="fixture-person",
+        credential_type="2",
+        name="菊",
+        sex="0",
+        person_type="member",
+        group_id="c1e42a1f2531467bae464da8a79dad53",
+        group_name="会员",
+        similarity=similarity,
+        second_similarity=None,
+        accepted=similarity >= 0.35,
+        camera_identity_status="name_matched",
+    )
 
 
 async def validate_face_recheck_shadow_flow(request_meta: RequestMeta) -> None:

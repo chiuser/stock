@@ -326,7 +326,7 @@
         <div class="card">
           <h3>目标</h3>
           <ul>
-            <li>对每条 <code>FaceReco</code> 事件保存后的 <code>BackgroundImage</code> 做人脸检测，判断是否真的有人脸。</li>
+            <li>对每条 <code>FaceReco</code> 事件保存后的 <code>BackgroundImage</code> 做人脸检测，判断是否真的有人脸；当背景图无人脸，或单人脸 Gallery 相似度低于阈值时，再用 <code>CaptureImage</code> 做 fallback 复核。</li>
             <li>过滤侧脸、过小人脸、模糊图、低置信度检测等噪音事件。</li>
             <li>可选启用二次人脸比对，用服务器侧人脸特征库纠正摄像头把已知人员识别成陌生人的情况。</li>
             <li>保留当前双图飞书链接、入场记录、日报和去重逻辑的主流程，只在其前面增加一层可开关的二次判断。</li>
@@ -368,7 +368,7 @@
           <div class="num">3</div>
           <div>
             <strong>新增 InsightFace 二次判断层</strong>
-            <p class="small">建议插入在图片保存之后、写入 <code>attendance_events</code> 和发送飞书之前。主输入使用 <code>BackgroundImage</code>，<code>CaptureImage</code> 只作为展示和辅助。</p>
+            <p class="small">建议插入在图片保存之后、写入 <code>attendance_events</code> 和发送飞书之前。主输入使用 <code>BackgroundImage</code>；仅当背景图 <code>no_face</code>，或背景图只检测到 1 张脸但 Gallery 相似度低于 <code>FACE_RECHECK_SIMILARITY_THRESHOLD</code> 时，才 fallback 使用 <code>CaptureImage</code>。</p>
           </div>
         </div>
         <div class="flow-step">
@@ -593,15 +593,15 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
         <tbody>
           <tr>
             <td>无人脸</td>
-            <td>InsightFace 对 <code>BackgroundImage</code> 检测不到人脸。</td>
+            <td>InsightFace 对 <code>BackgroundImage</code> 检测不到人脸；若存在 <code>CaptureImage</code>，先 fallback 复核人脸小图。</td>
             <td>过滤</td>
             <td>说明摄像头事件图片中没有可用人脸，不应触发入场提醒。</td>
           </tr>
           <tr>
             <td>低置信度</td>
             <td>最高人脸检测分数低于阈值。</td>
-            <td><code>0.65</code> 起步，shadow 后校准</td>
-            <td>分数越高越保守，误报少但漏报可能增加。</td>
+            <td><code>0.55</code> 起步，shadow 后继续校准</td>
+            <td>分数越高越保守，误报少但漏报可能增加。线上事件 713 的背景小脸检测分约 <code>0.579</code>，因此 <code>0.65</code> 会造成误过滤。</td>
           </tr>
           <tr>
             <td>人脸过小</td>
@@ -702,8 +702,8 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
           </tr>
           <tr>
             <td><code>FACE_RECHECK_DET_SCORE</code></td>
-            <td><code>0.65</code></td>
-            <td>最低检测置信度。先 shadow 收集样本再调整。</td>
+            <td><code>0.55</code></td>
+            <td>最低检测置信度。基于线上小脸样本先降到 <code>0.55</code>，后续继续用 shadow 样本校准。</td>
           </tr>
           <tr>
             <td><code>FACE_RECHECK_MIN_FACE_WIDTH</code></td>
@@ -745,7 +745,7 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
       <ol>
         <li>在本地虚拟环境安装 <code>insightface==1.0.1</code>、<code>onnxruntime</code>、<code>opencv-python-headless</code>、<code>numpy</code>。</li>
         <li>使用已解压的本地模型目录 <code>/Users/congming/.insightface/models/buffalo_l</code>。本地代码可以使用默认 <code>root="~/.insightface"</code>，也可以显式配置 <code>INSIGHTFACE_MODEL_ROOT=/Users/congming/.insightface</code>。</li>
-        <li>选取真实事件中保存的 <code>BackgroundImage</code> 样本，跑检测、模糊度、正脸判断和耗时统计。</li>
+        <li>选取真实事件中保存的 <code>BackgroundImage</code> 样本，跑检测、模糊度、正脸判断和耗时统计；同时验证背景图失败或低相似度时的 <code>CaptureImage</code> fallback 行为。</li>
         <li>先生成 shadow 报告，不接入生产飞书。</li>
       </ol>
       <h3>远程部署</h3>

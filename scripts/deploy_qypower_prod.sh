@@ -76,6 +76,8 @@ PY_FILES=(
   app/routers/attendance.py
   app/services/p6s_events.py
   app/services/attendance.py
+  app/services/face_gallery.py
+  app/services/face_recheck.py
   app/services/feishu.py
   app/services/recognition_monitor.py
   app/services/reports.py
@@ -198,6 +200,8 @@ if [[ "$SKIP_REMOTE_CHECK" -eq 0 ]]; then
     app/routers/camera.py \
     app/routers/recognition_monitor.py \
     app/services/attendance.py \
+    app/services/face_gallery.py \
+    app/services/face_recheck.py \
     app/services/p6s_events.py \
     app/services/feishu.py \
     app/services/recognition_monitor.py \

@@ -521,9 +521,9 @@
           </tr>
           <tr>
             <td><code>FACE_RECHECK_DET_SCORE</code></td>
-            <td><code>0.65</code></td>
+            <td><code>0.55</code></td>
             <td><code>app.prepare(det_thresh=...)</code> 和质量门控</td>
-            <td>最低人脸检测置信度。</td>
+            <td>最低人脸检测置信度。线上事件 713 证明背景图小脸检测分约 <code>0.579</code>，原 <code>0.65</code> 会误报 <code>no_face</code>，因此降到 <code>0.55</code>。</td>
           </tr>
           <tr>
             <td><code>FACE_RECHECK_MIN_FACE_WIDTH</code></td>
@@ -741,7 +741,7 @@ def get_face_analysis(settings: FaceRecheckSettings) -> FaceAnalysis:
           </tr>
           <tr>
             <td>输入图片</td>
-            <td>优先 <code>background_image_path</code>；不存在时回退 <code>capture_image_path</code>；均不存在则返回 skipped。</td>
+            <td>先跑 <code>BackgroundImage</code>。如果背景图返回 <code>no_face</code>，或只检测到 1 张脸但 Gallery 相似度低于 <code>FACE_RECHECK_SIMILARITY_THRESHOLD</code>，并且存在 <code>CaptureImage</code>，则 fallback 跑 <code>CaptureImage</code>。如果背景图检测到多张脸，不自动 fallback，避免把全图多人场景误收敛到摄像头裁剪小图。</td>
           </tr>
           <tr>
             <td>读取方式</td>
@@ -751,15 +751,21 @@ def get_face_analysis(settings: FaceRecheckSettings) -> FaceAnalysis:
       </table>
       <h3>检测流程</h3>
       <pre><code>def analyze_image(input: FaceRecheckInput, settings: FaceRecheckSettings) -> FaceRecheckResult:
-    img = read_image(primary_path)
-    faces = app.get(img)
-    if not faces:
-        return filtered_or_shadow("no_face")
+    background = analyze_single_image(input.background_image_path)
+    if should_fallback_to_capture(background, input.capture_image_path, settings):
+        return analyze_single_image(input.capture_image_path)
+    return background
 
-    selected = select_face(faces, img_shape)
-    quality = evaluate_quality(selected, img)
-    match = gallery.match(selected.normed_embedding) if gallery_enabled else None
-    return decide(input, quality, match, settings)</code></pre>
+def should_fallback_to_capture(result, capture_path, settings):
+    if capture_path is None:
+        return False
+    reasons = set(result.reason.split(","))
+    if "no_face" in reasons:
+        return True
+    if result.face_count == 1 and result.gallery_match:
+        return result.gallery_match.similarity &lt; settings.similarity_threshold
+    return False</code></pre>
+      <p class="small">fallback 只改变 InsightFace recheck 选择的图片，不改变主飞书、attendance、摄像头原始结果或双图保存链路。处理记录中的 <code>image_source</code> 会显示最终使用的是 <code>background</code> 还是 <code>capture</code>。</p>
     </section>
 
     <section class="panel">
@@ -1252,6 +1258,7 @@ FACE_RECHECK_MODE=shadow
 INSIGHTFACE_MODEL_NAME=buffalo_l
 INSIGHTFACE_MODEL_ROOT=/var/lib/camera-face-guard/insightface
 INSIGHTFACE_PROVIDER=CPUExecutionProvider
+FACE_RECHECK_DET_SCORE=0.55
 FACE_RECHECK_SHADOW_FEISHU_WEBHOOK_URL=&lt;真实值&gt;
 FACE_RECHECK_SHADOW_FEISHU_WEBHOOK_SECRET=&lt;真实值&gt;</code></pre>
       <h3>上线顺序</h3>

@@ -61,7 +61,7 @@ class FaceRecheckSettings:
             or "~/.insightface",
             provider=os.environ.get("INSIGHTFACE_PROVIDER", "CPUExecutionProvider").strip()
             or "CPUExecutionProvider",
-            det_score_threshold=_env_float("FACE_RECHECK_DET_SCORE", 0.65),
+            det_score_threshold=_env_float("FACE_RECHECK_DET_SCORE", 0.55),
             min_face_width=_env_int("FACE_RECHECK_MIN_FACE_WIDTH", 80, minimum=1),
             min_face_height=_env_int("FACE_RECHECK_MIN_FACE_HEIGHT", 80, minimum=1),
             blur_threshold=_env_float("FACE_RECHECK_BLUR_THRESHOLD", 80.0),
@@ -258,11 +258,12 @@ def run_face_recheck(
     if cfg.mode == FaceRecheckMode.OFF:
         return _skipped(cfg, "mode_off", started)
 
-    image_path, image_source = _select_image_path(recheck_input)
     inactive_mode_reason = ""
     if cfg.mode.value not in _MILESTONE_ACTIVE_MODES:
         inactive_mode_reason = "mode_not_active_in_milestone_1_3"
 
+    attempts = _image_attempts(recheck_input)
+    image_path, image_source = attempts[0] if attempts else (None, "none")
     if image_path is None:
         return FaceRecheckResult(
             enabled=True,
@@ -277,6 +278,37 @@ def run_face_recheck(
             elapsed_ms=_elapsed_ms(started),
             thresholds=_thresholds(cfg),
         )
+
+    result = _run_single_image_recheck(
+        cfg,
+        recheck_input,
+        image_path=Path(image_path),
+        image_source=image_source,
+        inactive_mode_reason=inactive_mode_reason,
+        started=started,
+    )
+    if _should_fallback_to_capture(result, recheck_input, cfg):
+        capture_path = Path(recheck_input.capture_image_path)  # type: ignore[arg-type]
+        return _run_single_image_recheck(
+            cfg,
+            recheck_input,
+            image_path=capture_path,
+            image_source="capture",
+            inactive_mode_reason=inactive_mode_reason,
+            started=started,
+        )
+    return result
+
+
+def _run_single_image_recheck(
+    cfg: FaceRecheckSettings,
+    recheck_input: FaceRecheckInput,
+    *,
+    image_path: Path,
+    image_source: Literal["background", "capture"],
+    inactive_mode_reason: str,
+    started: float,
+) -> FaceRecheckResult:
     if not image_path.exists():
         return FaceRecheckResult(
             enabled=True,
@@ -292,7 +324,6 @@ def run_face_recheck(
             error_type="FileNotFoundError",
             thresholds=_thresholds(cfg),
         )
-
     try:
         cv2, np, app = _runtime(cfg)
         img = _read_image(cv2, np, image_path)
@@ -415,17 +446,37 @@ def _read_image(cv2: Any, np: Any, path: Path) -> Any:
     return img
 
 
-def _select_image_path(
+def _image_attempts(
     recheck_input: FaceRecheckInput,
-) -> tuple[Path | None, Literal["background", "capture", "none"]]:
+) -> list[tuple[Path, Literal["background", "capture"]]]:
+    attempts: list[tuple[Path, Literal["background", "capture"]]] = []
+    seen_paths: set[Path] = set()
     for path, source in (
         (recheck_input.background_image_path, "background"),
         (recheck_input.capture_image_path, "capture"),
         (recheck_input.primary_image_path, "capture"),
     ):
         if path:
-            return Path(path), source  # type: ignore[return-value]
-    return None, "none"
+            normalized_path = Path(path)
+            if normalized_path not in seen_paths:
+                attempts.append((normalized_path, source))  # type: ignore[arg-type]
+                seen_paths.add(normalized_path)
+    return attempts
+
+
+def _should_fallback_to_capture(
+    result: FaceRecheckResult,
+    recheck_input: FaceRecheckInput,
+    settings: FaceRecheckSettings,
+) -> bool:
+    if result.image_source != "background" or recheck_input.capture_image_path is None:
+        return False
+    reasons = {reason.strip() for reason in result.reason.split(",") if reason.strip()}
+    if "no_face" in reasons:
+        return True
+    if result.face_count != 1 or result.gallery_match is None:
+        return False
+    return result.gallery_match.similarity < settings.similarity_threshold
 
 
 def _select_face(faces: list[Any]) -> tuple[int, Any]:
