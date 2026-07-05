@@ -294,11 +294,11 @@ async function loadDashboard(opts = {}) {
 }
 
 function setLoading() {
-  els["events-body"].innerHTML = '<tr><td colspan="6" class="monitor-empty">正在加载...</td></tr>';
+  els["events-body"].innerHTML = '<tr><td colspan="7" class="monitor-empty">正在加载...</td></tr>';
 }
 
 function renderError(message) {
-  els["events-body"].innerHTML = `<tr><td colspan="6" class="monitor-empty monitor-error">${html(message)}</td></tr>`;
+  els["events-body"].innerHTML = `<tr><td colspan="7" class="monitor-empty monitor-error">${html(message)}</td></tr>`;
 }
 
 function renderSummary(summary) {
@@ -404,7 +404,7 @@ function renderEvents(payload) {
   els["btn-next-page"].disabled = state.page >= maxPage;
 
   if (!state.currentItems.length) {
-    els["events-body"].innerHTML = '<tr><td colspan="6" class="monitor-empty">没有符合条件的识别记录</td></tr>';
+    els["events-body"].innerHTML = '<tr><td colspan="7" class="monitor-empty">没有符合条件的识别记录</td></tr>';
     return;
   }
 
@@ -435,6 +435,9 @@ function renderEventRow(item) {
             <small>${html(text(item.device_sn, "未知设备"))}</small>
           </div>
         </div>
+      </td>
+      <td>
+        <strong>${html(text(item.event_id))}</strong>
       </td>
       <td>
         <strong>${html(label(cameraResultLabels, camera.result))}</strong>

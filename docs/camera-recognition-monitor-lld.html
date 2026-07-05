@@ -610,6 +610,12 @@ class RecognitionEvent:
     }
   ]
 }</code></pre>
+      <h3>列表页字段展示</h3>
+      <ul>
+        <li>识别记录表必须单独展示 <code>event_id</code> 列，列名为“事件 ID”，用于和飞书消息、摄像头事件号互相定位。</li>
+        <li><code>event_id</code> 已由 <code>row_to_event()</code> 从 <code>camera_event_id</code> 映射到 API DTO，不需要新增数据库字段或迁移。</li>
+        <li>若历史记录缺少事件 ID，前端显示 <code>—</code>，不影响详情打开和筛选逻辑。</li>
+      </ul>
       <h3>图片接口安全</h3>
       <div class="note">
         <p><strong>说人话：</strong>浏览器不能直接拿服务器磁盘路径去看图，也不应该拿一个公开裸链接。管理员打开页面后，前端带着登录 token 请求我们的后端；后端确认你是管理员，再去磁盘上读取那张图片，并把图片内容返回给浏览器。前端收到的是一段临时图片数据 blob，只在当前页面里展示，不暴露服务器真实路径，也不需要额外生成公开 token。</p>
