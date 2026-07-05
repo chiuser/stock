@@ -71,16 +71,21 @@ PY_FILES=(
   app/db/__init__.py
   app/db/attendance_repo.py
   app/db/config.py
+  app/db/recognition_repo.py
   app/db/session.py
   app/routers/attendance.py
   app/services/p6s_events.py
   app/services/attendance.py
   app/services/feishu.py
+  app/services/recognition_monitor.py
   app/services/reports.py
   app/services/report_scheduler.py
   app/main.py
   app/routers/camera.py
+  app/routers/recognition_monitor.py
+  alembic/versions/20260705_0003_create_recognition_events.py
   scripts/cleanup_p6s_event_store.py
+  scripts/backfill_recognition_events.py
   scripts/generate_attendance_report.py
   scripts/import_attendance_people.py
   scripts/validate_attendance_flow.py
@@ -187,16 +192,21 @@ if [[ "$SKIP_REMOTE_CHECK" -eq 0 ]]; then
     app/db/__init__.py \
     app/db/attendance_repo.py \
     app/db/config.py \
+    app/db/recognition_repo.py \
     app/db/session.py \
     app/routers/attendance.py \
     app/routers/camera.py \
+    app/routers/recognition_monitor.py \
     app/services/attendance.py \
     app/services/p6s_events.py \
     app/services/feishu.py \
+    app/services/recognition_monitor.py \
     app/services/reports.py \
     app/services/report_scheduler.py \
     app/main.py \
+    alembic/versions/20260705_0003_create_recognition_events.py \
     scripts/cleanup_p6s_event_store.py \
+    scripts/backfill_recognition_events.py \
     scripts/generate_attendance_report.py \
     scripts/import_attendance_people.py \
     scripts/validate_attendance_flow.py \
@@ -207,7 +217,7 @@ else
 fi
 
 DATABASE_URL="$(
-  .venv/bin/python - <<'PY'
+  sudo python3 - <<'PY'
 from pathlib import Path
 
 env_path = Path("/etc/camera-face-guard/app.env")
@@ -255,6 +265,7 @@ if [[ "$SKIP_REMOTE_CHECK" -eq 0 ]]; then
   }
   wait_for_http /api/docs docs
   wait_for_http /camera camera
+  wait_for_http /recognition-monitor recognition_monitor
   grep -RIn '会员入场提醒\|教练入场提醒\|员工入场提醒\|发现陌生人入场' app/services scripts | head -20
 fi
 REMOTE_EOF

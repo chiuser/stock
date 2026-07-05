@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>识别监控 - Camera Face Guard</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="admin-body monitor-body">
+
+  <nav class="nav-bar">
+    <div class="nav-left">
+      <a class="nav-link" href="/camera">摄像头</a>
+      <a class="nav-link nav-active" href="/recognition-monitor">识别监控</a>
+    </div>
+    <div class="nav-right">
+      <span class="nav-username" id="nav-username"></span>
+      <button class="nav-logout" id="nav-logout">退出登录</button>
+    </div>
+  </nav>
+
+  <div class="admin-header monitor-header">
+    <div class="admin-header-left">
+      <h2>识别监控</h2>
+      <span class="admin-date" id="monitor-summary-text">等待加载识别记录</span>
+    </div>
+    <div class="admin-header-right monitor-header-actions">
+      <span class="monitor-auto-refresh" id="monitor-refresh-state">10 秒自动刷新</span>
+      <button class="admin-btn admin-btn-ghost" id="btn-refresh">刷新</button>
+    </div>
+  </div>
+
+  <main class="monitor-shell">
+    <section class="monitor-summary-grid" id="summary-grid">
+      <article class="monitor-stat-card">
+        <span>总入场记录</span>
+        <strong id="stat-total">—</strong>
+        <small>当天全部 FaceReco</small>
+      </article>
+      <article class="monitor-stat-card monitor-stat-warn">
+        <span>疑似识错</span>
+        <strong id="stat-conflict">—</strong>
+        <small>摄像头与模型不一致</small>
+      </article>
+      <article class="monitor-stat-card monitor-stat-info">
+        <span>摄像头漏识别</span>
+        <strong id="stat-missed">—</strong>
+        <small>摄像头陌生，模型命中</small>
+      </article>
+      <article class="monitor-stat-card monitor-stat-success">
+        <span>同人确认</span>
+        <strong id="stat-same">—</strong>
+        <small>摄像头与模型一致</small>
+      </article>
+      <article class="monitor-stat-card">
+        <span>模型过滤</span>
+        <strong id="stat-filtered">—</strong>
+        <small>侧脸、模糊、无人脸等</small>
+      </article>
+      <article class="monitor-stat-card">
+        <span>未检测到人脸</span>
+        <strong id="stat-no-face">—</strong>
+        <small>需要关注抓拍质量</small>
+      </article>
+    </section>
+
+    <section class="monitor-panel monitor-filters">
+      <div class="monitor-filter-grid">
+        <label>
+          日期
+          <input type="date" class="config-input" id="filter-date">
+        </label>
+        <label>
+          判断结果
+          <select class="config-input" id="filter-classification">
+            <option value="">全部</option>
+            <option value="same_person">同人确认</option>
+            <option value="camera_missed_but_gallery_hit">摄像头漏识别</option>
+            <option value="camera_hit_but_recheck_filtered">摄像头命中但模型过滤</option>
+            <option value="identity_conflict">疑似识错</option>
+            <option value="both_unknown_or_filtered">未知或已过滤</option>
+          </select>
+        </label>
+        <label>
+          摄像头结果
+          <select class="config-input" id="filter-camera-result">
+            <option value="">全部</option>
+            <option value="known">已匹配</option>
+            <option value="stranger">陌生人</option>
+            <option value="unknown">未知</option>
+          </select>
+        </label>
+        <label>
+          复核状态
+          <select class="config-input" id="filter-recheck-status">
+            <option value="">全部</option>
+            <option value="passed">通过</option>
+            <option value="filtered">已过滤</option>
+            <option value="error">异常</option>
+            <option value="not_rechecked">未复核</option>
+          </select>
+        </label>
+        <label>
+          过滤原因
+          <input type="text" class="config-input" id="filter-reason" placeholder="例如 no_face / blurred">
+        </label>
+        <label>
+          人员搜索
+          <input type="search" class="config-input" id="filter-person" placeholder="姓名或 ID">
+        </label>
+        <label>
+          Gallery 命中
+          <select class="config-input" id="filter-accepted">
+            <option value="">全部</option>
+            <option value="true">命中</option>
+            <option value="false">未命中</option>
+          </select>
+        </label>
+      </div>
+      <div class="monitor-filter-actions">
+        <button class="admin-btn admin-btn-primary" id="btn-apply-filters">应用筛选</button>
+        <button class="admin-btn admin-btn-ghost" id="btn-reset-filters">重置</button>
+      </div>
+    </section>
+
+    <section class="monitor-panel monitor-quality-panel">
+      <div class="monitor-list-head">
+        <div>
+          <h3>质量观察</h3>
+          <p id="quality-desc">按最近几天观察摄像头和 InsightFace 的差异趋势</p>
+        </div>
+        <div class="monitor-page-size">
+          <span>范围</span>
+          <select class="config-input" id="quality-days">
+            <option value="3">最近 3 天</option>
+            <option value="7" selected>最近 7 天</option>
+            <option value="14">最近 14 天</option>
+          </select>
+        </div>
+      </div>
+      <div class="monitor-quality-grid">
+        <article class="monitor-quality-card">
+          <span>疑似识错率</span>
+          <strong id="quality-conflict-rate">—</strong>
+          <button class="monitor-link-btn" data-quality-filter="identity_conflict" type="button">查看样例</button>
+        </article>
+        <article class="monitor-quality-card">
+          <span>摄像头漏识别率</span>
+          <strong id="quality-missed-rate">—</strong>
+          <button class="monitor-link-btn" data-quality-filter="camera_missed_but_gallery_hit" type="button">查看样例</button>
+        </article>
+        <article class="monitor-quality-card">
+          <span>模型过滤率</span>
+          <strong id="quality-filtered-rate">—</strong>
+          <button class="monitor-link-btn" data-quality-filter="camera_hit_but_recheck_filtered" type="button">查看样例</button>
+        </article>
+      </div>
+      <div class="monitor-quality-body">
+        <div>
+          <h4>每日趋势</h4>
+          <div class="monitor-trend-list" id="quality-trends"></div>
+        </div>
+        <div>
+          <h4>过滤原因</h4>
+          <div class="monitor-reason-list" id="quality-reasons"></div>
+        </div>
+        <div>
+          <h4>典型问题</h4>
+          <div class="monitor-example-list" id="quality-examples"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="monitor-panel monitor-list-panel">
+      <div class="monitor-list-head">
+        <div>
+          <h3>识别记录</h3>
+          <p id="monitor-list-desc">—</p>
+        </div>
+        <div class="monitor-page-size">
+          <span>每页</span>
+          <select class="config-input" id="page-size">
+            <option value="15">15</option>
+            <option value="30" selected>30</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="monitor-table-wrap">
+        <table class="monitor-table">
+          <thead>
+            <tr>
+              <th>时间与画面</th>
+              <th>摄像头结果</th>
+              <th>InsightFace 复核</th>
+              <th>Gallery 命中</th>
+              <th>判断</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="events-body">
+            <tr>
+              <td colspan="6" class="monitor-empty">正在加载...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="monitor-pagination">
+        <button class="admin-btn admin-btn-ghost" id="btn-prev-page">上一页</button>
+        <span id="page-state">第 1 页</span>
+        <button class="admin-btn admin-btn-ghost" id="btn-next-page">下一页</button>
+      </div>
+    </section>
+  </main>
+
+  <div class="monitor-modal" id="event-modal" aria-hidden="true">
+    <div class="monitor-modal-backdrop" id="modal-backdrop"></div>
+    <section class="monitor-modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <button class="monitor-modal-close" id="modal-close" aria-label="关闭详情">×</button>
+      <div class="monitor-modal-head">
+        <div>
+          <span class="monitor-label" id="modal-classification">—</span>
+          <h3 id="modal-title">识别详情</h3>
+          <p id="modal-subtitle">—</p>
+        </div>
+      </div>
+      <div class="monitor-image-compare">
+        <figure>
+          <div class="monitor-image-frame monitor-image-large">
+            <img id="modal-background-img" alt="背景全图">
+            <span id="modal-background-placeholder">背景图不可用</span>
+          </div>
+          <figcaption>背景全图</figcaption>
+        </figure>
+        <figure>
+          <div class="monitor-image-frame">
+            <img id="modal-capture-img" alt="摄像头人脸图">
+            <span id="modal-capture-placeholder">人脸图不可用</span>
+          </div>
+          <figcaption>摄像头人脸图</figcaption>
+        </figure>
+        <figure>
+          <div class="monitor-image-frame">
+            <img id="modal-crop-img" alt="InsightFace 裁剪图">
+            <span id="modal-crop-placeholder">裁剪图不可用</span>
+          </div>
+          <figcaption>InsightFace 裁剪图</figcaption>
+        </figure>
+      </div>
+      <div class="monitor-detail-grid">
+        <section>
+          <h4>摄像头识别</h4>
+          <div class="monitor-kv" id="modal-camera-kv"></div>
+        </section>
+        <section>
+          <h4>InsightFace 复核</h4>
+          <div class="monitor-kv" id="modal-recheck-kv"></div>
+        </section>
+        <section>
+          <h4>Gallery 结果</h4>
+          <div class="monitor-kv" id="modal-gallery-kv"></div>
+        </section>
+        <section>
+          <h4>Top 5 候选</h4>
+          <div class="monitor-candidates" id="modal-candidates"></div>
+        </section>
+      </div>
+      <section class="monitor-safe-json">
+        <h4>阈值与质量摘要</h4>
+        <pre id="modal-safe-json">—</pre>
+      </section>
+    </section>
+  </div>
+
+  <div class="toast-wrap" id="toast-wrap"></div>
+
+  <script src="/static/recognition-monitor.js"></script>
+</body>
+</html>

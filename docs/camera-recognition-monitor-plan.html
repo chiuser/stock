@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>P6S 摄像头识别监控后台技术方案</title>
+  <style>
+    :root {
+      --paper: #f7f1e8;
+      --paper-2: #fffaf1;
+      --ink: #23251f;
+      --muted: #6d7167;
+      --line: #ded3c1;
+      --green: #236b54;
+      --green-bg: #e4f2ea;
+      --yellow: #9a6815;
+      --yellow-bg: #fff1c8;
+      --orange: #a14d24;
+      --orange-bg: #fbe1cf;
+      --red: #9f2f2f;
+      --red-bg: #f7d5d2;
+      --blue: #355f8d;
+      --blue-bg: #ddebf7;
+      --shadow: 0 22px 70px rgba(40, 35, 25, .14);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: ui-serif, "Songti SC", "Noto Serif CJK SC", Georgia, serif;
+      background:
+        radial-gradient(circle at 12% 10%, rgba(35, 107, 84, .16), transparent 28rem),
+        radial-gradient(circle at 88% 12%, rgba(154, 104, 21, .18), transparent 26rem),
+        linear-gradient(135deg, #f2eadf 0%, #f9f1e5 46%, #eee4d6 100%);
+    }
+    main {
+      width: min(1160px, calc(100% - 40px));
+      margin: 36px auto 56px;
+    }
+    header {
+      padding: 36px;
+      border: 1px solid rgba(222, 211, 193, .9);
+      border-radius: 28px;
+      background: rgba(255, 250, 241, .82);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+    }
+    h1, h2, h3 { margin: 0; line-height: 1.18; }
+    h1 {
+      font-size: clamp(32px, 5vw, 60px);
+      letter-spacing: -.04em;
+    }
+    h2 {
+      font-size: 25px;
+      margin-bottom: 18px;
+      letter-spacing: -.02em;
+    }
+    h3 {
+      font-size: 18px;
+      margin-bottom: 10px;
+    }
+    p {
+      color: var(--muted);
+      line-height: 1.78;
+      margin: 12px 0 0;
+    }
+    code {
+      padding: 2px 6px;
+      border-radius: 7px;
+      background: rgba(35, 37, 31, .07);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .92em;
+    }
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 18px;
+      color: var(--green);
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      font-size: 12px;
+    }
+    .lead {
+      max-width: 920px;
+      color: #4d5149;
+      font-size: 18px;
+    }
+    .panel {
+      margin-top: 22px;
+      padding: 28px;
+      border: 1px solid rgba(222, 211, 193, .9);
+      border-radius: 24px;
+      background: rgba(255, 250, 241, .76);
+      box-shadow: 0 14px 44px rgba(40, 35, 25, .08);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card {
+      padding: 18px;
+      border-radius: 18px;
+      border: 1px solid rgba(222, 211, 193, .8);
+      background: rgba(255, 255, 255, .52);
+    }
+    .tag {
+      display: inline-flex;
+      margin: 0 8px 8px 0;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .green { color: var(--green); background: var(--green-bg); }
+    .yellow { color: var(--yellow); background: var(--yellow-bg); }
+    .orange { color: var(--orange); background: var(--orange-bg); }
+    .red { color: var(--red); background: var(--red-bg); }
+    .blue { color: var(--blue); background: var(--blue-bg); }
+    ul, ol { margin: 10px 0 0; padding-left: 22px; color: var(--muted); line-height: 1.78; }
+    li { margin: 5px 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .52);
+    }
+    th, td {
+      padding: 13px 14px;
+      border-bottom: 1px solid rgba(222, 211, 193, .72);
+      vertical-align: top;
+      text-align: left;
+      line-height: 1.6;
+    }
+    th {
+      color: #3e433c;
+      background: rgba(35, 107, 84, .08);
+      white-space: nowrap;
+    }
+    tr:last-child td { border-bottom: 0; }
+    .mock {
+      display: grid;
+      grid-template-columns: 1.1fr .9fr;
+      gap: 18px;
+      align-items: stretch;
+    }
+    .mock-screen {
+      min-height: 360px;
+      padding: 18px;
+      border-radius: 22px;
+      background: #1f2723;
+      color: #f5efe4;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08);
+    }
+    .mock-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .mock-pill {
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, .12);
+      font-size: 12px;
+    }
+    .event-card {
+      display: grid;
+      grid-template-columns: 118px 1fr;
+      gap: 12px;
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .08);
+    }
+    .thumb {
+      border-radius: 12px;
+      background:
+        linear-gradient(135deg, rgba(255,255,255,.16), rgba(255,255,255,.04)),
+        repeating-linear-gradient(45deg, rgba(255,255,255,.12) 0 8px, transparent 8px 16px);
+    }
+    .small {
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .mock-screen .small { color: rgba(245, 239, 228, .68); }
+    @media (max-width: 860px) {
+      main { width: min(100% - 24px, 1160px); margin-top: 18px; }
+      header, .panel { padding: 22px; border-radius: 20px; }
+      .grid, .grid.three, .mock { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="kicker">Recognition Monitor · Plan</div>
+      <h1>P6S 摄像头识别监控后台</h1>
+      <p class="lead">
+        本方案把当前“一次性离线回放报告”升级为长期可用的识别质量监控后台。后台用于持续查看 P6S 摄像头原始识别、InsightFace + Gallery 二次识别、过滤原因、候选集分数和图片证据，帮助快速判断“谁识别对了、谁识别错了、哪些事件应该被过滤”。
+      </p>
+    </header>
+
+    <section class="panel">
+      <h2>一、目标与边界</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>核心目标</h3>
+          <ul>
+            <li>提供一个网页页面，实时查看摄像头事件与 InsightFace 复核结果。</li>
+            <li>每条记录同时展示摄像头判断、InsightFace 判断、Gallery Top 候选、分数和过滤原因。</li>
+            <li>支持按识别一致、摄像头漏识别、疑似错误、低质量过滤、陌生人、人员姓名、日期等维度筛选。</li>
+            <li>能直接查看背景全图、人脸小图和模型选中人脸区域，方便人工判断识别是否靠谱。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>本期不做</h3>
+          <ul>
+            <li>不修改摄像头配置、不修改人脸库、不改变 P6S 事件推送方式。</li>
+            <li>不启用 <code>filter</code> 或 <code>verify_and_override</code> 的业务干预。</li>
+            <li>不替代主飞书通知和日报，只作为识别质量监控页面，不做人工复核写入。</li>
+            <li>不把 embedding、密钥、webhook、图片 base64 暴露到前端或报告。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>二、现有能力与推荐路线</h2>
+      <p>
+        当前服务已经保存了每条 <code>FaceReco</code> 的处理记录，记录里包含 <code>matched_person</code>、<code>images.background</code>、<code>images.capture</code>、<code>links</code> 和 <code>face_recheck</code>。但监控后台是长期产品能力，V1 直接建立 PostgreSQL 识别监控索引表，并用回填脚本把历史 JSON 写入数据库，避免后续再做二次迁移。
+      </p>
+      <div class="grid three">
+        <div class="card">
+          <span class="tag green">V1 推荐</span>
+          <h3>PostgreSQL 索引表</h3>
+          <p>事件处理时把安全摘要写入 <code>recognition_events</code>；历史记录通过 backfill 脚本从 <code>records/YYYY-MM-DD/*.json</code> 补写。查询、筛选、分页都走数据库。</p>
+        </div>
+        <div class="card">
+          <span class="tag blue">增强</span>
+          <h3>实时轮询</h3>
+          <p>前端每 10 秒请求最新事件。因为 P6S 推送频率不高，轮询足够稳定，不需要首版引入 WebSocket。</p>
+        </div>
+        <div class="card">
+          <span class="tag yellow">V1 展示</span>
+          <h3>三图对比</h3>
+          <p>页面同时展示背景全图缩略图、摄像头 CaptureImage 和 InsightFace 基于背景图 bbox 裁剪出的人脸图，帮助快速判断谁识别得对。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>三、页面设计</h2>
+      <div class="mock">
+        <div class="mock-screen">
+          <div class="mock-toolbar">
+            <span class="mock-pill">今日 38 条</span>
+            <span class="mock-pill">疑似错误 0</span>
+            <span class="mock-pill">摄像头漏识别 4</span>
+            <span class="mock-pill">小脸过滤 13</span>
+          </div>
+          <div class="event-card">
+            <div class="thumb"></div>
+            <div>
+              <strong>黄色 · 摄像头陌生人，InsightFace 命中</strong>
+              <p class="small">摄像头：陌生人 · InsightFace：石峰 / 会员 · 0.604801 · accepted</p>
+              <p class="small">原因：quality_passed · 事件：2026-07-04 21:10:52 · 查看背景图 / 人脸图</p>
+            </div>
+          </div>
+          <div class="event-card">
+            <div class="thumb"></div>
+            <div>
+              <strong>绿色 · 两边识别一致</strong>
+              <p class="small">摄像头：刘彩玲 / 员工 · InsightFace：刘彩玲 / 员工 · 0.540570</p>
+              <p class="small">原因：face_too_small · 需要人工确认是否保留过滤阈值</p>
+            </div>
+          </div>
+          <div class="event-card">
+            <div class="thumb"></div>
+            <div>
+              <strong>橙色 · 摄像头已识别但模型过滤</strong>
+              <p class="small">摄像头：erik · InsightFace：no_face · 过滤原因：no_face</p>
+            </div>
+          </div>
+        </div>
+        <div>
+          <h3>信息层级</h3>
+          <ul>
+            <li>顶部用数字卡片回答“今天总体是否正常”。</li>
+            <li>中间用颜色分类帮助一眼判断优先级。</li>
+            <li>事件卡片直接放图片、摄像头结果、InsightFace 结果和核心分数。</li>
+            <li>详情弹层展示 Gallery Top 5、阈值、bbox、原始记录摘要和图片链接。</li>
+          </ul>
+          <h3>颜色定义</h3>
+          <p>
+            <span class="tag red">红色：accepted 且身份冲突</span>
+            <span class="tag yellow">黄色：摄像头陌生人但模型命中</span>
+            <span class="tag orange">橙色：摄像头已识别但模型过滤</span>
+            <span class="tag green">绿色：双方同人确认</span>
+            <span class="tag blue">蓝色：双方未知或低质量过滤</span>
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>四、后台接口设计</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>接口</th>
+            <th>用途</th>
+            <th>关键参数</th>
+            <th>返回重点</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>GET /recognition-monitor</code></td>
+            <td>识别监控后台页面。</td>
+            <td>依赖管理员登录态。</td>
+            <td>已登录返回静态 HTML 页面；未登录进入登录页或由前端跳转登录页。</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/recognition-monitor/summary</code></td>
+            <td>顶部统计卡片和分类数量。</td>
+            <td><code>date</code></td>
+            <td>总数、摄像头已识别、陌生人、模型 accepted、疑似冲突、各过滤原因数量。</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/recognition-monitor/events</code></td>
+            <td>分页事件列表。</td>
+            <td><code>date</code>、<code>classification</code>、<code>person</code>、<code>reason</code>、<code>page</code>、<code>page_size</code></td>
+            <td>事件时间、摄像头结果、InsightFace 结果、分类、分数、图片链接摘要。</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/recognition-monitor/events/{event_id}</code></td>
+            <td>事件详情弹层。</td>
+            <td><code>event_id</code> 或记录 <code>dedupe_key</code></td>
+            <td>完整 recheck、Gallery Top 5、阈值、质量 flags、原始记录安全摘要。</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/p6s/event-images/view/{token}</code></td>
+            <td>复用现有 token 图片查看接口。</td>
+            <td><code>token</code></td>
+            <td>背景全图、人脸图；不新增裸路径访问。</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small">如果历史记录缺少图片 token，接口可基于已有 <code>relative_path</code> 生成短期只读 token；生成 token 只用于查看图片，不改变识别业务结果。</p>
+    </section>
+
+    <section class="panel">
+      <h2>五、分类规则</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>分类</th>
+            <th>判断条件</th>
+            <th>页面含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="tag green">same_person</span></td>
+            <td>摄像头识别为已知人，InsightFace accepted，姓名或 ID 对齐。</td>
+            <td>基本可信，可抽样复核。</td>
+          </tr>
+          <tr>
+            <td><span class="tag yellow">camera_missed_but_gallery_hit</span></td>
+            <td>摄像头识别为陌生人，InsightFace accepted 某个 Gallery 人员。</td>
+            <td>重点查看，通常代表摄像头漏识别或角度问题。</td>
+          </tr>
+          <tr>
+            <td><span class="tag orange">camera_hit_but_recheck_filtered</span></td>
+            <td>摄像头识别为已知人，但 InsightFace 结果 filtered 或 no_face。</td>
+            <td>用于判断是否应在 filter 阶段拦截低质量事件。</td>
+          </tr>
+          <tr>
+            <td><span class="tag red">identity_conflict</span></td>
+            <td>InsightFace accepted 且与摄像头已知人员身份不一致。</td>
+            <td>最高优先级，疑似误识别或 Gallery 数据问题。</td>
+          </tr>
+          <tr>
+            <td><span class="tag blue">both_unknown_or_filtered</span></td>
+            <td>摄像头陌生人且 InsightFace 未 accepted，或双方都没有可靠身份。</td>
+            <td>通常是陌生人、侧脸、小脸、多人或无脸噪音。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>六、数据流</h2>
+      <ol>
+        <li>P6S 摄像头推送 <code>FaceReco</code> 事件到服务器。</li>
+        <li>现有事件处理保存 raw、processing record、背景图、人脸图和 token 链接；已拍板监控后台展示图片时改走管理员鉴权图片代理 + 前端 fetch blob。</li>
+        <li>现有 InsightFace shadow 链路生成 <code>face_recheck</code> 结果。</li>
+        <li>InsightFace 检测到人脸时，使用背景图和 bbox 生成服务器侧人脸裁剪图，用于和摄像头 CaptureImage 对比。</li>
+        <li>事件处理完成后，将摄像头结果、InsightFace 结果、图片相对路径和分类摘要 upsert 到 <code>recognition_events</code>。</li>
+        <li>监控后台 API 查询 PostgreSQL 表，完成筛选、排序、分页和统计。</li>
+        <li>前端页面轮询 summary 和 events 接口，并通过管理员鉴权图片代理 + 前端 fetch blob 查看图片。</li>
+      </ol>
+      <p class="small">
+        对于老记录中缺失 <code>face_recheck</code> 的情况，回填脚本写入 <code>not_rechecked</code> 状态；是否补跑离线 recheck 由单独脚本完成，不在页面请求中临时跑模型，避免接口变慢。
+      </p>
+    </section>
+
+    <section class="panel">
+      <h2>七、实现分阶段</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Milestone 1：只读监控页面</h3>
+          <ul>
+            <li>新增 <code>recognition_events</code> 表、回填脚本、监控页面和只读 API。</li>
+            <li>实时事件处理时 upsert 识别监控摘要，页面查询数据库展示颜色分类、筛选、图片缩略图和详情弹层。</li>
+            <li>页面展示所有 <code>FaceReco</code>：缺图或未复核显示占位状态，不从列表中隐藏。</li>
+            <li>前端每 10 秒自动刷新，不引入 WebSocket。</li>
+            <li>背景图先显示缩略图，点击后弹窗展示大图；弹窗同时展示摄像头 CaptureImage 和 InsightFace 裁剪图。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Milestone 2：识别质量分析</h3>
+          <ul>
+            <li>基于 <code>recognition_events</code> 统计按天趋势、过滤原因和摄像头/InsightFace 差异。</li>
+            <li>增加阈值调参观察视图，但不在本期做人工复核写入。</li>
+            <li>需要导出时只导出安全摘要，不导出图片正文或 embedding。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Milestone 3：效果看板</h3>
+          <ul>
+            <li>按天统计摄像头漏识别、模型过滤、冲突、同人确认趋势。</li>
+            <li>提供阈值调参参考，例如小脸过滤后仍 accepted 的比例。</li>
+            <li>为后续启用 <code>filter</code> 提供数据依据。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Milestone 4：索引与性能</h3>
+          <ul>
+            <li>根据查询量补充复合索引、归档策略或按日汇总表。</li>
+            <li>避免接口直接扫描文件系统。</li>
+            <li>保留原始 JSON 作为审计来源。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>八、风险与验证</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>风险控制</h3>
+          <ul>
+            <li>页面和 API 必须走管理员登录鉴权。</li>
+            <li>监控后台需要登录页面：优先复用现有登录页和 JWT；如果当前服务没有可用登录页，本需求内补一个最小管理员登录页。</li>
+            <li>不得返回 webhook、secret、Owner、摄像头密码、embedding、图片 base64。</li>
+            <li>默认只读取已有记录，不在请求链路中跑重模型。</li>
+            <li>已拍板图片通过管理员鉴权代理 + 前端 fetch blob 读取，不暴露服务器真实文件路径给普通页面。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>验收方式</h3>
+          <ul>
+            <li>打开页面能看到当天事件总览和颜色分类数量。</li>
+            <li>能筛选出 <code>camera_missed_but_gallery_hit</code> 的 4 条历史样本。</li>
+            <li>能查看每条记录的背景全图、人脸图、摄像头结果和 InsightFace Top 5。</li>
+            <li>页面刷新后新事件自动出现在列表中，且不影响主飞书和入场记录。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

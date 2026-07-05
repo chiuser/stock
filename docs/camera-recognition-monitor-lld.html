@@ -1,0 +1,1142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>P6S 摄像头识别监控后台 LLD</title>
+  <style>
+    :root {
+      --paper: #f6efe4;
+      --panel: rgba(255, 250, 241, .82);
+      --ink: #24261f;
+      --muted: #686d63;
+      --line: #ded2be;
+      --green: #246a52;
+      --green-bg: #e2f2e8;
+      --yellow: #9b6919;
+      --yellow-bg: #fff0c9;
+      --orange: #a34f25;
+      --orange-bg: #fbe1ce;
+      --red: #a03333;
+      --red-bg: #f7d5d2;
+      --blue: #345f8e;
+      --blue-bg: #dcebf8;
+      --shadow: 0 24px 72px rgba(44, 38, 28, .13);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: ui-serif, "Songti SC", "Noto Serif CJK SC", Georgia, serif;
+      background:
+        radial-gradient(circle at 8% 8%, rgba(36, 106, 82, .18), transparent 26rem),
+        radial-gradient(circle at 86% 10%, rgba(155, 105, 25, .16), transparent 28rem),
+        linear-gradient(135deg, #f0e8dc 0%, #fbf2e7 52%, #eee0cf 100%);
+    }
+    main {
+      width: min(1180px, calc(100% - 40px));
+      margin: 34px auto 56px;
+    }
+    header, .panel {
+      border: 1px solid rgba(222, 210, 190, .92);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+    }
+    header {
+      padding: 38px;
+      border-radius: 30px;
+    }
+    .panel {
+      margin-top: 22px;
+      padding: 28px;
+      border-radius: 24px;
+      box-shadow: 0 14px 44px rgba(44, 38, 28, .08);
+    }
+    h1, h2, h3 { margin: 0; line-height: 1.18; }
+    h1 {
+      max-width: 920px;
+      font-size: clamp(32px, 5vw, 58px);
+      letter-spacing: -.04em;
+    }
+    h2 {
+      margin-bottom: 17px;
+      font-size: 25px;
+      letter-spacing: -.02em;
+    }
+    h3 {
+      margin-bottom: 10px;
+      font-size: 18px;
+    }
+    p {
+      margin: 11px 0 0;
+      color: var(--muted);
+      line-height: 1.78;
+    }
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    code {
+      padding: 2px 6px;
+      border-radius: 7px;
+      background: rgba(36, 38, 31, .075);
+      font-size: .92em;
+    }
+    pre {
+      margin: 14px 0 0;
+      padding: 16px;
+      overflow-x: auto;
+      border-radius: 16px;
+      color: #f7efe4;
+      background: #202821;
+      line-height: 1.55;
+      font-size: 13px;
+    }
+    ul, ol {
+      margin: 10px 0 0;
+      padding-left: 22px;
+      color: var(--muted);
+      line-height: 1.78;
+    }
+    li { margin: 5px 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      border-radius: 16px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, .52);
+    }
+    th, td {
+      padding: 13px 14px;
+      border-bottom: 1px solid rgba(222, 210, 190, .75);
+      text-align: left;
+      vertical-align: top;
+      line-height: 1.6;
+    }
+    th {
+      color: #3c423b;
+      background: rgba(36, 106, 82, .08);
+      white-space: nowrap;
+    }
+    tr:last-child td { border-bottom: 0; }
+    .kicker {
+      display: inline-flex;
+      margin-bottom: 18px;
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .lead {
+      max-width: 930px;
+      color: #50564d;
+      font-size: 18px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card {
+      padding: 18px;
+      border: 1px solid rgba(222, 210, 190, .8);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, .52);
+    }
+    .tag {
+      display: inline-flex;
+      margin: 0 8px 8px 0;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 800;
+    }
+    .green { color: var(--green); background: var(--green-bg); }
+    .yellow { color: var(--yellow); background: var(--yellow-bg); }
+    .orange { color: var(--orange); background: var(--orange-bg); }
+    .red { color: var(--red); background: var(--red-bg); }
+    .blue { color: var(--blue); background: var(--blue-bg); }
+    .note {
+      margin-top: 14px;
+      padding: 14px 16px;
+      border-left: 4px solid var(--green);
+      border-radius: 14px;
+      background: rgba(36, 106, 82, .09);
+    }
+    .warn {
+      border-left-color: var(--yellow);
+      background: rgba(155, 105, 25, .10);
+    }
+    .small { color: var(--muted); font-size: 14px; }
+    @media (max-width: 860px) {
+      main { width: min(100% - 24px, 1180px); margin-top: 18px; }
+      header, .panel { padding: 22px; border-radius: 20px; }
+      .grid, .grid.three { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="kicker">Recognition Monitor · LLD</div>
+      <h1>P6S 摄像头识别监控后台代码级设计</h1>
+      <p class="lead">
+        本 LLD 基于 <code>docs/camera-recognition-monitor-plan.html</code> 细化到模块、接口、数据库表结构、回填脚本、前端交互和验证步骤。目标是交付一个长期可用的识别监控后台，让管理员持续查看摄像头识别和 InsightFace + Gallery 识别结果，并快速判断识别是否正确。
+      </p>
+    </header>
+
+    <section class="panel">
+      <h2>一、设计基线与性能结论</h2>
+      <p>对远程 <code>qypower-prod</code> 做过只读容量统计，当前 <code>records</code> 文件很小，图片和 raw 事件才是主要体积来源。从性能上看短期扫描 JSON 可行，但该后台是长期产品能力，V1 直接建立 PostgreSQL 索引表，并通过 Alembic 管理表结构，避免后续历史数据二次迁移。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>日期</th>
+            <th>JSON 数</th>
+            <th>records 大小</th>
+            <th>FaceReco</th>
+            <th>有背景图</th>
+            <th>解析耗时</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>2026-07-02</td>
+            <td>451</td>
+            <td>0.17MB</td>
+            <td>2</td>
+            <td>0</td>
+            <td>约 9.84ms</td>
+          </tr>
+          <tr>
+            <td>2026-07-03</td>
+            <td>2960</td>
+            <td>1.52MB</td>
+            <td>264</td>
+            <td>0</td>
+            <td>约 69.15ms</td>
+          </tr>
+          <tr>
+            <td>2026-07-04</td>
+            <td>2786</td>
+            <td>1.88MB</td>
+            <td>440</td>
+            <td>38</td>
+            <td>约 63.60ms</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="note">
+        <p><strong>LLD 结论：</strong>Milestone 1 直接使用 <code>recognition_events</code> PostgreSQL 表。历史 <code>records/YYYY-MM-DD/*.json</code> 通过 backfill 脚本补写入库；后续实时事件在处理完成后 upsert 监控摘要。原始 JSON 继续保留为审计事实源。</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>二、模块边界</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>模块</th>
+            <th>职责</th>
+            <th>边界</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>app/services/recognition_monitor.py</code></td>
+            <td>把处理记录和 recheck 结果转换成监控 DTO，派生分类，提供安全字段清洗。</td>
+            <td>不发飞书、不跑 InsightFace 重模型、不直接操作 HTTP。</td>
+          </tr>
+          <tr>
+            <td><code>app/db/recognition_repo.py</code></td>
+            <td>写入和查询 <code>recognition_events</code>，提供 summary、分页、详情查询。</td>
+            <td>只存安全摘要和图片相对路径，不存 embedding、base64、密钥或绝对路径。</td>
+          </tr>
+          <tr>
+            <td><code>alembic/versions/*_create_recognition_events.py</code></td>
+            <td>创建识别监控索引表和必要索引。</td>
+            <td>由 Alembic 管理，不手写生产 SQL。</td>
+          </tr>
+          <tr>
+            <td><code>scripts/backfill_recognition_events.py</code></td>
+            <td>从历史 <code>records/YYYY-MM-DD/*.json</code> 回填识别监控表。</td>
+            <td>只读事件 JSON，只写 <code>recognition_events</code>；支持 dry-run 和日期范围。</td>
+          </tr>
+          <tr>
+            <td><code>app/routers/recognition_monitor.py</code></td>
+            <td>提供监控后台 API 和管理员鉴权图片代理。</td>
+            <td>所有接口依赖 <code>require_admin</code>；不暴露绝对文件路径和密钥。</td>
+          </tr>
+          <tr>
+            <td><code>app/static/recognition-monitor.html</code></td>
+            <td>识别监控页面结构。</td>
+            <td>复用当前登录态，导航中加入“识别监控”。</td>
+          </tr>
+          <tr>
+            <td><code>app/static/recognition-monitor.js</code></td>
+            <td>筛选、分页、轮询、图片 blob 加载、详情弹层。</td>
+            <td>不直接访问裸图片 URL；通过带 Authorization 的 fetch 获取图片 blob。</td>
+          </tr>
+          <tr>
+            <td><code>app/main.py</code></td>
+            <td>注册页面路由和 API router。</td>
+            <td>新增 <code>/recognition-monitor</code> 页面，不改变现有 <code>/camera</code>。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>三、数据模型</h2>
+      <h3>数据库表：<code>recognition_events</code></h3>
+      <p>V1 建一张识别监控索引表，数据来源是实时事件处理结果和历史 processing record 回填。表中只保存监控页面需要查询和展示的安全摘要，原始 JSON 和图片文件继续留在事件目录中。</p>
+      <pre><code>CREATE TABLE recognition_events (
+  recognition_event_id BIGSERIAL PRIMARY KEY,
+  event_dedupe_key TEXT NOT NULL UNIQUE,
+  event_date DATE NOT NULL,
+  event_time TIMESTAMPTZ,
+  received_at TIMESTAMPTZ,
+  camera_serial_number TEXT,
+  camera_event_id TEXT,
+  operator TEXT NOT NULL DEFAULT 'FaceReco',
+
+  camera_result TEXT NOT NULL,
+  camera_person_name TEXT,
+  camera_person_id TEXT,
+  camera_person_role TEXT,
+  camera_person_role_name TEXT,
+
+  recheck_status TEXT NOT NULL DEFAULT 'not_rechecked',
+  recheck_reason TEXT,
+  face_count INTEGER NOT NULL DEFAULT 0,
+  quality_flags JSONB NOT NULL DEFAULT '[]'::jsonb,
+  det_score DOUBLE PRECISION,
+  face_width DOUBLE PRECISION,
+  face_height DOUBLE PRECISION,
+  blur_score DOUBLE PRECISION,
+  frontal_score DOUBLE PRECISION,
+
+  gallery_accepted BOOLEAN,
+  gallery_name TEXT,
+  gallery_person_id TEXT,
+  gallery_person_type TEXT,
+  gallery_group_name TEXT,
+  gallery_similarity DOUBLE PRECISION,
+  gallery_second_similarity DOUBLE PRECISION,
+  gallery_camera_identity_status TEXT,
+  gallery_top5_candidates JSONB NOT NULL DEFAULT '[]'::jsonb,
+
+  classification TEXT NOT NULL,
+  background_relative_path TEXT,
+  background_content_type TEXT,
+  capture_relative_path TEXT,
+  capture_content_type TEXT,
+  insightface_crop_relative_path TEXT,
+  insightface_crop_content_type TEXT,
+  record_relative_path TEXT,
+  raw_relative_path TEXT,
+  face_recheck JSONB NOT NULL DEFAULT '{}'::jsonb,
+  thresholds JSONB NOT NULL DEFAULT '{}'::jsonb,
+
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);</code></pre>
+      <h3>索引</h3>
+      <pre><code>CREATE INDEX idx_recognition_events_date_time
+  ON recognition_events (event_date, event_time DESC);
+CREATE INDEX idx_recognition_events_date_classification
+  ON recognition_events (event_date, classification);
+CREATE INDEX idx_recognition_events_date_camera_result
+  ON recognition_events (event_date, camera_result);
+CREATE INDEX idx_recognition_events_date_recheck_status
+  ON recognition_events (event_date, recheck_status);
+CREATE INDEX idx_recognition_events_camera_person_id
+  ON recognition_events (camera_person_id);
+CREATE INDEX idx_recognition_events_gallery_person_id
+  ON recognition_events (gallery_person_id);</code></pre>
+      <div class="note">
+        <p><strong>写入策略：</strong>实时事件处理完成后按 <code>event_dedupe_key</code> upsert；历史数据由 backfill 脚本按日期范围读取 JSON 后 upsert。这样脚本可重复执行，不会产生重复记录。</p>
+      </div>
+      <h3>前端 DTO</h3>
+      <p>服务层统一把原始处理记录转换成前端安全 DTO。DTO 不包含 webhook、secret、Owner、摄像头密码、embedding、图片 base64 或服务器绝对路径。</p>
+      <pre><code>@dataclass(frozen=True)
+class RecognitionImageRef:
+    kind: Literal["background", "capture", "insightface_crop"]
+    relative_path: str
+    content_type: str
+    byte_size: int | None
+    api_url: str  # /api/recognition-monitor/images?relative_path=...
+
+@dataclass(frozen=True)
+class RecognitionGalleryCandidate:
+    rank: int
+    name: str
+    person_id: str
+    person_type: str
+    group_name: str
+    similarity: float | None
+
+@dataclass(frozen=True)
+class RecognitionEvent:
+    event_key: str          # dedupe_key，详情接口主键
+    event_id: str           # P6S event_id，仅展示
+    event_time: str
+    device_sn: str
+    camera_result: str      # known / stranger / parse_error / unknown
+    camera_name: str
+    camera_id: str
+    camera_role: str
+    recheck_status: str     # passed / filtered / error / skipped / not_rechecked
+    recheck_reason: str
+    face_count: int
+    quality_flags: list[str]
+    det_score: float | None
+    face_size: str
+    blur_score: float | None
+    frontal_score: float | None
+    gallery_accepted: bool | None
+    gallery_name: str
+    gallery_person_id: str
+    gallery_person_type: str
+    gallery_group_name: str
+    gallery_similarity: float | None
+    gallery_second_similarity: float | None
+    gallery_camera_identity_status: str
+    gallery_top5_candidates: list[RecognitionGalleryCandidate]
+    classification: str
+    images: dict[str, RecognitionImageRef]</code></pre>
+      <h3>数据来源映射</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>DTO 字段</th>
+            <th>来源</th>
+            <th>处理规则</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>摄像头结果</td>
+            <td><code>recognition_events.camera_result</code>、<code>camera_person_*</code></td>
+            <td>已知人员展示姓名、ID、角色；陌生人展示“陌生人”。</td>
+          </tr>
+          <tr>
+            <td>InsightFace 结果</td>
+            <td><code>recognition_events.recheck_*</code>、<code>gallery_*</code></td>
+            <td>缺失时统一展示 <code>not_rechecked</code>，不在 API 请求中补跑模型。</td>
+          </tr>
+          <tr>
+            <td>图片</td>
+            <td><code>background_relative_path</code>、<code>capture_relative_path</code>、<code>insightface_crop_relative_path</code></td>
+            <td>只保留 relative path、content type 和 API URL，不返回绝对路径；InsightFace 裁剪图由背景图和 bbox 生成。</td>
+          </tr>
+          <tr>
+            <td>分类</td>
+            <td><code>classification</code></td>
+            <td>实时写入和 backfill 时由服务层纯函数派生，前端只展示，不重新判断。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>四、分类规则</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>分类</th>
+            <th>条件</th>
+            <th>优先级</th>
+            <th>颜色</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>identity_conflict</code></td>
+            <td><code>gallery_accepted=true</code> 且摄像头已知人员与 Gallery 身份不一致。</td>
+            <td>最高</td>
+            <td><span class="tag red">红</span></td>
+          </tr>
+          <tr>
+            <td><code>camera_missed_but_gallery_hit</code></td>
+            <td>摄像头为陌生人或未知，且 <code>gallery_accepted=true</code>。</td>
+            <td>高</td>
+            <td><span class="tag yellow">黄</span></td>
+          </tr>
+          <tr>
+            <td><code>same_person</code></td>
+            <td>摄像头已知人员，<code>gallery_accepted=true</code>，且姓名或 ID 对齐。</td>
+            <td>中</td>
+            <td><span class="tag green">绿</span></td>
+          </tr>
+          <tr>
+            <td><code>camera_hit_but_recheck_filtered</code></td>
+            <td>摄像头已知人员，但 recheck 为 <code>filtered</code>、<code>no_face</code> 或未 accepted。</td>
+            <td>中</td>
+            <td><span class="tag orange">橙</span></td>
+          </tr>
+          <tr>
+            <td><code>not_rechecked</code></td>
+            <td>历史记录缺失 <code>face_recheck</code>。</td>
+            <td>低</td>
+            <td><span class="tag blue">蓝</span></td>
+          </tr>
+          <tr>
+            <td><code>both_unknown_or_filtered</code></td>
+            <td>双方都没有可靠身份，或陌生人低质量过滤。</td>
+            <td>低</td>
+            <td><span class="tag blue">蓝</span></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="note warn">
+        <p><strong>注意：</strong>低分候选即使和摄像头身份不同，也不能算 <code>identity_conflict</code>。只有 Gallery <code>accepted=true</code> 后才进入冲突判断，避免把“低分 Top1 候选”误判成模型错误。</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>五、数据库写入与回填策略</h2>
+      <p>V1 所有监控查询都走 <code>recognition_events</code> 表。文件系统只作为历史回填和审计来源，不作为页面 API 的实时查询路径。</p>
+      <h3>实时写入</h3>
+      <ul>
+        <li>在 <code>app/services/p6s_events.py</code> 写完 processing record 后，调用 <code>recognition_monitor.safe_upsert_processing_record_file(record_path)</code>。</li>
+        <li>如果背景图存在且 InsightFace 返回选中人脸 bbox，则从背景图裁剪出 <code>insightface_crop</code> 图片，用来和摄像头 <code>CaptureImage</code> 对比；裁剪失败只记录状态，不影响主链路。</li>
+        <li>如果 <code>DATABASE_URL</code> 可用，则调用 <code>recognition_repo.upsert_recognition_event()</code>。</li>
+        <li>写入失败不影响 P6S Ack、主飞书、attendance 和 shadow 链路，只记录错误日志并 fail-open。</li>
+        <li>按 <code>event_dedupe_key</code> upsert，重复事件不会写出重复监控记录。</li>
+      </ul>
+      <h3>历史回填</h3>
+      <pre><code>python3 scripts/backfill_recognition_events.py \
+  --date-from 2026-07-02 \
+  --date-to 2026-07-05 \
+  --root /var/lib/camera-face-guard/p6s_events \
+  --apply</code></pre>
+      <ul>
+        <li>默认 dry-run，只统计可回填数量、跳过数量、解析错误数量。</li>
+        <li><code>--apply</code> 才写入数据库。</li>
+        <li>支持 <code>--date</code>、<code>--date-from</code>、<code>--date-to</code>、<code>--limit</code>。</li>
+        <li>每条记录读取 processing record JSON；如果需要补齐 InsightFace 裁剪图，则读取已保存的背景图片文件并按 bbox 裁剪。</li>
+        <li>回填完成后输出 summary，包含 upsert 数、not_rechecked 数、缺图数、解析错误数。</li>
+      </ul>
+      <h3>查询路径</h3>
+      <ul>
+        <li>summary 接口使用 SQL 聚合，不扫描文件。</li>
+        <li>events 接口使用 SQL where + order + limit/offset 分页。</li>
+        <li>detail 接口按 <code>event_dedupe_key</code> 查询单行。</li>
+        <li>图片接口仍按 relative path 从事件目录读取图片文件。</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>六、API 设计</h2>
+      <p>所有 API 都挂在 <code>/api</code> 下，并依赖 <code>require_admin</code>。监控后台需要登录页面：优先复用现有 <code>/login</code> 和 JWT；如果当前服务没有可用登录页，本需求内补一个最小管理员登录页。页面加载数据时如果 token 过期，由前端跳转登录。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>接口</th>
+            <th>参数</th>
+            <th>返回</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>GET /api/recognition-monitor/summary</code></td>
+            <td><code>date=YYYY-MM-DD</code></td>
+            <td>日期、总数、分类计数、摄像头结果计数、recheck 状态计数、过滤原因 Top N。</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/recognition-monitor/events</code></td>
+            <td><code>date</code>、<code>classification</code>、<code>camera_result</code>、<code>recheck_status</code>、<code>reason</code>、<code>person</code>、<code>accepted</code>、<code>page</code>、<code>page_size</code></td>
+            <td>分页事件列表，默认按 <code>event_time desc</code> 排序。</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/recognition-monitor/events/{event_key}</code></td>
+            <td>无；<code>event_key</code> 为 <code>event_dedupe_key</code>。</td>
+            <td>单条事件详情、完整 Gallery Top 5、阈值、质量 flags、图片引用、安全原始摘要。</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/recognition-monitor/images</code></td>
+            <td><code>relative_path=faces/...</code></td>
+            <td>管理员鉴权后返回图片 FileResponse。</td>
+          </tr>
+        </tbody>
+      </table>
+      <h3>events 响应草案</h3>
+      <pre><code>{
+  "date": "2026-07-04",
+  "page": 1,
+  "page_size": 30,
+  "total": 38,
+  "items": [
+    {
+      "event_key": "...dedupe_key...",
+      "event_id": "686",
+      "event_time": "2026-07-04T21:10:52+08:00",
+      "classification": "camera_missed_but_gallery_hit",
+      "camera": {"result": "stranger", "name": "", "id": "", "role": ""},
+      "recheck": {
+        "status": "passed",
+        "reason": "quality_passed",
+        "face_count": 1,
+        "quality_flags": [],
+        "det_score": 0.91,
+        "face_size": "146x151"
+      },
+      "gallery": {
+        "accepted": true,
+        "name": "石峰",
+        "person_id": "2190920783641738",
+        "person_type": "member",
+        "group_name": "会员",
+        "similarity": 0.604801,
+        "second_similarity": 0.31
+      },
+      "images": {
+        "background": {
+          "api_url": "/api/recognition-monitor/images?relative_path=faces/2026-07-04/...",
+          "content_type": "image/jpeg"
+        },
+        "capture": {
+          "api_url": "/api/recognition-monitor/images?relative_path=faces/2026-07-04/...",
+          "content_type": "image/jpeg"
+        },
+        "insightface_crop": {
+          "api_url": "/api/recognition-monitor/images?relative_path=faces/2026-07-04/...",
+          "content_type": "image/jpeg"
+        }
+      }
+    }
+  ]
+}</code></pre>
+      <h3>图片接口安全</h3>
+      <div class="note">
+        <p><strong>说人话：</strong>浏览器不能直接拿服务器磁盘路径去看图，也不应该拿一个公开裸链接。管理员打开页面后，前端带着登录 token 请求我们的后端；后端确认你是管理员，再去磁盘上读取那张图片，并把图片内容返回给浏览器。前端收到的是一段临时图片数据 blob，只在当前页面里展示，不暴露服务器真实路径，也不需要额外生成公开 token。</p>
+      </div>
+      <ul>
+        <li>请求必须带管理员 Bearer token。</li>
+        <li>只接受相对路径，拒绝绝对路径和 <code>..</code>。</li>
+        <li>路径必须位于 <code>P6S_EVENT_IMAGE_DIR</code> 下。</li>
+        <li>只允许 <code>faces/</code>、<code>strangers/</code> 下的图片；不开放 raw JSON 图片正文。</li>
+        <li>前端使用 <code>fetch</code> 带 Authorization 获取 blob，再设置 <code>img.src=URL.createObjectURL(blob)</code>。</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>七、前端页面设计</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>页面布局</h3>
+          <ul>
+            <li>顶部导航：摄像头、识别监控、退出登录。</li>
+            <li>统计卡片：总事件、疑似冲突、摄像头漏识别、同人确认、过滤数、no_face 数。</li>
+            <li>筛选栏：日期、分类、人员搜索、过滤原因、摄像头结果、accepted。</li>
+            <li>事件列表：背景图缩略图 + 摄像头结果 + InsightFace 结果 + 关键分数；缺图或未复核显示占位状态。</li>
+            <li>详情弹层：背景大图、摄像头 CaptureImage、InsightFace 裁剪人脸图、bbox 信息、Gallery Top 5、阈值和原始安全摘要。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>交互规则</h3>
+          <ul>
+            <li>默认日期为 Asia/Shanghai 今天。</li>
+            <li>默认 page_size 为 30，最大 100。</li>
+            <li>默认每 10 秒刷新 summary 和第一页；用户打开详情弹层时暂停自动刷新列表。</li>
+            <li>展示所有 <code>FaceReco</code> 记录，不因为缺图、无 <code>face_recheck</code> 或裁剪失败而隐藏。</li>
+            <li>背景图在列表里先显示缩略图；点击缩略图打开详情弹层展示大图。</li>
+            <li>筛选条件变更后重置到第一页。</li>
+            <li>图片加载失败时显示“图片不可用”，不阻断列表渲染。</li>
+          </ul>
+        </div>
+      </div>
+      <h3>前端工具函数</h3>
+      <pre><code>function authHeaders() {
+  return { Authorization: `Bearer ${localStorage.getItem("token")}` };
+}
+
+async function apiFetch(url) {
+  const res = await fetch(url, { headers: authHeaders() });
+  if (res.status === 401) logout();
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+async function loadImageBlob(apiUrl, imgEl) {
+  const res = await fetch(apiUrl, { headers: authHeaders() });
+  if (!res.ok) throw new Error("image unavailable");
+  const blob = await res.blob();
+  imgEl.src = URL.createObjectURL(blob);
+}</code></pre>
+    </section>
+
+    <section class="panel">
+      <h2>八、异常处理</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>场景</th>
+            <th>处理</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>指定日期没有记录</td>
+            <td>数据库查询返回空 summary 和空列表，HTTP 200。</td>
+          </tr>
+          <tr>
+            <td>历史回填遇到单个 JSON 损坏</td>
+            <td>跳过该文件，在回填报告中增加 <code>parse_error_count</code> 和文件路径；不影响其他记录回填。</td>
+          </tr>
+          <tr>
+            <td>图片文件不存在</td>
+            <td>事件仍展示，图片接口返回 404，前端显示占位。</td>
+          </tr>
+          <tr>
+            <td>历史记录没有 <code>face_recheck</code></td>
+            <td>标记为 <code>not_rechecked</code>，不在请求中补跑 InsightFace。</td>
+          </tr>
+          <tr>
+            <td>实时写入 <code>recognition_events</code> 失败</td>
+            <td>主事件链路 fail-open：继续 Ack、飞书和 attendance；记录错误日志，后续用回填脚本补写。</td>
+          </tr>
+          <tr>
+            <td>数据库不可用</td>
+            <td>监控 API 返回 500 和安全错误信息；不暴露连接串、密码或 SQL 细节。</td>
+          </tr>
+          <tr>
+            <td>token 过期</td>
+            <td>API 返回 401，前端清理 localStorage 并跳转 <code>/login</code>。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>九、配置项</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>配置</th>
+            <th>默认值</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>DATABASE_URL</code></td>
+            <td>沿用现有服务配置</td>
+            <td>识别监控表的写入、回填和查询都通过 PostgreSQL 完成。</td>
+          </tr>
+          <tr>
+            <td><code>P6S_EVENT_IMAGE_DIR</code></td>
+            <td><code>logs/p6s_events</code> 或远程 <code>/var/lib/camera-face-guard/p6s_events</code></td>
+            <td>图片代理和历史回填读取事件目录时使用，复用现有配置。</td>
+          </tr>
+          <tr>
+            <td><code>RECOGNITION_MONITOR_DEFAULT_PAGE_SIZE</code></td>
+            <td><code>30</code></td>
+            <td>事件列表默认分页大小。</td>
+          </tr>
+          <tr>
+            <td><code>RECOGNITION_MONITOR_MAX_PAGE_SIZE</code></td>
+            <td><code>100</code></td>
+            <td>事件列表最大分页大小。</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small">首版需要确认远程已具备可用 <code>DATABASE_URL</code>，并通过 Alembic 创建 <code>recognition_events</code> 表；分页配置可使用默认值。</p>
+    </section>
+
+    <section class="panel">
+      <h2>十、开发 Milestones</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>阶段</th>
+            <th>开发任务</th>
+            <th>完成标准</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Milestone 1：数据库与回填基础</td>
+            <td>新增 <code>recognition_events</code> Alembic 迁移；实现 <code>app/db/recognition_repo.py</code>；实现 <code>scripts/backfill_recognition_events.py</code>；在事件处理完成后 upsert 监控摘要。</td>
+            <td>迁移可执行；历史 JSON 可 dry-run/apply 回填；重复事件按 <code>event_dedupe_key</code> upsert 不重复；主事件链路在写库失败时 fail-open。</td>
+          </tr>
+          <tr>
+            <td>Milestone 2：后端 API 与图片代理</td>
+            <td>实现 <code>app/services/recognition_monitor.py</code>、<code>app/routers/recognition_monitor.py</code>；提供 summary/list/detail API；实现管理员鉴权图片代理；基于背景图 + InsightFace bbox 生成 <code>insightface_crop</code>。</td>
+            <td>未登录返回 401；登录后可查询统计、列表、详情；背景图、CaptureImage、InsightFace 裁剪图都可通过 fetch blob 加载；接口不暴露绝对路径、密钥、base64 或 embedding。</td>
+          </tr>
+          <tr>
+            <td>Milestone 3：前端监控页面</td>
+            <td>实现 <code>/recognition-monitor</code> 页面；接入登录态；展示统计卡片、筛选栏、事件列表、背景缩略图、详情弹层、三图对比和 10 秒自动刷新。</td>
+            <td>页面展示所有 <code>FaceReco</code>；缺图、未复核、裁剪失败都有占位；点击背景缩略图能打开大图弹层；详情弹层能展示摄像头结果、InsightFace 结果、Gallery Top 5、阈值和质量 flags。</td>
+          </tr>
+          <tr>
+            <td>Milestone 4：远程部署与历史回填</td>
+            <td>部署到 <code>qypower-prod</code>；执行 Alembic；对真实事件目录先 dry-run 回填，再 apply 回填；重启服务并验证页面读取真实数据。</td>
+            <td><code>/recognition-monitor</code> 在远程可访问；真实日期 summary/list/detail 可用；图片代理能读取远程真实图片；服务重启后状态正常。</td>
+          </tr>
+          <tr>
+            <td>Milestone 5：质量分析增强</td>
+            <td>基于 <code>recognition_events</code> 增加按天趋势、过滤原因统计、摄像头与 InsightFace 差异分析、阈值观察视图；不做人工复核写入。</td>
+            <td>可以从页面看出摄像头漏识别、身份冲突、模型过滤、同人确认等趋势；导出或展示只包含安全摘要，不包含图片正文或 embedding。</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small">执行约束：每个 milestone 开始前先核对当前 diff 和 LLD 范围；不修改摄像头配置、不修改人脸库、不启用 <code>filter</code> 或 <code>verify_and_override</code>。</p>
+      <h3>Milestone 1 详细开发计划</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>步骤</th>
+            <th>任务</th>
+            <th>边界与验证</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td>新增 Alembic 迁移 <code>20260705_0003_create_recognition_events.py</code>，创建 <code>recognition_events</code> 表、唯一约束和查询索引。</td>
+            <td>只新增表和索引，不修改现有 attendance 表；迁移 downgrade 只删除本表相关索引和表。</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td>新增 <code>app/db/recognition_repo.py</code>，提供 <code>upsert_recognition_event()</code> 和最小连接封装。</td>
+            <td>只接受安全摘要字段；JSON 字段统一规范为对象或数组；不保存 embedding、base64、密钥和绝对图片路径。</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td>新增 <code>app/services/recognition_monitor.py</code> 的最小 row builder，把 processing record 转换为 <code>recognition_events</code> 行。</td>
+            <td>本阶段只做入库行构造和分类派生，不实现前端 DTO、API 查询或图片代理；这些留到 Milestone 2。</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td>在 <code>app/services/p6s_events.py</code> 写完 processing record 后调用安全 upsert。</td>
+            <td>写库失败必须 fail-open，只记录错误摘要，不影响 Ack、主飞书、shadow 飞书、attendance 和处理记录写入。</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td>新增 <code>scripts/backfill_recognition_events.py</code>，从 <code>records/YYYY-MM-DD/*.json</code> 回填监控表。</td>
+            <td>默认 dry-run；只有显式 <code>--apply</code> 才写库；支持 <code>--date</code>、<code>--date-from</code>、<code>--date-to</code>、<code>--limit</code>；解析坏文件只计数并跳过。</td>
+          </tr>
+          <tr>
+            <td>6</td>
+            <td>扩展本地验证，覆盖 row builder、upsert fail-open、backfill dry-run。</td>
+            <td>运行 <code>python3 -m py_compile</code> 覆盖新增模块和脚本；运行 <code>python3 scripts/validate_p6s_event_flow.py</code> 确认事件主链路不变。</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small">Milestone 1 的 <code>recognition_monitor.py</code> 只提供入库所需的最小能力；summary/list/detail API、管理员鉴权图片代理、fetch blob 和页面展示统一留到 Milestone 2-3。</p>
+      <h3>Milestone 2 详细开发计划</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>步骤</th>
+            <th>任务</th>
+            <th>边界与验证</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td>扩展 <code>app/db/recognition_repo.py</code>，增加 summary、分页列表、详情查询函数。</td>
+            <td>只查询 <code>recognition_events</code>；过滤条件必须参数化；默认分页 30，最大 100；不返回数据库连接串或 SQL 细节。</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td>扩展 <code>app/services/recognition_monitor.py</code>，增加行到 API DTO 的转换、安全字段清洗、图片引用构造，以及基于背景图 + bbox 的 <code>insightface_crop</code> 补齐。</td>
+            <td>DTO 不包含绝对路径、token 原文、webhook、secret、base64 或 embedding；裁剪失败只返回占位状态，不影响 summary/list/detail。</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td>新增 <code>app/routers/recognition_monitor.py</code>，实现 <code>/api/recognition-monitor/summary</code>、<code>/events</code>、<code>/events/{event_key}</code>、<code>/images</code>。</td>
+            <td>所有接口依赖 <code>require_admin</code>；未登录返回 401；图片代理只接受相对路径，拒绝绝对路径、<code>..</code> 和非允许目录。</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td>在 <code>app/main.py</code> 注册 recognition monitor router。</td>
+            <td>只注册 API，不新增前端页面路由；<code>/recognition-monitor</code> 页面留到 Milestone 3。</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td>扩展验证脚本，覆盖 DTO 清洗、图片代理路径安全、router 鉴权依赖和裁剪图 helper 的失败不崩溃行为。</td>
+            <td>运行 <code>python3 -m py_compile</code>、<code>python3 scripts/validate_p6s_event_flow.py</code>；本阶段不要求真实数据库查询通过，真实 DB 查询在 Milestone 4 部署回填时验证。</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small">Milestone 2 不开发 HTML/JS 页面、不部署远程、不修改摄像头配置、不启用 <code>filter</code> 或 <code>verify_and_override</code>。</p>
+      <h3>Milestone 3 详细开发计划</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>步骤</th>
+            <th>任务</th>
+            <th>边界与验证</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td>开发前复核当前工作区 diff、现有 <code>/login</code>、<code>/camera</code> 页面和静态资源风格。</td>
+            <td>只读取现有前端结构和 LLD；如果发现现有登录态、接口路径或样式体系与 LLD 不一致，先更新 LLD 再继续，不直接写代码绕过。</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td>新增 <code>app/static/recognition-monitor.html</code>，提供识别监控页面骨架。</td>
+            <td>页面复用当前管理员登录态和导航风格；默认展示今日数据；缺图、未复核、裁剪失败和空数据都必须有用户可理解的占位文案。</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td>新增 <code>app/static/recognition-monitor.js</code>，接入 summary、events、detail 和 images API。</td>
+            <td>所有请求都带 JWT；401 时清理本地登录态并跳转 <code>/login</code>；图片必须通过管理员鉴权代理 fetch blob，不使用服务器绝对路径或公开裸链接。</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td>实现前端筛选、分页和 10 秒自动刷新。</td>
+            <td>筛选项包括日期、分类、摄像头结果、复核状态、过滤原因、人员搜索和 Gallery accepted；筛选变化后回到第一页；详情弹层打开时暂停自动刷新，关闭后恢复。</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td>实现事件列表与详情弹层：列表展示背景缩略图、摄像头结果、InsightFace 结果、Gallery 命中和关键分数；详情展示背景大图、摄像头人脸图、InsightFace 裁剪图、Top 5 候选、阈值和质量 flags。</td>
+            <td>页面面向用户视角展示“谁被识别成谁、模型认为是谁、是否冲突”，不展示内部密钥、base64、embedding、绝对路径、原始日志噪音或难以理解的内部枚举。</td>
+          </tr>
+          <tr>
+            <td>6</td>
+            <td>按现有设计体系扩展 <code>app/static/style.css</code>，增加识别监控页面专属样式。</td>
+            <td>样式类名尽量以 <code>monitor-</code> 前缀隔离；不破坏现有 <code>/login</code> 和 <code>/camera</code> 页面；桌面和移动端都要可用。</td>
+          </tr>
+          <tr>
+            <td>7</td>
+            <td>在 <code>app/main.py</code> 注册 <code>/recognition-monitor</code> 页面路由，并在现有导航中加入“识别监控”。</td>
+            <td>只增加页面入口，不新增摄像头写接口、不修改摄像头配置、不修改人脸库、不修改远程部署配置。</td>
+          </tr>
+          <tr>
+            <td>8</td>
+            <td>完成前端本地验证。</td>
+            <td>运行 Python 静态编译覆盖后端路由文件；如本地有 Node，则运行 <code>node --check app/static/recognition-monitor.js</code>；用应用路由列表确认 <code>/recognition-monitor</code> 已注册；必要时通过浏览器做视觉和交互验证。</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small">Milestone 3 只交付本地前端页面和页面路由，不执行 Alembic、不回填真实远程数据、不部署远程服务器。</p>
+      <h3>Milestone 4 详细开发计划</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>步骤</th>
+            <th>任务</th>
+            <th>边界与验证</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td>部署前保护检查：确认本地工作区状态、待部署 commit、远程服务状态、远程 env 和数据库迁移状态。</td>
+            <td>不打印真实密钥；部署前先备份 <code>/etc/camera-face-guard/app.env</code> 和记录当前 Alembic 版本；如果本地有未提交的计划外改动，停止确认。</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td>使用既有部署脚本同步服务器代码和静态资源到 <code>qypower-prod</code>。</td>
+            <td>部署脚本需要把 <code>recognition_repo.py</code>、<code>recognition_monitor.py</code>、<code>recognition_monitor</code> router、Alembic 迁移和回填脚本纳入本地/远程检查；只部署识别监控后台代码，不修改摄像头配置、不修改脸库、不修改 InsightFace 模式、不切换 <code>filter</code> 或 <code>verify_and_override</code>。</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td>在远程执行 <code>alembic upgrade head</code>，创建或升级 <code>recognition_events</code> 表。</td>
+            <td>远程 <code>app.env</code> 可能是 root-only，部署脚本允许用 <code>sudo</code> 读取 <code>DATABASE_URL</code> 到远程 shell 变量，但禁止打印真实连接串；迁移失败立即停止，不执行回填，并按迁移回滚策略处理。</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td>对远程真实事件目录执行回填 dry-run。</td>
+            <td>先按单日小范围验证，再扩大到目标日期范围；dry-run 只输出统计，不写数据库、不生成新的裁剪图、不发送飞书。</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td>确认 dry-run 统计合理后执行 <code>--apply</code> 回填。</td>
+            <td>apply 会写入 <code>recognition_events</code> 并按需补齐 InsightFace 裁剪图；运行报告需记录处理数、成功数、跳过数、错误数和错误类型，不保存图片正文或密钥。</td>
+          </tr>
+          <tr>
+            <td>6</td>
+            <td>重启远程服务并验证 <code>/recognition-monitor</code>。</td>
+            <td>确认服务 <code>active</code>、<code>/api/docs</code>、<code>/camera</code>、<code>/recognition-monitor</code> 可用，summary/list/detail/images 返回正常；用管理员登录页面查看真实日期数据和图片 blob。</td>
+          </tr>
+          <tr>
+            <td>7</td>
+            <td>部署后观察实时写入。</td>
+            <td>触发或等待新的 <code>FaceReco</code> 后确认 processing record、<code>recognition_events</code>、监控页面三者一致；主飞书、shadow 飞书、attendance、去重行为保持原样。</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small">Milestone 4 的回滚优先级：先回滚代码或从导航隐藏页面；数据库新增表可保留不用；如果迁移必须回滚，先确认没有线上页面依赖后再 downgrade。</p>
+      <h3>Milestone 5 详细开发计划</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>步骤</th>
+            <th>任务</th>
+            <th>边界与验证</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td>基于真实使用反馈确认质量分析指标。</td>
+            <td>首版只从 <code>recognition_events</code> 现有字段派生趋势和差异，不新增人工复核流程，不新增业务写入表；如必须新增字段，先更新 LLD 和迁移计划。</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td>扩展后端统计能力，增加按天趋势、过滤原因分布、摄像头与 InsightFace 差异分布、身份冲突列表。</td>
+            <td>查询仍基于 PostgreSQL 聚合和参数化 SQL；默认按日期范围限制结果，避免一次性扫描过大历史范围。</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td>扩展前端质量分析视图。</td>
+            <td>页面应帮助快速看出“摄像头漏识别、摄像头识错人、模型过滤侧脸/模糊/无人脸、同人确认”的数量和样例；不展示内部日志噪音。</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td>增加安全导出或复制摘要能力。</td>
+            <td>导出内容只包含安全摘要字段和图片代理相对引用，不包含图片正文、embedding、base64、webhook、secret 或服务器绝对路径。</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td>完成质量分析验收和性能检查。</td>
+            <td>在远程真实数据上验证常用筛选和趋势查询响应时间；如数据规模增长导致慢查询，优先补索引或收窄默认日期范围，再考虑新增汇总表。</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small">Milestone 5 是监控体验增强阶段，不改变实时识别决策，不启用 <code>filter</code>，不启用 <code>verify_and_override</code>，不对摄像头或脸库做任何写入。</p>
+      <h3>Milestone 5 接口级细化</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>模块</th>
+            <th>开发内容</th>
+            <th>输出与边界</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Repository</td>
+            <td>在 <code>app/db/recognition_repo.py</code> 增加 <code>fetch_quality_overview(conn, date_from, date_to)</code>。</td>
+            <td>只读 <code>recognition_events</code>；按天聚合 total、classification、recheck_status、camera_result、recheck_reason；日期范围最大由前端限制为 14 天，后端仍接受参数化查询。</td>
+          </tr>
+          <tr>
+            <td>Service DTO</td>
+            <td>在 <code>app/services/recognition_monitor.py</code> 增加 <code>build_quality_response()</code>，把数据库聚合结果转成前端安全 DTO。</td>
+            <td>DTO 只包含计数、比例、趋势和少量安全事件摘要；不包含图片正文、embedding、base64、webhook、secret、Owner、摄像头密码或服务器绝对路径。</td>
+          </tr>
+          <tr>
+            <td>API</td>
+            <td>新增 <code>GET /api/recognition-monitor/quality?date_from=YYYY-MM-DD&amp;date_to=YYYY-MM-DD</code>。</td>
+            <td>继续依赖 <code>require_admin</code>；未登录 401；数据库不可用返回 503；不新增数据库表和迁移。</td>
+          </tr>
+          <tr>
+            <td>前端</td>
+            <td>在 <code>/recognition-monitor</code> 页面增加质量观察区：趋势卡片、过滤原因分布、摄像头与 InsightFace 差异分布、典型问题入口。</td>
+            <td>默认观察当前日期往前 7 天，可切换 3/7/14 天；点击某类问题时复用已有筛选列表，不新增人工复核和写入操作。</td>
+          </tr>
+          <tr>
+            <td>验证</td>
+            <td>扩展本地验证和远程已登录 HTTP 验证。</td>
+            <td>本地跑 <code>py_compile</code>、<code>node --check</code>、事件流 fixture；远程部署后验证 quality API 200 且返回真实聚合数据。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>十一、测试计划</h2>
+      <ul>
+        <li>静态检查：<code>python3 -m py_compile app/services/recognition_monitor.py app/db/recognition_repo.py app/routers/recognition_monitor.py scripts/backfill_recognition_events.py</code>。</li>
+        <li>迁移验证：在测试数据库执行 <code>alembic upgrade head</code>，确认 <code>recognition_events</code> 表和索引存在。</li>
+        <li>回填验证：用 fixture 记录跑 <code>scripts/backfill_recognition_events.py --dry-run</code> 和 <code>--apply</code>，覆盖 known、stranger、not_rechecked、identity_conflict、missing image、bad JSON。</li>
+        <li>裁剪图验证：使用包含背景图和 bbox 的 fixture，确认能生成 <code>insightface_crop</code>，并能通过管理员鉴权图片代理查看。</li>
+        <li>实时写入验证：模拟 <code>FaceReco</code> 处理记录，确认按 <code>event_dedupe_key</code> upsert，重复写入不会产生重复行。</li>
+        <li>API 验证：未登录 401、登录后 summary/events/detail/images 可访问，筛选和分页结果来自数据库。</li>
+        <li>性能验证：对远程 2026-07-04 数据完成一次回填后，summary 和列表查询应在 200ms 内返回。</li>
+        <li>安全验证：接口响应不得包含 webhook、secret、Owner、摄像头密码、embedding、base64、绝对图片路径。</li>
+        <li>前端验证：筛选、分页、10 秒自动刷新、背景缩略图点击弹层、三图对比、图片 blob 加载、401 跳转登录。</li>
+        <li>回归验证：<code>python3 scripts/validate_p6s_event_flow.py</code>，确保主事件链路不变。</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>十二、部署与回滚</h2>
+      <ul>
+        <li>部署服务器代码、静态页面、Alembic 迁移和回填脚本；不修改摄像头配置、不修改人脸库、不修改 InsightFace 模式。</li>
+        <li>部署时先备份远程 env 和数据库迁移状态，再执行 <code>alembic upgrade head</code> 创建 <code>recognition_events</code> 表。</li>
+        <li>迁移成功后运行历史回填脚本，先 <code>--dry-run</code> 查看统计，再 <code>--apply</code> 写入历史识别记录。</li>
+        <li>复用现有 <code>scripts/deploy_qypower_prod.sh</code>；如果脚本仍卡在 root-only env 读取处，按既有流程手动重启并验证。</li>
+        <li>部署后访问 <code>/recognition-monitor</code>，用管理员账号登录后查看页面。</li>
+        <li>回滚方式：优先回滚本次代码或临时从导航隐藏该页面；<code>recognition_events</code> 是新增表，不影响现有业务，可保留不用。</li>
+        <li>如果必须回滚数据库结构，需要确认没有依赖该表的后台功能后，再执行 Alembic downgrade 或手工删除新增表。</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>十三、已拍板结论</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>决策项</th>
+            <th>推荐选项</th>
+            <th>替代选项</th>
+            <th>影响</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>V1 是否建新表</td>
+            <td>已拍板：直接建 PostgreSQL 识别监控表，并用 Alembic 管理。</td>
+            <td>无。</td>
+            <td>避免未来再把历史 JSON 重新写库；首版上线需要包含迁移和回填步骤。</td>
+          </tr>
+          <tr>
+            <td>图片访问方式</td>
+            <td>已拍板：管理员鉴权图片代理 + 前端 fetch blob。</td>
+            <td>生成短期公开 token 链接。</td>
+            <td>推荐方案只有登录管理员能看图，不暴露服务器真实路径；前端实现略复杂但安全边界更清晰。</td>
+          </tr>
+          <tr>
+            <td>登录页面</td>
+            <td>已拍板：需要登录页面，优先复用现有 <code>/login</code> 和 JWT。</td>
+            <td>如果当前服务没有可用登录页，本需求内补最小管理员登录页。</td>
+            <td>管理员鉴权图片代理依赖登录态；没有登录页就无法安全确认看图的人是谁。</td>
+          </tr>
+          <tr>
+            <td>默认展示范围</td>
+            <td>已拍板：展示所有 FaceReco，缺图或未复核显示占位状态。</td>
+            <td>只展示有背景图且有 recheck 的记录。</td>
+            <td>推荐方案更像完整监控后台；替代方案更聚焦模型复核。</td>
+          </tr>
+          <tr>
+            <td>自动刷新间隔</td>
+            <td>已拍板：10 秒。</td>
+            <td>5 秒或手动刷新。</td>
+            <td>10 秒足够实时且压力更轻；用户打开详情弹层时暂停列表刷新。</td>
+          </tr>
+          <tr>
+            <td>人脸裁剪图</td>
+            <td>已拍板：服务端按 InsightFace bbox 从背景图生成裁剪图。</td>
+            <td>只显示 bbox 和尺寸信息。</td>
+            <td>页面可直接对比背景图、摄像头 CaptureImage 和 InsightFace 裁剪图；需要管理裁剪图文件生命周期。</td>
+          </tr>
+          <tr>
+            <td>人工复核状态</td>
+            <td>已拍板：不做人工复核。</td>
+            <td>V1 同时支持“已看/正确/错误”。</td>
+            <td>首版保持只读监控，不引入人工标记写入。</td>
+          </tr>
+          <tr>
+            <td>上线位置</td>
+            <td>已拍板：远程服务器 <code>qypower-prod</code> 上线，读取真实事件目录。</td>
+            <td>先只本地运行。</td>
+            <td>推荐方案能监控真实链路；本地只能看同步/测试数据。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

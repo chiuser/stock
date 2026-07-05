@@ -16,7 +16,7 @@ from unittest.mock import patch
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.services import face_gallery, face_recheck, feishu, image_links, p6s_events
+from app.services import face_gallery, face_recheck, feishu, image_links, p6s_events, recognition_monitor
 from app.services.event_store import RequestMeta
 
 FIXTURE_DIR = PROJECT_ROOT / "tests" / "fixtures"
@@ -93,6 +93,16 @@ async def validate() -> None:
         assert known_record["image"]["status"] == "saved"
         assert known_record["link"] is not None
         assert known_result.link.token not in known_record_text
+        known_monitor_row = recognition_monitor.build_event_row(
+            known_record,
+            record_path=known_result.record_file.path,
+            root=root,
+        )
+        assert known_monitor_row["event_dedupe_key"] == known_record["dedupe_key"]
+        assert known_monitor_row["camera_result"] == "known"
+        assert known_monitor_row["camera_person_name"] == "小明"
+        assert known_monitor_row["camera_person_id"] == "3427976339944670"
+        assert known_monitor_row["record_relative_path"].startswith("records/2026-07-02/")
 
         dual = load_fixture("p6s_face_reco_dual_image.json")
         dual_result = await p6s_events.handle_event(
@@ -118,6 +128,13 @@ async def validate() -> None:
         assert "token_hash" in dual_record["links"]["background"]
         assert "token_hash" in dual_record["links"]["capture"]
         assert dual_result.link.token not in dual_record_text
+        dual_monitor_row = recognition_monitor.build_event_row(
+            dual_record,
+            record_path=dual_result.record_file.path,
+            root=root,
+        )
+        assert dual_monitor_row["background_relative_path"] == dual_record["images"]["background"]["relative_path"]
+        assert dual_monitor_row["capture_relative_path"] == dual_record["images"]["capture"]["relative_path"]
 
         for fixture, role, role_name, title in (
             ("p6s_face_reco_member.json", "members", "会员", "会员入场提醒"),
@@ -187,6 +204,8 @@ async def validate() -> None:
         validate_feishu_payloads()
         validate_face_gallery_matching()
         await validate_face_recheck_shadow_flow(request_meta)
+        validate_recognition_monitor_backfill(root)
+        validate_recognition_monitor_api_helpers(root, known_monitor_row)
         validate_image_routes(root)
         validate_cleanup_script()
 
@@ -508,6 +527,88 @@ def validate_image_routes(root: Path) -> None:
         assert any(
             dependency.call is require_admin
             for dependency in legacy_route.dependant.dependencies
+        )
+
+
+def validate_recognition_monitor_backfill(root: Path) -> None:
+    backfill_script = PROJECT_ROOT / "scripts" / "backfill_recognition_events.py"
+    dry_run = subprocess.run(
+        [
+            sys.executable,
+            str(backfill_script),
+            "--root",
+            str(root),
+            "--date",
+            "2026-07-02",
+            "--limit",
+            "3",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    report = json.loads(dry_run.stdout)
+    assert report["apply"] is False
+    assert report["face_reco"] == 3
+    assert report["prepared"] == 3
+    assert report["upserted"] == 0
+    assert report["parse_error_count"] == 0
+
+
+def validate_recognition_monitor_api_helpers(root: Path, monitor_row: dict) -> None:
+    event_dto = recognition_monitor.row_to_event(monitor_row, include_detail=True)
+    assert event_dto["event_key"] == monitor_row["event_dedupe_key"]
+    assert event_dto["camera"]["name"] == "小明"
+    assert event_dto["images"]["capture"]["api_url"].startswith("/api/recognition-monitor/images?")
+    assert "storage_path" not in json.dumps(event_dto, ensure_ascii=False)
+
+    capture_relative_path = monitor_row["capture_relative_path"]
+    image_path, content_type = recognition_monitor.resolve_image_path(capture_relative_path, root=root)
+    assert image_path.exists()
+    assert content_type == "image/jpeg"
+    for bad_path in ("/tmp/a.jpg", "../faces/a.jpg", "raw/2026-07-02/a.json"):
+        try:
+            recognition_monitor.resolve_image_path(bad_path, root=root)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"unsafe path unexpectedly allowed: {bad_path}")
+
+    invalid_crop = recognition_monitor.ensure_insightface_crop(
+        {
+            "dedupe_key": "fixture-crop",
+            "operator": "FaceReco",
+            "event_id": "fixture-crop",
+            "event_time": "2026-07-02 10:00:00",
+            "received_at": "2026-07-02T10:00:00+08:00",
+            "camera_serial_number": "SN-FIXTURE-001",
+            "images": {"background": {"relative_path": capture_relative_path}},
+            "face_recheck": {
+                "selected_face": {"bbox": [1, 1, 20, 20]},
+            },
+        },
+        root=root,
+    )
+    assert invalid_crop["status"] in {"crop_failed", "saved"}
+
+    from app.routers import recognition_monitor as recognition_router
+    from app.routers.auth import require_admin
+
+    protected_paths = {
+        "/recognition-monitor/summary",
+        "/recognition-monitor/events",
+        "/recognition-monitor/events/{event_key}",
+        "/recognition-monitor/images",
+    }
+    routes_by_path = {
+        getattr(route, "path", ""): route
+        for route in recognition_router.router.routes
+    }
+    for path in protected_paths:
+        route = routes_by_path[path]
+        assert any(
+            dependency.call is require_admin
+            for dependency in route.dependant.dependencies
         )
 
 

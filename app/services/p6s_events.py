@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.services import attendance, event_store, face_recheck, feishu, image_links
+from app.services import attendance, event_store, face_recheck, feishu, image_links, recognition_monitor
 
 
 @dataclass(frozen=True)
@@ -982,7 +982,10 @@ def _write_record(
     *,
     root: Path | str | None,
 ) -> event_store.StoredFile:
-    return event_store.write_processing_record(identity, record, root=root)
+    stored_file = event_store.write_processing_record(identity, record, root=root)
+    if identity.operator == "FaceReco":
+        recognition_monitor.safe_upsert_processing_record_file(stored_file.path, root=root)
+    return stored_file
 
 
 def _representative_image(images: SavedFaceRecoImages) -> SavedFaceRecoImage | None:
