@@ -24,6 +24,7 @@ _BLOCKING_QUALITY_FLAGS = {
     "face_too_small",
     "blurred",
     "side_face",
+    "head_pitch_bad",
 }
 
 
@@ -46,6 +47,7 @@ class FaceRecheckSettings:
     min_face_height: int
     blur_threshold: float
     frontal_max_yaw_score: float
+    head_pitch_min: float
     similarity_threshold: float
     camera_match_similarity_threshold: float
     camera_match_gap_threshold: float
@@ -75,6 +77,7 @@ class FaceRecheckSettings:
             min_face_height=_env_int("FACE_RECHECK_MIN_FACE_HEIGHT", 80, minimum=1),
             blur_threshold=_env_float("FACE_RECHECK_BLUR_THRESHOLD", 80.0),
             frontal_max_yaw_score=_env_float("FACE_RECHECK_FRONTAL_MAX_YAW_SCORE", 0.35),
+            head_pitch_min=_env_float("FACE_RECHECK_HEAD_PITCH_MIN", -45.0),
             similarity_threshold=_env_float("FACE_RECHECK_SIMILARITY_THRESHOLD", 0.50),
             camera_match_similarity_threshold=_env_float(
                 "FACE_RECHECK_CAMERA_MATCH_SIMILARITY_THRESHOLD",
@@ -145,6 +148,7 @@ class DetectedFaceSummary:
     height: float
     blur_score: float | None
     frontal_score: float | None
+    head_pitch: float | None
     quality_flags: list[str]
 
     def to_dict(self) -> dict[str, Any]:
@@ -156,6 +160,7 @@ class DetectedFaceSummary:
             "height": round(self.height, 3),
             "blur_score": _rounded_or_none(self.blur_score),
             "frontal_score": _rounded_or_none(self.frontal_score),
+            "head_pitch": _rounded_or_none(self.head_pitch),
             "quality_flags": list(self.quality_flags),
         }
 
@@ -167,6 +172,7 @@ class FaceRecheckThresholds:
     min_face_height: int
     blur_threshold: float
     frontal_max_yaw_score: float
+    head_pitch_min: float
     similarity_threshold: float
     camera_match_similarity_threshold: float
     camera_match_gap_threshold: float
@@ -183,6 +189,7 @@ class FaceRecheckThresholds:
             "min_face_height": self.min_face_height,
             "blur_threshold": round(self.blur_threshold, 6),
             "frontal_max_yaw_score": round(self.frontal_max_yaw_score, 6),
+            "head_pitch_min": round(self.head_pitch_min, 6),
             "similarity_threshold": round(self.similarity_threshold, 6),
             "camera_match_similarity_threshold": round(self.camera_match_similarity_threshold, 6),
             "camera_match_gap_threshold": round(self.camera_match_gap_threshold, 6),
@@ -743,7 +750,7 @@ def _camera_match_rescued(
     flags = set(face.selected_face.quality_flags)
     if "face_too_small" not in flags:
         return False
-    if flags.intersection({"low_det_score", "blurred", "side_face"}):
+    if flags.intersection({"low_det_score", "blurred", "side_face", "head_pitch_bad"}):
         return False
     return (
         face.selected_face.width >= thresholds.camera_match_rescue_min_face_width
@@ -1192,6 +1199,7 @@ def _summarize_face(
     det_score = float(getattr(face, "det_score", 0.0) or 0.0)
     blur_score = _blur_score(cv2, img, x1, y1, x2, y2)
     frontal_score = _frontal_score(face)
+    head_pitch = _head_pitch(face)
     flags: list[str] = []
     if multiple_faces:
         flags.append("multiple_faces")
@@ -1203,6 +1211,8 @@ def _summarize_face(
         flags.append("blurred")
     if frontal_score is not None and frontal_score > settings.frontal_max_yaw_score:
         flags.append("side_face")
+    if head_pitch is not None and head_pitch < settings.head_pitch_min:
+        flags.append("head_pitch_bad")
     return DetectedFaceSummary(
         index=index,
         bbox=(x1, y1, x2, y2),
@@ -1211,6 +1221,7 @@ def _summarize_face(
         height=height,
         blur_score=blur_score,
         frontal_score=frontal_score,
+        head_pitch=head_pitch,
         quality_flags=flags,
     )
 
@@ -1248,6 +1259,16 @@ def _frontal_score(face: Any) -> float | None:
             return None
         eye_center_x = (float(left_eye[0]) + float(right_eye[0])) / 2.0
         return abs(float(nose[0]) - eye_center_x) / eye_distance
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def _head_pitch(face: Any) -> float | None:
+    pose = getattr(face, "pose", None)
+    if pose is None or len(pose) < 1:
+        return None
+    try:
+        return float(pose[0])
     except (TypeError, ValueError, IndexError):
         return None
 
@@ -1360,6 +1381,7 @@ def _thresholds(settings: FaceRecheckSettings) -> FaceRecheckThresholds:
         min_face_height=settings.min_face_height,
         blur_threshold=settings.blur_threshold,
         frontal_max_yaw_score=settings.frontal_max_yaw_score,
+        head_pitch_min=settings.head_pitch_min,
         similarity_threshold=settings.similarity_threshold,
         camera_match_similarity_threshold=settings.camera_match_similarity_threshold,
         camera_match_gap_threshold=settings.camera_match_gap_threshold,

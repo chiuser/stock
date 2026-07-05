@@ -550,6 +550,7 @@ def _fallback_settings() -> face_recheck.FaceRecheckSettings:
         min_face_height=60,
         blur_threshold=80.0,
         frontal_max_yaw_score=0.35,
+        head_pitch_min=-45.0,
         similarity_threshold=0.35,
         camera_match_similarity_threshold=0.30,
         camera_match_gap_threshold=0.03,
@@ -611,6 +612,7 @@ def _fallback_face(
             height=120.0,
             blur_score=100.0,
             frontal_score=0.1,
+            head_pitch=None,
             quality_flags=[] if status == "passed" else [reason],
         ),
         status=status,  # type: ignore[arg-type]
@@ -799,6 +801,29 @@ async def validate_final_decision_flow(request_meta: RequestMeta) -> None:
     assert record["final_recognition_decision"]["action"] == "suppress"
     assert "side_face" in record["final_recognition_decision"]["suppressed_faces"][0]["reason"]
 
+    filter_env = dict(env)
+    filter_env["FACE_RECHECK_MODE"] = "filter"
+    head_pitch_bad = _result_for_faces(
+        [_suppressed_face(reason="head_pitch_bad", head_pitch=-60.9)],
+        mode="filter",
+    )
+    with patched_env(filter_env), tempfile.TemporaryDirectory() as temp_dir:
+        with patch.object(p6s_events.face_recheck, "run_face_recheck", return_value=head_pitch_bad):
+            handled = await p6s_events.handle_event(
+                with_capture_image(known_payload),
+                request_meta=request_meta,
+                root=Path(temp_dir),
+                notify=False,
+            )
+        assert handled.record_file is not None
+        record = json.loads(handled.record_file.path.read_text(encoding="utf-8"))
+    assert handled.result == "filtered"
+    assert record["final_recognition_decision"]["action"] == "suppress"
+    face_rows = recognition_monitor.build_event_face_rows(record)
+    assert face_rows[0]["business_action"] == "suppressed"
+    assert "head_pitch_bad" in face_rows[0]["suppress_reason"]
+    assert record["face_recheck"]["faces"][0]["selected_face"]["head_pitch"] == -60.9
+
     handled, record = await run_case(stranger_payload, same_person)
     assert handled.result == "known"
     assert record["result"] == "known"
@@ -836,8 +861,6 @@ async def validate_final_decision_flow(request_meta: RequestMeta) -> None:
     assert handled.result == "stranger"
     assert [item["trigger"]["kind"] for item in record["final_trigger_results"]] == ["stranger", "stranger"]
 
-    filter_env = dict(env)
-    filter_env["FACE_RECHECK_MODE"] = "filter"
     side_face = _result_for_faces([_suppressed_face(reason="side_face")], mode="filter")
     with patched_env(filter_env), tempfile.TemporaryDirectory() as temp_dir:
         with patch.object(p6s_events.face_recheck, "run_face_recheck", return_value=side_face):
@@ -866,6 +889,7 @@ def _mock_recheck_result() -> face_recheck.FaceRecheckResult:
         height=120.0,
         blur_score=132.4,
         frontal_score=0.12,
+        head_pitch=None,
         quality_flags=[],
     )
     gallery_match = face_recheck.GalleryMatch(
@@ -926,6 +950,7 @@ def _mock_recheck_result() -> face_recheck.FaceRecheckResult:
             min_face_height=80,
             blur_threshold=80.0,
             frontal_max_yaw_score=0.35,
+            head_pitch_min=-45.0,
             similarity_threshold=0.5,
             camera_match_similarity_threshold=0.3,
             camera_match_gap_threshold=0.03,
@@ -1071,12 +1096,16 @@ def _unknown_face(
     )
 
 
-def _suppressed_face(*, reason: str) -> face_recheck.FaceRecheckFaceResult:
+def _suppressed_face(
+    *,
+    reason: str,
+    head_pitch: float | None = None,
+) -> face_recheck.FaceRecheckFaceResult:
     return face_recheck.FaceRecheckFaceResult(
         image_source="background",
         face_index=0,
         face_key="background:0",
-        selected_face=_detected_face(0, quality_flags=[reason]),
+        selected_face=_detected_face(0, quality_flags=[reason], head_pitch=head_pitch),
         status="filtered",
         reason=reason,
         gallery_match=None,
@@ -1089,6 +1118,7 @@ def _detected_face(
     quality_flags: list[str] | None = None,
     width: float = 100.0,
     height: float = 120.0,
+    head_pitch: float | None = None,
 ) -> face_recheck.DetectedFaceSummary:
     x1 = 1.0 + (face_index * 20.0)
     y1 = 2.0
@@ -1100,6 +1130,7 @@ def _detected_face(
         height=height,
         blur_score=132.4,
         frontal_score=0.12,
+        head_pitch=head_pitch,
         quality_flags=quality_flags or [],
     )
 

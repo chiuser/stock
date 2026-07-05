@@ -560,6 +560,12 @@
             <td>基于关键点估算的侧脸阈值。首版 shadow 记录，不强过滤。</td>
           </tr>
           <tr>
+            <td><code>FACE_RECHECK_HEAD_PITCH_MIN</code></td>
+            <td><code>-45</code></td>
+            <td><code>FaceQualityGate</code></td>
+            <td>基于 InsightFace 3D landmark 输出的 <code>pose[0]</code> pitch。小于该值说明明显低头/头顶，标记 <code>head_pitch_bad</code>，属于复核不可用。</td>
+          </tr>
+          <tr>
             <td><code>FACE_RECHECK_SIMILARITY_THRESHOLD</code></td>
             <td><code>0.50</code></td>
             <td><code>FaceGalleryService</code></td>
@@ -683,6 +689,7 @@ class DetectedFaceSummary:
     height: float
     blur_score: float | None
     frontal_score: float | None
+    head_pitch: float | None
     quality_flags: list[str]
 
 @dataclass(frozen=True)
@@ -692,6 +699,7 @@ class FaceRecheckThresholds:
     min_face_height: int
     blur_threshold: float
     frontal_max_yaw_score: float
+    head_pitch_min: float
     similarity_threshold: float
     similarity_margin: float
 
@@ -892,6 +900,13 @@ def should_fallback_to_capture(result, capture_path, settings):
             <td>抑制；不得当作确认陌生人，也不得参与身份覆盖。</td>
           </tr>
           <tr>
+            <td><code>head_pitch_bad</code></td>
+            <td>InsightFace <code>pose[0]</code> pitch 小于 <code>FACE_RECHECK_HEAD_PITCH_MIN</code>，说明明显低头/头顶或脸部可见度不足。</td>
+            <td>记录 pitch 值并发 shadow。</td>
+            <td>抑制；写入过滤原因。</td>
+            <td>抑制；不得当作确认陌生人，也不得参与身份覆盖。</td>
+          </tr>
+          <tr>
             <td><code>multiple_faces</code></td>
             <td>背景图中检测到多张脸。</td>
             <td>记录每张脸的质量、bbox、TopN 和建议动作。</td>
@@ -946,6 +961,17 @@ def should_fallback_to_capture(result, capture_path, settings):
           </tr>
         </tbody>
       </table>
+      <h3>增量同步入口</h3>
+      <p>新增单个人员时，不手工 patch <code>gallery_manifest.json</code> 或 <code>gallery.npz</code>。正确流程是把 P6S 命名图片放入对应源目录，然后用完整构建脚本重新生成 Gallery。这样可以保证 embedding 矩阵、manifest 顺序、构建报告和 Top5 比对逻辑一致。</p>
+      <ul>
+        <li>会员大图目录 <code>styd_member_faces_full_p6s_named</code> 是 Gallery 构建源；会员小图目录 <code>styd_member_faces_p6s_named</code> 用于同步前一致性检查。</li>
+        <li>员工目录 <code>staff_p6s_named</code> 和教练目录 <code>teacher_p6s_named</code> 同样纳入同步比对，避免只补会员时误覆盖掉其他角色。</li>
+        <li>本次新增会员 <code>Immm#S0#T2#M2646107121905699.jpg</code> 已存在于会员大图和小图目录，构建成功后 manifest 中应出现 <code>person_type=member</code>、<code>person_id=2646107121905699</code>、<code>name=mmm</code>。</li>
+        <li>远程替换前必须备份 <code>/var/lib/camera-face-guard/face-gallery</code>，替换后验证 <code>gallery.npz</code> 的 embedding 行数与 <code>gallery_manifest.json.records</code> 数量一致。</li>
+        <li>如果完整重建会让已有生产记录减少，例如无关历史图片现在触发 <code>multiple_faces</code>，不得直接部署该完整构建。允许执行“安全追加”路径：拉取当前生产 <code>gallery.npz</code> 和 <code>gallery_manifest.json</code> 作为基底，只为本次用户明确指定的 P6S 文件生成 embedding 并追加一行，保留所有既有记录；同时把完整重建失败名单写入报告，后续再单独修图。</li>
+        <li>安全追加路径不得自动加入其他未同步人员，即使本地目录中还存在新的 P6S 命名文件；除非用户明确授权“同步所有缺失人员”。</li>
+        <li>该流程固化到本地 Codex 技能“增加会员信息到gallery”，技能只描述和执行 Gallery 资产同步，不修改摄像头配置、摄像头人脸库或数据库 schema。</li>
+      </ul>
       <h3>文件名解析规则</h3>
       <p>构建脚本只处理 <code>.jpg</code>、<code>.jpeg</code>、<code>.png</code> 文件。文件名必须符合 P6S 导入命名规则：</p>
       <pre><code>I名称#S性别#T证件类型#M证件号码.jpg/png</code></pre>

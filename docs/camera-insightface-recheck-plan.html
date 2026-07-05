@@ -777,6 +777,11 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
             <td>模糊过滤阈值，基于人脸区域 Laplacian 方差。</td>
           </tr>
           <tr>
+            <td><code>FACE_RECHECK_HEAD_PITCH_MIN</code></td>
+            <td><code>-45</code></td>
+            <td>低头/头顶过滤阈值，基于 InsightFace <code>pose[0]</code> pitch；小于该值标记为 <code>head_pitch_bad</code>。</td>
+          </tr>
+          <tr>
             <td><code>FACE_RECHECK_SIMILARITY_THRESHOLD</code></td>
             <td><code>0.50</code> 起步</td>
             <td>服务器侧 gallery 命中的相似度阈值，需要用真实样本校准。</td>
@@ -979,7 +984,50 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
     </section>
 
     <section class="panel">
-      <h2>十七、已拍板结论</h2>
+      <h2>十七、Gallery 增量同步方案</h2>
+      <p>Gallery 是由本地 P6S 命名图片目录构建出的运行时资产。新增会员、员工或教练时，不直接手工编辑 <code>gallery_manifest.json</code> 或 <code>gallery.npz</code>，而是以源目录为准重新构建完整 Gallery，验证后替换远程资产。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>输入</th>
+            <th>用途</th>
+            <th>同步规则</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>styd_member_faces_full_p6s_named</code></td>
+            <td>会员 Gallery embedding 构建源。</td>
+            <td>新增会员必须先把大图按 <code>I名称#S0#T2#MID.jpg/png</code> 放入该目录。</td>
+          </tr>
+          <tr>
+            <td><code>styd_member_faces_p6s_named</code></td>
+            <td>会员小图一致性检查。</td>
+            <td>新增会员建议同时存在小图，便于和摄像头人脸库/人工核对一致；构建 Gallery 时仍使用大图。</td>
+          </tr>
+          <tr>
+            <td><code>staff_p6s_named</code></td>
+            <td>员工 Gallery embedding 构建源。</td>
+            <td>按目录注入 <code>person_type=staff</code>。</td>
+          </tr>
+          <tr>
+            <td><code>teacher_p6s_named</code></td>
+            <td>教练 Gallery embedding 构建源。</td>
+            <td>按目录注入 <code>person_type=coach</code>。</td>
+          </tr>
+        </tbody>
+      </table>
+      <ul>
+        <li><strong>本次新增：</strong><code>Immm#S0#T2#M2646107121905699.jpg</code> 已存在于会员大图和小图 P6S 命名目录，预期远程 Gallery 从 <code>264</code> 条增至 <code>265</code> 条。</li>
+        <li><strong>验证：</strong>构建前后需要比对本地源目录与远程 manifest，确认新增人员 ID 出现在 <code>person_type=member</code> 且 <code>name=mmm</code>。</li>
+        <li><strong>部署：</strong>只替换远程 <code>/var/lib/camera-face-guard/face-gallery</code> 下的 Gallery 资产，先备份旧资产；不修改摄像头配置、不改脸库、不重建数据库。</li>
+        <li><strong>安全追加 fallback：</strong>如果完整重建会因为无关图片失败导致生产 Gallery 减员，应停止完整部署，改为以生产 Gallery 为基底只追加本次明确指定的人员；其他未同步人员仅报告，不自动加入。</li>
+        <li><strong>复用：</strong>将本流程沉淀为 Codex 技能“增加会员信息到gallery”，后续触发时自动做目录比对、构建、上传和验证。</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>十八、已拍板结论</h2>
       <table>
         <thead>
           <tr>
