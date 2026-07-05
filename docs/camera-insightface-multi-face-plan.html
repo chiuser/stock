@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>P6S InsightFace 多人脸逐脸识别技术方案</title>
+  <style>
+    :root {
+      --bg: #eef1e7;
+      --paper: #fffdf5;
+      --panel: rgba(255, 253, 245, .86);
+      --ink: #20251f;
+      --muted: #626d61;
+      --line: #ded7c8;
+      --green: #1f6a54;
+      --green-soft: #e2f0e6;
+      --amber: #b46b2d;
+      --amber-soft: #faecd8;
+      --red: #a13f39;
+      --red-soft: #f4dcda;
+      --blue: #315f86;
+      --blue-soft: #dfeaf5;
+      --shadow: 0 24px 72px rgba(42, 46, 36, .13);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.72;
+      background:
+        radial-gradient(circle at 8% 6%, rgba(31, 106, 84, .16), transparent 28rem),
+        radial-gradient(circle at 90% 10%, rgba(180, 107, 45, .14), transparent 26rem),
+        linear-gradient(135deg, #e9f1e6 0%, var(--bg) 50%, #f4e6d4 100%);
+    }
+    main { width: min(1160px, calc(100% - 40px)); margin: 34px auto 64px; }
+    header, section {
+      border: 1px solid rgba(222, 215, 200, .92);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+    }
+    header { padding: 38px; border-radius: 30px; }
+    section { margin-top: 22px; padding: 28px; border-radius: 24px; box-shadow: 0 14px 44px rgba(42, 46, 36, .08); }
+    h1, h2, h3 { margin: 0; line-height: 1.18; }
+    h1 { max-width: 920px; font-size: clamp(32px, 5vw, 58px); letter-spacing: -.04em; }
+    h2 { margin-bottom: 14px; font-size: 25px; letter-spacing: -.02em; }
+    h3 { margin-top: 18px; margin-bottom: 8px; font-size: 18px; }
+    p { margin: 10px 0 0; color: var(--muted); }
+    ul, ol { margin: 10px 0 0; padding-left: 22px; color: var(--muted); }
+    li { margin: 6px 0; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    code { padding: 2px 6px; border-radius: 7px; background: rgba(32, 37, 31, .075); font-size: .92em; }
+    pre {
+      margin: 14px 0 0;
+      padding: 16px;
+      overflow-x: auto;
+      border-radius: 16px;
+      color: #f8f2e8;
+      background: #1f2a24;
+    }
+    pre code { padding: 0; background: transparent; color: inherit; }
+    table { width: 100%; margin-top: 14px; border-collapse: collapse; overflow: hidden; border-radius: 16px; }
+    th, td { padding: 12px 13px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: #283127; background: rgba(31, 106, 84, .12); }
+    td { color: var(--muted); background: rgba(255, 255, 255, .44); }
+    .subtitle { max-width: 860px; margin-top: 14px; font-size: 18px; color: var(--muted); }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border: 1px solid rgba(31, 106, 84, .16);
+      border-radius: 999px;
+      color: var(--green);
+      background: rgba(226, 240, 230, .75);
+      font-weight: 700;
+      font-size: 13px;
+    }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 14px; }
+    .card {
+      padding: 18px;
+      border: 1px solid rgba(222, 215, 200, .9);
+      border-radius: 20px;
+      background: rgba(255, 255, 255, .46);
+    }
+    .callout {
+      margin-top: 14px;
+      padding: 16px;
+      border-radius: 18px;
+      border: 1px solid rgba(49, 95, 134, .18);
+      background: var(--blue-soft);
+      color: #2d4f70;
+    }
+    .warn { border-color: rgba(180, 107, 45, .24); background: var(--amber-soft); color: #7a4b22; }
+    .danger { border-color: rgba(161, 63, 57, .22); background: var(--red-soft); color: #7b302c; }
+    .small { font-size: 13px; color: #737d71; }
+    @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } main { width: min(100% - 24px, 1160px); } header, section { padding: 22px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="pill">技术方案</div>
+      <h1>P6S InsightFace 多人脸逐脸识别技术方案</h1>
+      <p class="subtitle">把当前“每个事件只输出一个主脸”的复核方式，升级为“每个事件保存事件级事实，每张检测到的人脸保存一条 InsightFace 识别明细”。</p>
+      <div class="meta">
+        <span class="pill">适用范围：FaceReco 事件</span>
+        <span class="pill">主表：recognition_events</span>
+        <span class="pill">子表：recognition_event_faces</span>
+        <span class="pill">不修改摄像头配置</span>
+      </div>
+    </header>
+
+    <section>
+      <h2>一、背景问题</h2>
+      <p>事件 <code>672</code> 暴露了当前设计的核心问题：背景图里有两张人脸，摄像头识别的是右侧人脸“董小双”，InsightFace 也检测到了右侧人脸，并且右侧人脸 Top1 也是“董小双”；但当前代码只选择 <code>面积 x 检测分</code> 最大的一张脸输出，因此最终只展示了左侧“石峰”。</p>
+      <div class="callout">
+        这不是 InsightFace 没看到右侧脸，而是我们的数据结构和输出结构把多人脸结果压缩成了一个 <code>selected_face</code>。压缩以后，多人场景会天然丢信息。
+      </div>
+    </section>
+
+    <section>
+      <h2>二、目标与非目标</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>目标</h3>
+          <ul>
+            <li>InsightFace 对 <code>BackgroundImage</code> 中检测到的所有人脸逐个识别。</li>
+            <li>每张脸的处理逻辑与单脸一致：质量判断、Gallery TopN、阈值判断、候选集、crop 图都独立生成。</li>
+            <li>数据库按父子表保存：一条摄像头事件对应多条 InsightFace 人脸结果。</li>
+            <li>监控后台可以在事件详情中展示每张脸的框、crop、候选、分数和是否通过。</li>
+            <li>历史记录可以通过回填/重刷脚本补齐子表，避免后续再迁移历史数据。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>非目标</h3>
+          <ul>
+            <li>不修改摄像头抓拍、推送、录像、脸库等配置。</li>
+            <li>不在本次设计里启用 <code>filter</code> 或 <code>verify_and_override</code> 改变业务判断。</li>
+            <li>不把 embedding 原始向量、base64 图片、Webhook 或密钥写入数据库。</li>
+            <li>不新增人工复核写入流程。</li>
+            <li>不把事件级字段重复铺满到每一张脸记录里。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>三、核心数据关系</h2>
+      <p><code>recognition_events</code> 是事件父表，代表一次摄像头上报；<code>recognition_event_faces</code> 是人脸子表，代表这次事件里 InsightFace 检测到的每一张脸。</p>
+      <pre><code>recognition_events 1 ---- N recognition_event_faces
+
+recognition_events:
+  事件 672，摄像头识别：董小双，背景图路径，Capture 图路径，事件时间，事件级分类
+
+recognition_event_faces:
+  事件 672 / background / face_index=0 / 左侧脸 / 石峰 / 0.441697 / accepted=true
+  事件 672 / background / face_index=1 / 右侧脸 / 董小双 / 0.219165 / accepted=false</code></pre>
+
+      <h3>字段归属原则</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>信息类型</th>
+            <th>写入位置</th>
+            <th>原因</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>摄像头上报事实</td>
+            <td><code>recognition_events</code></td>
+            <td>例如事件时间、摄像头 event_id、摄像头识别结果、背景图路径、Capture 图路径。这些属于整次事件，不属于某一张脸。</td>
+          </tr>
+          <tr>
+            <td>InsightFace 逐脸结果</td>
+            <td><code>recognition_event_faces</code></td>
+            <td>例如 bbox、face_index、det_score、quality_flags、gallery_name、similarity、crop 路径。这些是每张脸独有的信息。</td>
+          </tr>
+          <tr>
+            <td>逐脸与摄像头结果的关系</td>
+            <td><code>recognition_event_faces</code></td>
+            <td>例如 <code>camera_identity_status=name_matched</code> 或 <code>identity_conflict</code>。它不是重复保存摄像头结果，而是保存“这张脸和摄像头识别人员之间的关系”。</td>
+          </tr>
+          <tr>
+            <td>事件级摘要</td>
+            <td><code>recognition_events</code></td>
+            <td>例如总人脸数、通过阈值的人脸数、是否存在摄像头目标候选。这些便于列表页和快速筛选。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>四、冗余控制</h2>
+      <p>这个设计会有少量必要冗余，但不会把事件字段重复到每张脸里。</p>
+      <div class="grid">
+        <div class="card">
+          <h3>子表不重复保存</h3>
+          <ul>
+            <li>不重复保存 <code>camera_serial_number</code>。</li>
+            <li>不重复保存 <code>camera_person_name</code>。</li>
+            <li>不重复保存背景图和 Capture 图路径。</li>
+            <li>不重复保存原始 JSON 路径。</li>
+            <li>不重复保存飞书发送状态和入场记录状态。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>子表必须保存</h3>
+          <ul>
+            <li>每张脸自己的 bbox、位置和质量分。</li>
+            <li>每张脸自己的 Gallery 命中和候选集。</li>
+            <li>每张脸自己的 crop 图路径。</li>
+            <li>每张脸和摄像头识别结果的关系判断。</li>
+            <li>必要的 <code>recognition_event_id</code> 外键。</li>
+          </ul>
+        </div>
+      </div>
+      <p class="small">如果未来查询需要按时间筛选子表，可以通过 join 父表完成；如性能不足，再考虑在子表增加 <code>event_date</code> 这种可控冗余字段。</p>
+    </section>
+
+    <section>
+      <h2>五、写入与读取职责</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>动作</th>
+            <th>负责模块</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>实时写父表</td>
+            <td><code>p6s_events.py</code> 处理完成后调用 <code>recognition_monitor</code></td>
+            <td>沿用现有逻辑：保存 processing record 后 upsert <code>recognition_events</code>。</td>
+          </tr>
+          <tr>
+            <td>实时写子表</td>
+            <td><code>recognition_monitor</code> / <code>recognition_repo</code></td>
+            <td>从 <code>face_recheck.faces</code> 中提取逐脸结果，按 <code>recognition_event_id + image_source + face_index</code> upsert。</td>
+          </tr>
+          <tr>
+            <td>历史回填</td>
+            <td><code>backfill_recognition_events.py</code> 或新增回填脚本</td>
+            <td>读取历史 processing record，必要时重新跑多脸识别，补齐父表和子表。</td>
+          </tr>
+          <tr>
+            <td>监控页读取</td>
+            <td><code>recognition_monitor</code> API</td>
+            <td>列表页读父表摘要；详情页读父表 + 子表逐脸结果。</td>
+          </tr>
+          <tr>
+            <td>报表和分析读取</td>
+            <td>后续报表服务</td>
+            <td>按子表统计 Gallery 命中、多人脸冲突、摄像头陌生但 InsightFace 命中等。</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="callout warn">
+        实时业务判断不要依赖“先写 DB 再读 DB”。主链路应使用内存中的本次 <code>FaceRecheckResult</code> 做判断；数据库是事实记录、监控和后续分析来源。
+      </div>
+    </section>
+
+    <section>
+      <h2>六、图片处理策略</h2>
+      <ol>
+        <li>默认对 <code>BackgroundImage</code> 检测全部人脸并逐脸识别。</li>
+        <li>每张背景图人脸都生成一个 InsightFace crop，crop 绑定到对应子表行。</li>
+        <li>如果背景图没有检测到人脸，且存在 <code>CaptureImage</code>，则对 <code>CaptureImage</code> 执行同样的逐脸识别。</li>
+        <li>如果背景图检测到多张脸，且摄像头有 known 结果，可以额外处理 <code>CaptureImage</code> 作为 <code>image_source=capture</code> 的辅助行，但不覆盖背景图逐脸结果。</li>
+        <li><code>recognizeImage</code> 本期仍不纳入主流程，除非后续确认它比 Capture 图更适合作为摄像头目标脸。</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>七、监控后台展示</h2>
+      <p>列表页继续以事件为单位展示，详情页展示这条事件下面的所有人脸。</p>
+      <pre><code>事件 672
+摄像头识别：董小双
+
+背景图检测到 2 张脸：
+  1. 左侧脸：石峰，0.441697，通过
+  2. 右侧脸：董小双，0.219165，未通过，Top1 是摄像头识别人
+
+Capture 图：
+  1. 摄像头目标脸辅助结果：...</code></pre>
+      <p>前端应在背景图上画 bbox，点击人脸卡片可高亮对应框；每张脸卡片展示姓名、角色、相似度、是否通过、Top5 候选和 crop 缩略图。</p>
+    </section>
+
+    <section>
+      <h2>八、上线方式</h2>
+      <ol>
+        <li>先实现 <code>shadow</code> 下的多脸逐脸记录，不改变主飞书和 attendance 行为。</li>
+        <li>部署后先对历史 7 月 4 日、7 月 5 日样本回填子表，验证事件 672 能展示两张脸。</li>
+        <li>监控页面确认稳定后，再讨论 <code>filter</code> 或 <code>verify_and_override</code> 如何使用多脸结果。</li>
+      </ol>
+      <div class="callout danger">
+        本方案不授权任何摄像头写配置。后续开发、测试、部署均不得调用摄像头写接口。
+      </div>
+    </section>
+  </main>
+</body>
+</html>
