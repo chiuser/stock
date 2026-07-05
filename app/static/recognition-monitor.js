@@ -154,8 +154,8 @@ function initElements() {
     "page-size", "events-body", "monitor-list-desc", "btn-prev-page", "btn-next-page", "page-state",
     "event-modal", "modal-backdrop", "modal-close", "modal-classification", "modal-title",
     "modal-subtitle", "modal-background-img", "modal-background-placeholder", "modal-capture-img",
-    "modal-capture-placeholder", "modal-crop-img", "modal-crop-placeholder", "modal-camera-kv",
-    "modal-recheck-kv", "modal-gallery-kv", "modal-candidates", "modal-safe-json",
+    "modal-background-overlay", "modal-capture-placeholder", "modal-crop-img", "modal-crop-placeholder", "modal-camera-kv",
+    "modal-recheck-kv", "modal-gallery-kv", "modal-candidates", "modal-faces", "modal-safe-json",
   ].forEach(id => { els[id] = document.getElementById(id); });
 }
 
@@ -444,6 +444,7 @@ function renderEventRow(item) {
       <td>
         <strong>${html(label(recheckStatusLabels, recheck.status))}</strong>
         <small>${html(text(recheck.reason, "无过滤原因"))}</small>
+        <small>人脸 ${html(recheck.face_count || 0)} · 通过 ${html(recheck.accepted_face_count || 0)} · 冲突 ${recheck.has_identity_conflict ? "是" : "否"}</small>
         <small>检测分 ${html(numberText(recheck.det_score))} · 正脸 ${html(numberText(recheck.frontal_score))}</small>
       </td>
       <td>
@@ -475,9 +476,15 @@ async function loadImageInto(apiUrl, img, frame) {
     if (oldUrl) URL.revokeObjectURL(oldUrl);
     const objectUrl = URL.createObjectURL(blob);
     state.imageUrls.set(img, objectUrl);
-    img.src = objectUrl;
-    img.hidden = false;
-    if (frame) frame.classList.add("has-image");
+    await new Promise(resolve => {
+      img.onload = resolve;
+      img.onerror = resolve;
+      img.src = objectUrl;
+    });
+    img.onload = null;
+    img.onerror = null;
+    img.hidden = !img.naturalWidth;
+    if (frame) frame.classList.toggle("has-image", !img.hidden);
   } catch {
     img.hidden = true;
     if (frame) frame.classList.remove("has-image");
@@ -520,6 +527,8 @@ function clearModal() {
   els["modal-recheck-kv"].innerHTML = "";
   els["modal-gallery-kv"].innerHTML = "";
   els["modal-candidates"].innerHTML = "";
+  els["modal-background-overlay"].innerHTML = "";
+  els["modal-faces"].innerHTML = "";
   els["modal-safe-json"].textContent = "—";
 }
 
@@ -533,7 +542,8 @@ function renderDetail(detail) {
   els["modal-title"].textContent = camera.name || gallery.name || "未知人员";
   els["modal-subtitle"].textContent = `${shortTime(detail.event_time)} · ${text(detail.device_sn, "未知设备")} · 事件 ${text(detail.event_id)}`;
 
-  loadModalImage(detail.images && detail.images.background, "modal-background-img", "modal-background-placeholder");
+  loadModalImage(detail.images && detail.images.background, "modal-background-img", "modal-background-placeholder")
+    .then(() => renderBackgroundBoxes(detail.faces || []));
   loadModalImage(detail.images && detail.images.capture, "modal-capture-img", "modal-capture-placeholder");
   loadModalImage(detail.images && detail.images.insightface_crop, "modal-crop-img", "modal-crop-placeholder");
 
@@ -547,6 +557,9 @@ function renderDetail(detail) {
     ["状态", label(recheckStatusLabels, recheck.status)],
     ["原因", recheck.reason],
     ["人脸数量", recheck.face_count],
+    ["Gallery 通过", recheck.accepted_face_count],
+    ["摄像头目标", recheck.camera_target_face_status],
+    ["身份冲突", recheck.has_identity_conflict ? "是" : "否"],
     ["检测分", numberText(recheck.det_score)],
     ["人脸尺寸", recheck.face_size],
     ["模糊分", numberText(recheck.blur_score)],
@@ -563,6 +576,7 @@ function renderDetail(detail) {
     ["对齐状态", gallery.camera_identity_status],
   ]);
   renderCandidates(gallery.top5_candidates || []);
+  renderFaces(detail.faces || []);
   els["modal-safe-json"].textContent = JSON.stringify({
     thresholds: record.thresholds || {},
     quality_flags: recheck.quality_flags || [],
@@ -578,9 +592,9 @@ function loadModalImage(image, imgId, placeholderId) {
   if (!apiUrl) {
     img.hidden = true;
     placeholder.hidden = false;
-    return;
+    return Promise.resolve();
   }
-  loadImageInto(apiUrl, img, img.closest(".monitor-image-frame")).then(() => {
+  return loadImageInto(apiUrl, img, img.closest(".monitor-image-frame")).then(() => {
     placeholder.hidden = !img.hidden;
   });
 }
@@ -612,6 +626,121 @@ function renderCandidates(candidates) {
       </div>
     `;
   }).join("");
+}
+
+function renderFaces(faces) {
+  if (!faces.length) {
+    els["modal-faces"].innerHTML = '<p class="monitor-muted">暂无逐脸结果</p>';
+    return;
+  }
+  const groups = [
+    ["background", "背景图人脸"],
+    ["capture", "摄像头人脸图"],
+  ];
+  els["modal-faces"].innerHTML = groups.map(([source, title]) => {
+    const items = faces.filter(face => face.image_source === source);
+    if (!items.length) return "";
+    return `
+      <div class="monitor-face-group">
+        <h5>${html(title)}</h5>
+        <div class="monitor-face-card-grid">
+          ${items.map(face => faceCardHtml(face)).join("")}
+        </div>
+      </div>
+    `;
+  }).join("") || '<p class="monitor-muted">暂无逐脸结果</p>';
+  els["modal-faces"].querySelectorAll("[data-face-key]").forEach(card => {
+    card.addEventListener("click", () => highlightFaceBox(card.dataset.faceKey || ""));
+  });
+  els["modal-faces"].querySelectorAll("[data-face-crop]").forEach(img => {
+    loadImageInto(img.dataset.faceCrop, img, img.closest(".monitor-face-crop"));
+  });
+}
+
+function faceCardHtml(face) {
+  const quality = face.quality || {};
+  const gallery = face.gallery || {};
+  const cropApi = imageApi(face.crop);
+  const galleryTitle = gallery.name
+    ? `${gallery.name} · ${roleText(gallery.person_type, gallery.group_name)}`
+    : "未命中";
+  return `
+    <button class="monitor-face-card" data-face-key="${html(face.face_key)}" type="button">
+      <div class="monitor-face-crop">
+        ${cropApi ? `<img data-face-crop="${html(cropApi)}" alt="逐脸裁剪图">` : '<span>无裁剪图</span>'}
+      </div>
+      <div class="monitor-face-card-body">
+        <strong>${html(text(face.face_key))} · ${html(text(face.position_hint, ""))}</strong>
+        <small>${html(label(recheckStatusLabels, face.status))} · ${html(text(face.reason))}</small>
+        <small>${html(galleryTitle)} · ${gallery.accepted ? "通过" : "未通过"}</small>
+        <small>相似度 ${html(numberText(gallery.similarity))} · 第二名 ${html(numberText(gallery.second_similarity))}</small>
+        <small>检测分 ${html(numberText(quality.det_score))} · 正脸 ${html(numberText(quality.frontal_score))}</small>
+        <div class="monitor-face-candidates">${html(candidateOneLine(gallery.top5_candidates || []))}</div>
+      </div>
+    </button>
+  `;
+}
+
+function candidateOneLine(candidates) {
+  if (!candidates.length) return "候选集：无";
+  return `候选集：${candidates.slice(0, 5).map((item, idx) => {
+    const name = item.name || item.person_id || "未知";
+    const score = item.similarity ?? item.score ?? "—";
+    return `${idx + 1}. ${name}/${numberText(score)}`;
+  }).join("；")}`;
+}
+
+function renderBackgroundBoxes(faces) {
+  const overlay = els["modal-background-overlay"];
+  const img = els["modal-background-img"];
+  overlay.innerHTML = "";
+  if (img.hidden || !img.naturalWidth || !img.naturalHeight) return;
+  const backgroundFaces = faces.filter(face => face.image_source === "background" && Array.isArray(face.bbox) && face.bbox.length >= 4);
+  if (!backgroundFaces.length) return;
+  const frame = img.closest(".monitor-image-frame");
+  const frameRect = frame.getBoundingClientRect();
+  const imageAspect = img.naturalWidth / img.naturalHeight;
+  const frameAspect = frameRect.width / frameRect.height;
+  let renderedWidth = frameRect.width;
+  let renderedHeight = frameRect.height;
+  let offsetX = 0;
+  let offsetY = 0;
+  if (frameAspect > imageAspect) {
+    renderedWidth = frameRect.height * imageAspect;
+    offsetX = (frameRect.width - renderedWidth) / 2;
+  } else {
+    renderedHeight = frameRect.width / imageAspect;
+    offsetY = (frameRect.height - renderedHeight) / 2;
+  }
+  overlay.innerHTML = backgroundFaces.map((face, index) => {
+    const [x1, y1, x2, y2] = face.bbox.map(Number);
+    const left = offsetX + (x1 / img.naturalWidth) * renderedWidth;
+    const top = offsetY + (y1 / img.naturalHeight) * renderedHeight;
+    const width = ((x2 - x1) / img.naturalWidth) * renderedWidth;
+    const height = ((y2 - y1) / img.naturalHeight) * renderedHeight;
+    const accepted = face.gallery && face.gallery.accepted;
+    return `
+      <button class="monitor-bbox ${accepted ? "accepted" : ""}" data-box-key="${html(face.face_key)}"
+        style="left:${left}px;top:${top}px;width:${width}px;height:${height}px" type="button">
+        <span>${index + 1}</span>
+      </button>
+    `;
+  }).join("");
+  overlay.querySelectorAll("[data-box-key]").forEach(box => {
+    box.addEventListener("click", () => highlightFaceCard(box.dataset.boxKey || ""));
+  });
+}
+
+function highlightFaceBox(faceKey) {
+  document.querySelectorAll(".monitor-bbox").forEach(box => {
+    box.classList.toggle("active", box.dataset.boxKey === faceKey);
+  });
+}
+
+function highlightFaceCard(faceKey) {
+  document.querySelectorAll(".monitor-face-card").forEach(card => {
+    card.classList.toggle("active", card.dataset.faceKey === faceKey);
+  });
 }
 
 document.addEventListener("DOMContentLoaded", () => {

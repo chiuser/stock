@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from app.db import recognition_repo
-from app.services import event_store
+from app.services import event_store, face_recheck
 
 LOGGER = logging.getLogger(__name__)
 LOCAL_TZ = ZoneInfo("Asia/Shanghai")
@@ -66,6 +66,9 @@ def build_event_row(
         "recheck_status": _text(face_recheck.get("status")) or "not_rechecked",
         "recheck_reason": _text(face_recheck.get("reason")),
         "face_count": _int(face_recheck.get("face_count")),
+        "accepted_face_count": _accepted_face_count(face_recheck),
+        "camera_target_face_status": _text(face_recheck.get("camera_target_face_status")),
+        "has_identity_conflict": _has_identity_conflict(face_recheck),
         "quality_flags": _list(selected_face.get("quality_flags")),
         "det_score": _float(selected_face.get("det_score")),
         "face_width": _float(selected_face.get("width")),
@@ -95,6 +98,51 @@ def build_event_row(
     }
 
 
+def build_event_face_rows(record: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Convert face_recheck.faces into DB rows for recognition_event_faces."""
+    face_recheck_payload = _dict(record.get("face_recheck"))
+    rows: list[dict[str, Any]] = []
+    for fallback_index, face in enumerate(_list(face_recheck_payload.get("faces"))):
+        face_payload = _dict(face)
+        selected = _dict(face_payload.get("selected_face"))
+        gallery = _dict(face_payload.get("gallery_match"))
+        crop = _dict(face_payload.get("crop"))
+        bbox = _list(selected.get("bbox"))
+        width = _float(selected.get("width"))
+        height = _float(selected.get("height"))
+        center_x, center_y = _bbox_center(bbox)
+        rows.append(
+            {
+                "image_source": _text(face_payload.get("image_source")) or "background",
+                "face_index": _int(face_payload.get("face_index") if "face_index" in face_payload else fallback_index),
+                "face_key": _text(face_payload.get("face_key")) or f"background:{fallback_index}",
+                "bbox": bbox,
+                "center_x": center_x,
+                "center_y": center_y,
+                "face_width": width,
+                "face_height": height,
+                "det_score": _float(selected.get("det_score")),
+                "blur_score": _float(selected.get("blur_score")),
+                "frontal_score": _float(selected.get("frontal_score")),
+                "quality_flags": _list(selected.get("quality_flags")),
+                "recheck_status": _text(face_payload.get("status")) or "filtered",
+                "recheck_reason": _text(face_payload.get("reason")),
+                "gallery_accepted": gallery.get("accepted") if "accepted" in gallery else None,
+                "gallery_name": _text(gallery.get("name")),
+                "gallery_person_id": _text(gallery.get("person_id")),
+                "gallery_person_type": _text(gallery.get("person_type")),
+                "gallery_group_name": _text(gallery.get("group_name")),
+                "gallery_similarity": _float(gallery.get("similarity")),
+                "gallery_second_similarity": _float(gallery.get("second_similarity")),
+                "gallery_camera_identity_status": _text(gallery.get("camera_identity_status")),
+                "gallery_top5_candidates": _list(gallery.get("candidates")),
+                "crop_relative_path": _text(crop.get("relative_path")) if crop.get("status") == "saved" else "",
+                "crop_content_type": _text(crop.get("content_type")) if crop.get("status") == "saved" else "",
+            }
+        )
+    return rows
+
+
 def safe_upsert_processing_record_file(
     record_path: Path,
     *,
@@ -108,9 +156,30 @@ def safe_upsert_processing_record_file(
         if record.get("operator") != "FaceReco":
             return {"ok": True, "skipped": True, "reason": "not_face_reco"}
         row = build_event_row(record, record_path=record_path, root=root, ensure_crop=True)
+        face_rows = build_event_face_rows(record)
         with recognition_repo.transaction() as conn:
             result = recognition_repo.upsert_recognition_event(conn, row)
-        return {"ok": True, "skipped": False, "recognition_event_id": result.get("recognition_event_id") if result else None}
+            recognition_event_id = result.get("recognition_event_id") if result else None
+            upserted_faces = 0
+            stale_deleted = 0
+            if recognition_event_id:
+                upserted_faces = recognition_repo.upsert_recognition_event_faces(
+                    conn,
+                    recognition_event_id=int(recognition_event_id),
+                    rows=face_rows,
+                )
+                stale_deleted = recognition_repo.delete_stale_faces_for_event(
+                    conn,
+                    recognition_event_id=int(recognition_event_id),
+                    keep_keys=[row["face_key"] for row in face_rows],
+                )
+        return {
+            "ok": True,
+            "skipped": False,
+            "recognition_event_id": recognition_event_id,
+            "face_rows_upserted": upserted_faces,
+            "stale_face_rows_deleted": stale_deleted,
+        }
     except Exception as exc:
         LOGGER.warning("recognition monitor upsert failed: %s", type(exc).__name__)
         return {"ok": False, "error_type": type(exc).__name__}
@@ -120,21 +189,15 @@ def classify_event(record: Mapping[str, Any], face_recheck: Mapping[str, Any] | 
     camera_result = str(record.get("result") or "")
     recheck = _dict(face_recheck if face_recheck is not None else record.get("face_recheck"))
     status = str(recheck.get("status") or "")
-    gallery = _dict(recheck.get("gallery_match"))
-    accepted = gallery.get("accepted") is True
-    identity_status = str(gallery.get("camera_identity_status") or "")
+    face_gallery_matches = _face_gallery_matches(recheck)
 
-    if accepted and identity_status == "identity_conflict":
+    if any(_accepted(match) and _text(match.get("camera_identity_status")) == "identity_conflict" for match in face_gallery_matches):
         return "identity_conflict"
-    if camera_result == "known" and accepted and identity_status in {
-        "name_matched",
-        "id_matched",
-        "name_and_id_matched",
-    }:
+    if camera_result == "known" and any(_accepted(match) and _identity_matched(match) for match in face_gallery_matches):
         return "same_person"
     if camera_result == "known" and status == "filtered":
         return "camera_hit_but_recheck_filtered"
-    if camera_result != "known" and accepted:
+    if camera_result != "known" and any(_accepted(match) for match in face_gallery_matches):
         return "camera_missed_but_gallery_hit"
     return "both_unknown_or_filtered"
 
@@ -193,7 +256,12 @@ def build_quality_response(overview: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def row_to_event(row: Mapping[str, Any], *, include_detail: bool = False) -> dict[str, Any]:
+def row_to_event(
+    row: Mapping[str, Any],
+    *,
+    include_detail: bool = False,
+    faces: list[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
     event = {
         "event_key": _text(row.get("event_dedupe_key")),
         "event_id": _text(row.get("camera_event_id")),
@@ -212,6 +280,9 @@ def row_to_event(row: Mapping[str, Any], *, include_detail: bool = False) -> dic
             "status": _text(row.get("recheck_status")),
             "reason": _text(row.get("recheck_reason")),
             "face_count": _int(row.get("face_count")),
+            "accepted_face_count": _int(row.get("accepted_face_count")),
+            "camera_target_face_status": _text(row.get("camera_target_face_status")),
+            "has_identity_conflict": bool(row.get("has_identity_conflict") or False),
             "quality_flags": _json_list(row.get("quality_flags")),
             "det_score": _float(row.get("det_score")),
             "face_size": _face_size(row),
@@ -236,6 +307,7 @@ def row_to_event(row: Mapping[str, Any], *, include_detail: bool = False) -> dic
         },
     }
     if include_detail:
+        event["faces"] = [face_row_to_event(face) for face in (faces or [])]
         event["record"] = {
             "record_relative_path": _text(row.get("record_relative_path")),
             "raw_relative_path": _text(row.get("raw_relative_path")),
@@ -243,6 +315,41 @@ def row_to_event(row: Mapping[str, Any], *, include_detail: bool = False) -> dic
             "thresholds": _json_dict(row.get("thresholds")),
         }
     return event
+
+
+def face_row_to_event(row: Mapping[str, Any]) -> dict[str, Any]:
+    bbox = _json_list(row.get("bbox"))
+    crop_relative_path = _text(row.get("crop_relative_path"))
+    return {
+        "face_key": _text(row.get("face_key")),
+        "image_source": _text(row.get("image_source")) or "background",
+        "face_index": _int(row.get("face_index")),
+        "bbox": bbox,
+        "position_hint": _position_hint(row),
+        "status": _text(row.get("recheck_status")),
+        "reason": _text(row.get("recheck_reason")),
+        "quality": {
+            "det_score": _float(row.get("det_score")),
+            "face_size": _face_size(row),
+            "width": _float(row.get("face_width")),
+            "height": _float(row.get("face_height")),
+            "blur_score": _float(row.get("blur_score")),
+            "frontal_score": _float(row.get("frontal_score")),
+            "quality_flags": _json_list(row.get("quality_flags")),
+        },
+        "gallery": {
+            "accepted": row.get("gallery_accepted"),
+            "name": _text(row.get("gallery_name")),
+            "person_id": _text(row.get("gallery_person_id")),
+            "person_type": _text(row.get("gallery_person_type")),
+            "group_name": _text(row.get("gallery_group_name")),
+            "similarity": _float(row.get("gallery_similarity")),
+            "second_similarity": _float(row.get("gallery_second_similarity")),
+            "camera_identity_status": _text(row.get("gallery_camera_identity_status")),
+            "top5_candidates": _json_list(row.get("gallery_top5_candidates")),
+        },
+        "crop": _crop_ref(crop_relative_path, _text(row.get("crop_content_type"))),
+    }
 
 
 def page_size_from_env() -> tuple[int, int]:
@@ -306,6 +413,73 @@ def ensure_insightface_crop(record: Mapping[str, Any], *, root: Path | str | Non
         }
 
 
+def attach_face_crops_to_recheck(
+    recheck_result: face_recheck.FaceRecheckResult,
+    *,
+    identity: event_store.EventIdentity,
+    source_images: Mapping[str, event_store.StoredImage | Path | str | None],
+    root: Path | str | None = None,
+) -> face_recheck.FaceRecheckResult:
+    """Save per-face InsightFace crops and attach safe summaries to the result."""
+    crops: dict[str, face_recheck.FaceCropSummary] = {}
+    for face in recheck_result.faces:
+        if face.selected_face is None:
+            continue
+        image_path = _source_image_path(source_images.get(face.image_source))
+        if image_path is None:
+            crops[face.face_key] = face_recheck.FaceCropSummary(error_type="source_image_missing")
+            continue
+        try:
+            crop_bytes = _crop_image(image_path, list(face.selected_face.bbox))
+            stored = event_store.save_face_image(
+                identity,
+                crop_bytes,
+                source="InsightFaceCrop",
+                root=root,
+                category="faces",
+                image_kind=f"insightface_{face.image_source}_face{face.face_index}",
+            )
+            crops[face.face_key] = face_recheck.FaceCropSummary(
+                relative_path=stored.relative_path,
+                content_type=stored.content_type,
+            )
+        except Exception as exc:
+            crops[face.face_key] = face_recheck.FaceCropSummary(error_type=type(exc).__name__)
+    return face_recheck.with_face_crops(recheck_result, crops)
+
+
+def rebuild_face_recheck_for_record(
+    record: Mapping[str, Any],
+    *,
+    root: Path | str | None = None,
+    save_crops: bool = True,
+) -> face_recheck.FaceRecheckResult:
+    """Run current InsightFace settings against stored record images without side effects beyond crop files."""
+    background_path = _resolved_record_image_path(record, "background", root=root)
+    capture_path = _resolved_record_image_path(record, "capture", root=root)
+    identity = _identity_from_record(record)
+    result = face_recheck.run_face_recheck(
+        face_recheck.FaceRecheckInput(
+            identity=identity,
+            route_result=_route_result_from_record(record),
+            camera_person=_camera_person_from_record(record),
+            primary_image_path=background_path or capture_path,
+            background_image_path=background_path,
+            capture_image_path=capture_path,
+            background_view_url=None,
+            capture_view_url=None,
+        )
+    )
+    if not save_crops:
+        return result
+    return attach_face_crops_to_recheck(
+        result,
+        identity=identity,
+        source_images={"background": background_path, "capture": capture_path},
+        root=root,
+    )
+
+
 def _image_record(record: Mapping[str, Any], key: str) -> dict[str, Any]:
     images = _dict(record.get("images"))
     image = _dict(images.get(key))
@@ -318,6 +492,17 @@ def _image_record(record: Mapping[str, Any], key: str) -> dict[str, Any]:
     return {}
 
 
+def _resolved_record_image_path(record: Mapping[str, Any], key: str, *, root: Path | str | None) -> Path | None:
+    relative_path = _text(_image_record(record, key).get("relative_path"))
+    if not relative_path:
+        return None
+    try:
+        image_path, _ = resolve_image_path(relative_path, root=root)
+    except Exception:
+        return None
+    return image_path
+
+
 def _image_ref(row: Mapping[str, Any], kind: Literal["background", "capture", "insightface_crop"]) -> dict[str, Any]:
     relative_path = _text(row.get(f"{kind}_relative_path"))
     content_type = _text(row.get(f"{kind}_content_type"))
@@ -326,6 +511,18 @@ def _image_ref(row: Mapping[str, Any], kind: Literal["background", "capture", "i
     return {
         "status": "saved",
         "kind": kind,
+        "relative_path": relative_path,
+        "content_type": content_type or _content_type_for_path(Path(relative_path)),
+        "api_url": f"/api/recognition-monitor/images?{urlencode({'relative_path': relative_path})}",
+    }
+
+
+def _crop_ref(relative_path: str, content_type: str) -> dict[str, Any]:
+    if not relative_path:
+        return {"status": "missing", "kind": "face_crop"}
+    return {
+        "status": "saved",
+        "kind": "face_crop",
         "relative_path": relative_path,
         "content_type": content_type or _content_type_for_path(Path(relative_path)),
         "api_url": f"/api/recognition-monitor/images?{urlencode({'relative_path': relative_path})}",
@@ -357,6 +554,14 @@ def _crop_image(image_path: Path, bbox: list[Any]) -> bytes:
     return encoded.tobytes()
 
 
+def _source_image_path(source: event_store.StoredImage | Path | str | None) -> Path | None:
+    if source is None:
+        return None
+    if isinstance(source, event_store.StoredImage):
+        return source.path
+    return Path(source)
+
+
 def _identity_from_record(record: Mapping[str, Any]) -> event_store.EventIdentity:
     received_at = _parse_datetime(record.get("received_at")) or datetime.now(LOCAL_TZ)
     event_time = _text(record.get("event_time"))
@@ -371,6 +576,30 @@ def _identity_from_record(record: Mapping[str, Any]) -> event_store.EventIdentit
         received_at=received_at,
         event_day=_event_date(_parse_datetime(event_time), received_at, None).isoformat(),
     )
+
+
+def _route_result_from_record(record: Mapping[str, Any]) -> Literal["known", "stranger", "parse_error"]:
+    result = _text(record.get("result"))
+    if result == "known":
+        return "known"
+    if result == "parse_error":
+        return "parse_error"
+    return "stranger"
+
+
+def _camera_person_from_record(record: Mapping[str, Any]) -> dict[str, Any] | None:
+    matched = _dict(record.get("matched_person"))
+    if not matched:
+        return None
+    return {
+        "name": _text(matched.get("name")),
+        "person_id": _first_text(matched.get("id"), matched.get("person_id"), matched.get("camera_person_id")),
+        "id": _first_text(matched.get("id"), matched.get("person_id"), matched.get("camera_person_id")),
+        "role": _text(matched.get("person_role")),
+        "role_name": _text(matched.get("person_role_name")),
+        "group_id": _text(matched.get("group_id")),
+        "group_name": _text(matched.get("group_name")),
+    }
 
 
 def _relative_path(path: Path | None, *, root: Path | str | None) -> str | None:
@@ -443,6 +672,70 @@ def _face_size(row: Mapping[str, Any]) -> str:
     if width is None or height is None:
         return ""
     return f"{width}x{height}"
+
+
+def _bbox_center(bbox: list[Any]) -> tuple[float | None, float | None]:
+    if len(bbox) < 4:
+        return None, None
+    try:
+        x1, y1, x2, y2 = [float(value) for value in bbox[:4]]
+    except (TypeError, ValueError):
+        return None, None
+    return (x1 + x2) / 2.0, (y1 + y2) / 2.0
+
+
+def _position_hint(row: Mapping[str, Any]) -> str:
+    center_x = _float(row.get("center_x"))
+    if center_x is None:
+        return ""
+    width = _float(row.get("face_width")) or 0.0
+    left = center_x - (width / 2.0)
+    if left < 320:
+        return "left"
+    if left > 640:
+        return "right"
+    return "center"
+
+
+def _accepted(match: Mapping[str, Any]) -> bool:
+    return match.get("accepted") is True
+
+
+def _identity_matched(match: Mapping[str, Any]) -> bool:
+    return _text(match.get("camera_identity_status")) in {
+        "name_matched",
+        "id_matched",
+        "name_and_id_matched",
+    }
+
+
+def _accepted_face_count(face_recheck: Mapping[str, Any]) -> int:
+    if "accepted_face_count" in face_recheck:
+        return _int(face_recheck.get("accepted_face_count"))
+    matches = _face_gallery_matches(face_recheck)
+    return sum(1 for match in matches if _accepted(match))
+
+
+def _has_identity_conflict(face_recheck: Mapping[str, Any]) -> bool:
+    if face_recheck.get("has_identity_conflict") is True:
+        return True
+    return any(
+        _accepted(match) and _text(match.get("camera_identity_status")) == "identity_conflict"
+        for match in _face_gallery_matches(face_recheck)
+    )
+
+
+def _face_gallery_matches(face_recheck: Mapping[str, Any]) -> list[dict[str, Any]]:
+    matches = [
+        _dict(_dict(face).get("gallery_match"))
+        for face in _list(face_recheck.get("faces"))
+    ]
+    matches = [match for match in matches if match]
+    if not matches:
+        legacy = _dict(face_recheck.get("gallery_match"))
+        if legacy:
+            matches = [legacy]
+    return matches
 
 
 def _quality_day(value: Any) -> dict[str, Any]:

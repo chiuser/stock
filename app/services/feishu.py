@@ -141,6 +141,7 @@ def build_face_recheck_shadow_post(
 
     selected_face = recheck_result.get("selected_face") or {}
     gallery_match = recheck_result.get("gallery_match") or {}
+    faces = recheck_result.get("faces") if isinstance(recheck_result.get("faces"), list) else []
     thresholds = recheck_result.get("thresholds") or {}
     lines = [
         _text_line("事件时间", event_time or "unknown"),
@@ -154,6 +155,9 @@ def build_face_recheck_shadow_post(
         _text_line("InsightFace 建议", recheck_result.get("decision") or "unknown"),
         _text_line("过滤原因", recheck_result.get("reason") or "unknown"),
         _text_line("检测人脸数", recheck_result.get("face_count", 0)),
+        _text_line("Gallery 通过人数", recheck_result.get("accepted_face_count", 0)),
+        _text_line("摄像头目标状态", recheck_result.get("camera_target_face_status") or "unknown"),
+        _text_line("是否存在身份冲突", "是" if recheck_result.get("has_identity_conflict") else "否"),
         _text_line("是否检测到人脸", "是" if recheck_result.get("face_count", 0) else "否"),
     ]
     if selected_face:
@@ -217,6 +221,7 @@ def build_face_recheck_shadow_post(
         )
     else:
         lines.append(_text_line("Gallery 命中", "未启用"))
+    lines.extend(_face_detail_lines(faces))
     _append_image_links(
         lines,
         background_view_url=background_view_url,
@@ -575,6 +580,47 @@ def _gallery_candidates_text(candidates: list[dict[str, Any]]) -> str:
         identity = " / ".join(part for part in (name, person_type, group_name, person_id) if part)
         items.append(f"{rank}. {identity} / {similarity}")
     return "; ".join(items)
+
+
+def _face_detail_lines(faces: list[Any]) -> list[list[dict[str, str]]]:
+    if not faces:
+        return []
+    lines: list[list[dict[str, str]]] = [
+        _text_line("逐脸结果数", len(faces)),
+    ]
+    for index, face_value in enumerate(faces[:5], start=1):
+        face = face_value if isinstance(face_value, dict) else {}
+        selected = face.get("selected_face") if isinstance(face.get("selected_face"), dict) else {}
+        gallery = face.get("gallery_match") if isinstance(face.get("gallery_match"), dict) else {}
+        label = f"人脸 {index}"
+        identity = "未命中"
+        if gallery:
+            identity = (
+                f"{gallery.get('name') or '未知'} / "
+                f"{gallery.get('person_type') or gallery.get('group_name') or 'unknown'} / "
+                f"{gallery.get('person_id') or 'unknown'} / "
+                f"{gallery.get('similarity', 'unknown')} / "
+                f"{'通过' if gallery.get('accepted') else '未通过'} / "
+                f"{gallery.get('camera_identity_status') or 'not_compared'}"
+            )
+        face_text = (
+            f"{face.get('face_key') or 'unknown'} · "
+            f"{face.get('status') or 'unknown'} · "
+            f"{face.get('reason') or 'unknown'} · "
+            f"检测分 {selected.get('det_score', 'unknown')} · "
+            f"{identity}"
+        )
+        lines.append(_text_line(label, face_text))
+        if gallery:
+            lines.append(
+                _text_line(
+                    f"人脸 {index} 候选",
+                    _gallery_candidates_text(gallery.get("candidates") or []),
+                )
+            )
+    if len(faces) > 5:
+        lines.append(_text_line("逐脸结果", f"仅展示前 5 张，另有 {len(faces) - 5} 张未展示"))
+    return lines
 
 
 def _link_line(text: str, href: str) -> list[dict[str, str]]:

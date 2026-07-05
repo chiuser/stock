@@ -396,76 +396,79 @@ def validate_face_recheck_fallback_order() -> None:
     attempts = face_recheck._image_attempts(recheck_input)  # noqa: SLF001
     assert attempts == [(background_path, "background"), (capture_path, "capture")]
 
-    background_no_face = _fallback_result(
-        reason="no_face",
-        image_source="background",
-        face_count=0,
-    )
-    capture_passed = _fallback_result(
+    capture_passed = _fallback_face(
         reason="quality_passed",
         image_source="capture",
-        face_count=1,
+        face_index=0,
         similarity=0.51,
         status="passed",
     )
     with patch.object(
         face_recheck,
-        "_run_single_image_recheck",
-        side_effect=[background_no_face, capture_passed],
-    ) as run_single:
+        "_analyze_image_faces",
+        side_effect=[[], [capture_passed]],
+    ) as analyze_faces:
         result = face_recheck.run_face_recheck(recheck_input, settings=settings)
     assert result.image_source == "capture"
-    assert run_single.call_count == 2
-    assert run_single.call_args_list[0].kwargs["image_source"] == "background"
-    assert run_single.call_args_list[1].kwargs["image_source"] == "capture"
+    assert analyze_faces.call_count == 2
+    assert analyze_faces.call_args_list[0].kwargs["image_source"] == "background"
+    assert analyze_faces.call_args_list[1].kwargs["image_source"] == "capture"
 
-    background_low_similarity = _fallback_result(
+    background_low_similarity = _fallback_face(
         reason="quality_passed",
         image_source="background",
-        face_count=1,
+        face_index=0,
         similarity=0.34,
         status="passed",
     )
     with patch.object(
         face_recheck,
-        "_run_single_image_recheck",
-        side_effect=[background_low_similarity, capture_passed],
-    ) as run_single:
+        "_analyze_image_faces",
+        side_effect=[[background_low_similarity], [capture_passed]],
+    ) as analyze_faces:
         result = face_recheck.run_face_recheck(recheck_input, settings=settings)
     assert result.image_source == "capture"
-    assert run_single.call_count == 2
+    assert analyze_faces.call_count == 2
 
-    background_ok_similarity = _fallback_result(
+    background_ok_similarity = _fallback_face(
         reason="quality_passed",
         image_source="background",
-        face_count=1,
+        face_index=0,
         similarity=0.35,
         status="passed",
     )
     with patch.object(
         face_recheck,
-        "_run_single_image_recheck",
-        return_value=background_ok_similarity,
-    ) as run_single:
+        "_analyze_image_faces",
+        return_value=[background_ok_similarity],
+    ) as analyze_faces:
         result = face_recheck.run_face_recheck(recheck_input, settings=settings)
     assert result.image_source == "background"
-    assert run_single.call_count == 1
+    assert analyze_faces.call_count == 1
 
-    background_multi_face = _fallback_result(
+    background_multi_face_left = _fallback_face(
         reason="multiple_faces",
         image_source="background",
-        face_count=2,
+        face_index=0,
         similarity=0.20,
+        status="filtered",
+    )
+    background_multi_face_right = _fallback_face(
+        reason="multiple_faces",
+        image_source="background",
+        face_index=1,
+        similarity=0.30,
         status="filtered",
     )
     with patch.object(
         face_recheck,
-        "_run_single_image_recheck",
-        return_value=background_multi_face,
-    ) as run_single:
+        "_analyze_image_faces",
+        side_effect=[[background_multi_face_left, background_multi_face_right], [capture_passed]],
+    ) as analyze_faces:
         result = face_recheck.run_face_recheck(recheck_input, settings=settings)
-    assert result.image_source == "background"
-    assert run_single.call_count == 1
+    assert result.face_count == 2
+    assert len(result.faces) == 3
+    assert analyze_faces.call_count == 2
 
 
 def _fallback_settings() -> face_recheck.FaceRecheckSettings:
@@ -515,34 +518,31 @@ def _fallback_input(
     )
 
 
-def _fallback_result(
+def _fallback_face(
     *,
     reason: str,
     image_source: str,
-    face_count: int,
+    face_index: int,
     similarity: float | None = None,
     status: str = "filtered",
-) -> face_recheck.FaceRecheckResult:
-    return face_recheck.FaceRecheckResult(
-        enabled=True,
-        mode="shadow",
-        status=status,  # type: ignore[arg-type]
-        decision="allow_original",
-        reason=reason,
+) -> face_recheck.FaceRecheckFaceResult:
+    return face_recheck.FaceRecheckFaceResult(
         image_source=image_source,  # type: ignore[arg-type]
-        face_count=face_count,
-        selected_face=None,
-        gallery_match=_fallback_gallery_match(similarity) if similarity is not None else None,
-        elapsed_ms=1,
-        thresholds=face_recheck.FaceRecheckThresholds(
-            det_score_threshold=0.55,
-            min_face_width=45,
-            min_face_height=60,
-            blur_threshold=80.0,
-            frontal_max_yaw_score=0.35,
-            similarity_threshold=0.35,
-            similarity_margin=0.0,
+        face_index=face_index,
+        face_key=f"{image_source}:{face_index}",
+        selected_face=face_recheck.DetectedFaceSummary(
+            index=face_index,
+            bbox=(10.0 + face_index, 20.0, 110.0 + face_index, 140.0),
+            det_score=0.91,
+            width=100.0,
+            height=120.0,
+            blur_score=100.0,
+            frontal_score=0.1,
+            quality_flags=[] if status == "passed" else [reason],
         ),
+        status=status,  # type: ignore[arg-type]
+        reason=reason,
+        gallery_match=_fallback_gallery_match(similarity) if similarity is not None else None,
     )
 
 
@@ -593,11 +593,67 @@ async def validate_face_recheck_shadow_flow(request_meta: RequestMeta) -> None:
     assert record["face_recheck"]["mode"] == "shadow"
     assert record["face_recheck"]["status"] == "passed"
     assert record["face_recheck"]["decision"] == "allow_original"
+    assert record["face_recheck"]["faces"][0]["face_key"] == "background:0"
+    assert record["face_recheck"]["faces"][0]["crop"]["status"] in {"saved", "error"}
     assert record["face_recheck_shadow_feishu"]["skipped"] is True
     assert "shadow-background-token" not in record_text
+    face_rows = recognition_monitor.build_event_face_rows(record)
+    assert len(face_rows) == 1
+    assert face_rows[0]["face_key"] == "background:0"
+    assert face_rows[0]["gallery_name"] == "小明"
 
 
 def _mock_recheck_result() -> face_recheck.FaceRecheckResult:
+    selected_face = face_recheck.DetectedFaceSummary(
+        index=0,
+        bbox=(1.0, 2.0, 101.0, 122.0),
+        det_score=0.91,
+        width=100.0,
+        height=120.0,
+        blur_score=132.4,
+        frontal_score=0.12,
+        quality_flags=[],
+    )
+    gallery_match = face_recheck.GalleryMatch(
+        person_id="3427976339944670",
+        credential_no="3427976339944670",
+        credential_type="2",
+        name="小明",
+        sex="0",
+        person_type="staff",
+        group_id="4dcafc2c9fbd4d1fa267ccbf145c8861",
+        group_name="员工",
+        similarity=0.91,
+        second_similarity=0.42,
+        accepted=True,
+        camera_identity_status="camera_unknown",
+        candidates=[
+            face_recheck.GalleryCandidate(
+                rank=1,
+                person_id="3427976339944670",
+                credential_no="3427976339944670",
+                credential_type="2",
+                name="小明",
+                sex="0",
+                person_type="staff",
+                group_id="4dcafc2c9fbd4d1fa267ccbf145c8861",
+                group_name="员工",
+                similarity=0.91,
+            ),
+            face_recheck.GalleryCandidate(
+                rank=2,
+                person_id="3785841386866689",
+                credential_no="3785841386866689",
+                credential_type="2",
+                name="苏苏",
+                sex="0",
+                person_type="member",
+                group_id="c1e42a1f2531467bae464da8a79dad53",
+                group_name="会员",
+                similarity=0.42,
+            ),
+        ],
+    )
     return face_recheck.FaceRecheckResult(
         enabled=True,
         mode="shadow",
@@ -606,56 +662,8 @@ def _mock_recheck_result() -> face_recheck.FaceRecheckResult:
         reason="quality_passed",
         image_source="background",
         face_count=1,
-        selected_face=face_recheck.DetectedFaceSummary(
-            index=0,
-            bbox=(1.0, 2.0, 101.0, 122.0),
-            det_score=0.91,
-            width=100.0,
-            height=120.0,
-            blur_score=132.4,
-            frontal_score=0.12,
-            quality_flags=[],
-        ),
-        gallery_match=face_recheck.GalleryMatch(
-            person_id="3427976339944670",
-            credential_no="3427976339944670",
-            credential_type="2",
-            name="小明",
-            sex="0",
-            person_type="staff",
-            group_id="4dcafc2c9fbd4d1fa267ccbf145c8861",
-            group_name="员工",
-            similarity=0.91,
-            second_similarity=0.42,
-            accepted=True,
-            camera_identity_status="camera_unknown",
-            candidates=[
-                face_recheck.GalleryCandidate(
-                    rank=1,
-                    person_id="3427976339944670",
-                    credential_no="3427976339944670",
-                    credential_type="2",
-                    name="小明",
-                    sex="0",
-                    person_type="staff",
-                    group_id="4dcafc2c9fbd4d1fa267ccbf145c8861",
-                    group_name="员工",
-                    similarity=0.91,
-                ),
-                face_recheck.GalleryCandidate(
-                    rank=2,
-                    person_id="3785841386866689",
-                    credential_no="3785841386866689",
-                    credential_type="2",
-                    name="苏苏",
-                    sex="0",
-                    person_type="member",
-                    group_id="c1e42a1f2531467bae464da8a79dad53",
-                    group_name="会员",
-                    similarity=0.42,
-                ),
-            ],
-        ),
+        selected_face=selected_face,
+        gallery_match=gallery_match,
         elapsed_ms=12,
         thresholds=face_recheck.FaceRecheckThresholds(
             det_score_threshold=0.65,
@@ -666,6 +674,21 @@ def _mock_recheck_result() -> face_recheck.FaceRecheckResult:
             similarity_threshold=0.5,
             similarity_margin=0.03,
         ),
+        faces=[
+            face_recheck.FaceRecheckFaceResult(
+                image_source="background",
+                face_index=0,
+                face_key="background:0",
+                selected_face=selected_face,
+                status="passed",
+                reason="quality_passed",
+                gallery_match=gallery_match,
+            ),
+        ],
+        primary_face_key="background:0",
+        accepted_face_count=1,
+        has_identity_conflict=False,
+        camera_target_face_status="camera_unknown",
     )
 
 
@@ -734,10 +757,37 @@ def validate_recognition_monitor_backfill(root: Path) -> None:
 
 
 def validate_recognition_monitor_api_helpers(root: Path, monitor_row: dict) -> None:
-    event_dto = recognition_monitor.row_to_event(monitor_row, include_detail=True)
+    face_row = {
+        "face_key": "background:0",
+        "image_source": "background",
+        "face_index": 0,
+        "bbox": [1, 2, 101, 122],
+        "face_width": 100,
+        "face_height": 120,
+        "det_score": 0.91,
+        "blur_score": 132.4,
+        "frontal_score": 0.12,
+        "quality_flags": [],
+        "recheck_status": "passed",
+        "recheck_reason": "quality_passed",
+        "gallery_accepted": True,
+        "gallery_name": "小明",
+        "gallery_person_id": "3427976339944670",
+        "gallery_person_type": "staff",
+        "gallery_group_name": "员工",
+        "gallery_similarity": 0.91,
+        "gallery_second_similarity": 0.42,
+        "gallery_camera_identity_status": "camera_unknown",
+        "gallery_top5_candidates": [],
+        "crop_relative_path": monitor_row["capture_relative_path"],
+        "crop_content_type": "image/jpeg",
+    }
+    event_dto = recognition_monitor.row_to_event(monitor_row, include_detail=True, faces=[face_row])
     assert event_dto["event_key"] == monitor_row["event_dedupe_key"]
     assert event_dto["camera"]["name"] == "小明"
     assert event_dto["images"]["capture"]["api_url"].startswith("/api/recognition-monitor/images?")
+    assert event_dto["faces"][0]["face_key"] == "background:0"
+    assert event_dto["faces"][0]["crop"]["api_url"].startswith("/api/recognition-monitor/images?")
     assert "storage_path" not in json.dumps(event_dto, ensure_ascii=False)
 
     capture_relative_path = monitor_row["capture_relative_path"]

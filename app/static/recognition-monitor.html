@@ -231,6 +231,7 @@
         <figure>
           <div class="monitor-image-frame monitor-image-large">
             <img id="modal-background-img" alt="背景全图">
+            <div class="monitor-bbox-layer" id="modal-background-overlay" aria-hidden="true"></div>
             <span id="modal-background-placeholder">背景图不可用</span>
           </div>
           <figcaption>背景全图</figcaption>
@@ -268,6 +269,10 @@
           <div class="monitor-candidates" id="modal-candidates"></div>
         </section>
       </div>
+      <section class="monitor-face-section">
+        <h4>逐脸识别结果</h4>
+        <div class="monitor-face-results" id="modal-faces"></div>
+      </section>
       <section class="monitor-safe-json">
         <h4>阈值与质量摘要</h4>
         <pre id="modal-safe-json">—</pre>

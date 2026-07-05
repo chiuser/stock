@@ -25,6 +25,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--date-to", default="", help="End date, YYYY-MM-DD.")
     parser.add_argument("--limit", type=int, default=0, help="Optional max FaceReco records.")
     parser.add_argument("--apply", action="store_true", help="Write rows to recognition_events.")
+    parser.add_argument(
+        "--recheck-missing-faces",
+        action="store_true",
+        help="Run current InsightFace recheck when processing records do not contain face_recheck.faces.",
+    )
     return parser.parse_args()
 
 
@@ -37,7 +42,13 @@ def main() -> None:
         date_from=args.date_from.strip(),
         date_to=args.date_to.strip(),
     )
-    summary = _backfill(record_files, root=root, apply=args.apply, limit=max(0, args.limit))
+    summary = _backfill(
+        record_files,
+        root=root,
+        apply=args.apply,
+        limit=max(0, args.limit),
+        recheck_missing_faces=args.recheck_missing_faces,
+    )
     print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
 
 
@@ -72,6 +83,7 @@ def _backfill(
     root: Path,
     apply: bool,
     limit: int,
+    recheck_missing_faces: bool,
 ) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "apply": apply,
@@ -79,13 +91,17 @@ def _backfill(
         "scanned": 0,
         "face_reco": 0,
         "prepared": 0,
+        "face_rows_prepared": 0,
         "upserted": 0,
+        "face_rows_upserted": 0,
+        "stale_face_rows_deleted": 0,
+        "rechecked_missing_faces": 0,
         "skipped_non_face_reco": 0,
         "parse_error_count": 0,
         "failed_count": 0,
         "errors": [],
     }
-    rows: list[dict[str, Any]] = []
+    rows: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
     for record_path in record_files:
         if limit and summary["face_reco"] >= limit:
             break
@@ -101,27 +117,71 @@ def _backfill(
             continue
         summary["face_reco"] += 1
         try:
-            row = recognition_monitor.build_event_row(
+            record_for_row = _record_with_recheck_faces(
                 record,
+                root=root,
+                apply=apply,
+                enabled=recheck_missing_faces,
+            )
+            row = recognition_monitor.build_event_row(
+                record_for_row,
                 record_path=record_path,
                 root=root,
                 ensure_crop=apply,
             )
+            face_rows = recognition_monitor.build_event_face_rows(record_for_row)
         except Exception as exc:
             summary["failed_count"] += 1
             _append_error(summary, record_path, type(exc).__name__)
             continue
-        rows.append(row)
+        if record_for_row is not record:
+            summary["rechecked_missing_faces"] += 1
+        rows.append((row, face_rows))
         summary["prepared"] += 1
+        summary["face_rows_prepared"] += len(face_rows)
 
     if apply and rows:
         if not recognition_repo.database_url_configured():
             raise RuntimeError("DATABASE_URL is required when --apply is used")
         with recognition_repo.transaction() as conn:
-            for row in rows:
-                recognition_repo.upsert_recognition_event(conn, row)
+            for row, face_rows in rows:
+                result = recognition_repo.upsert_recognition_event(conn, row)
                 summary["upserted"] += 1
+                recognition_event_id = result.get("recognition_event_id") if result else None
+                if recognition_event_id:
+                    summary["face_rows_upserted"] += recognition_repo.upsert_recognition_event_faces(
+                        conn,
+                        recognition_event_id=int(recognition_event_id),
+                        rows=face_rows,
+                    )
+                    summary["stale_face_rows_deleted"] += recognition_repo.delete_stale_faces_for_event(
+                        conn,
+                        recognition_event_id=int(recognition_event_id),
+                        keep_keys=[row["face_key"] for row in face_rows],
+                    )
     return summary
+
+
+def _record_with_recheck_faces(
+    record: dict[str, Any],
+    *,
+    root: Path,
+    apply: bool,
+    enabled: bool,
+) -> dict[str, Any]:
+    face_recheck = record.get("face_recheck")
+    if not enabled:
+        return record
+    if isinstance(face_recheck, dict) and isinstance(face_recheck.get("faces"), list) and face_recheck.get("faces"):
+        return record
+    rebuilt = recognition_monitor.rebuild_face_recheck_for_record(
+        record,
+        root=root,
+        save_crops=apply,
+    )
+    updated = dict(record)
+    updated["face_recheck"] = rebuilt.to_dict()
+    return updated
 
 
 def _append_error(summary: dict[str, Any], path: Path, error_type: str) -> None:

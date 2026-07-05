@@ -10,7 +10,7 @@ import os
 import time
 import warnings
 from contextlib import redirect_stderr, redirect_stdout
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from io import StringIO
 from pathlib import Path
@@ -215,6 +215,53 @@ class GalleryMatch:
 
 
 @dataclass(frozen=True)
+class FaceCropSummary:
+    relative_path: str | None = None
+    content_type: str | None = None
+    error_type: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        if self.relative_path:
+            return {
+                "status": "saved",
+                "relative_path": self.relative_path,
+                "content_type": self.content_type or "image/jpeg",
+            }
+        if self.error_type:
+            return {"status": "error", "error_type": self.error_type}
+        return {"status": "missing"}
+
+
+@dataclass(frozen=True)
+class FaceRecheckFaceResult:
+    image_source: Literal["background", "capture"]
+    face_index: int
+    face_key: str
+    selected_face: DetectedFaceSummary | None
+    status: Literal["passed", "filtered", "error"]
+    reason: str
+    gallery_match: GalleryMatch | None
+    crop: FaceCropSummary = field(default_factory=FaceCropSummary)
+    error_type: str | None = None
+
+    def with_crop(self, crop: FaceCropSummary) -> "FaceRecheckFaceResult":
+        return replace(self, crop=crop)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "image_source": self.image_source,
+            "face_index": self.face_index,
+            "face_key": self.face_key,
+            "selected_face": self.selected_face.to_dict() if self.selected_face else None,
+            "status": self.status,
+            "reason": self.reason,
+            "gallery_match": self.gallery_match.to_dict() if self.gallery_match else None,
+            "crop": self.crop.to_dict(),
+            "error_type": self.error_type,
+        }
+
+
+@dataclass(frozen=True)
 class FaceRecheckResult:
     enabled: bool
     mode: str
@@ -228,6 +275,11 @@ class FaceRecheckResult:
     elapsed_ms: int | None
     error_type: str | None = None
     thresholds: FaceRecheckThresholds | None = None
+    faces: list[FaceRecheckFaceResult] = field(default_factory=list)
+    primary_face_key: str | None = None
+    accepted_face_count: int = 0
+    has_identity_conflict: bool = False
+    camera_target_face_status: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -240,6 +292,11 @@ class FaceRecheckResult:
             "face_count": self.face_count,
             "selected_face": self.selected_face.to_dict() if self.selected_face else None,
             "gallery_match": self.gallery_match.to_dict() if self.gallery_match else None,
+            "faces": [face.to_dict() for face in self.faces],
+            "primary_face_key": self.primary_face_key,
+            "accepted_face_count": self.accepted_face_count,
+            "has_identity_conflict": self.has_identity_conflict,
+            "camera_target_face_status": self.camera_target_face_status,
             "elapsed_ms": self.elapsed_ms,
             "error_type": self.error_type,
             "thresholds": self.thresholds.to_dict() if self.thresholds else None,
@@ -262,9 +319,7 @@ def run_face_recheck(
     if cfg.mode.value not in _MILESTONE_ACTIVE_MODES:
         inactive_mode_reason = "mode_not_active_in_milestone_1_3"
 
-    attempts = _image_attempts(recheck_input)
-    image_path, image_source = attempts[0] if attempts else (None, "none")
-    if image_path is None:
+    if not recheck_input.background_image_path and not recheck_input.capture_image_path:
         return FaceRecheckResult(
             enabled=True,
             mode=cfg.mode.value,
@@ -279,28 +334,313 @@ def run_face_recheck(
             thresholds=_thresholds(cfg),
         )
 
-    result = _run_single_image_recheck(
+    background_faces = _analyze_image_faces(
         cfg,
         recheck_input,
-        image_path=Path(image_path),
-        image_source=image_source,
+        image_path=Path(recheck_input.background_image_path) if recheck_input.background_image_path else None,
+        image_source="background",
         inactive_mode_reason=inactive_mode_reason,
-        started=started,
     )
-    if _should_fallback_to_capture(result, recheck_input, cfg):
-        capture_path = Path(recheck_input.capture_image_path)  # type: ignore[arg-type]
-        return _run_single_image_recheck(
+    capture_faces: list[FaceRecheckFaceResult] = []
+    if _should_analyze_capture(background_faces, recheck_input, cfg):
+        capture_faces = _analyze_image_faces(
             cfg,
             recheck_input,
-            image_path=capture_path,
+            image_path=Path(recheck_input.capture_image_path) if recheck_input.capture_image_path else None,
             image_source="capture",
             inactive_mode_reason=inactive_mode_reason,
-            started=started,
         )
-    return result
+    return _build_event_result(
+        cfg,
+        faces=background_faces + capture_faces,
+        started=started,
+        inactive_mode_reason=inactive_mode_reason,
+        camera_person=recheck_input.camera_person,
+    )
+
+
+def _analyze_image_faces(
+    cfg: FaceRecheckSettings,
+    recheck_input: FaceRecheckInput,
+    *,
+    image_path: Path | None,
+    image_source: Literal["background", "capture"],
+    inactive_mode_reason: str,
+) -> list[FaceRecheckFaceResult]:
+    if image_path is None or not image_path.exists():
+        return [
+            FaceRecheckFaceResult(
+                image_source=image_source,
+                face_index=0,
+                face_key=f"{image_source}:0",
+                selected_face=None,
+                status="error",
+                reason=_join_reasons("image_missing", inactive_mode_reason),
+                gallery_match=None,
+                error_type="FileNotFoundError",
+            )
+        ]
+    try:
+        cv2, np, app = _runtime(cfg)
+        img = _read_image(cv2, np, image_path)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            raw_faces = app.get(img)
+    except Exception as exc:
+        return [
+            FaceRecheckFaceResult(
+                image_source=image_source,
+                face_index=0,
+                face_key=f"{image_source}:0",
+                selected_face=None,
+                status="error",
+                reason=_join_reasons(_error_reason(exc), inactive_mode_reason),
+                gallery_match=None,
+                error_type=type(exc).__name__,
+            )
+        ]
+    if not raw_faces:
+        return []
+
+    multiple_faces = len(raw_faces) > 1
+    results: list[FaceRecheckFaceResult] = []
+    for index, face in enumerate(raw_faces):
+        summary = _summarize_face(
+            index,
+            face,
+            img,
+            cv2=cv2,
+            settings=cfg,
+            multiple_faces=multiple_faces,
+        )
+        status = _face_status(summary)
+        gallery_match = _match_gallery(cfg, face, recheck_input.camera_person)
+        reason = ",".join(summary.quality_flags) if summary.quality_flags else "quality_passed"
+        results.append(
+            FaceRecheckFaceResult(
+                image_source=image_source,
+                face_index=index,
+                face_key=f"{image_source}:{index}",
+                selected_face=summary,
+                status=status,
+                reason=_join_reasons(reason, inactive_mode_reason),
+                gallery_match=gallery_match,
+            )
+        )
+    return results
 
 
 def _run_single_image_recheck(
+    cfg: FaceRecheckSettings,
+    recheck_input: FaceRecheckInput,
+    *,
+    image_path: Path,
+    image_source: Literal["background", "capture"],
+    inactive_mode_reason: str,
+    started: float,
+) -> FaceRecheckResult:
+    """Compatibility helper used by older tests and one-off validations."""
+    faces = _analyze_image_faces(
+        cfg,
+        recheck_input,
+        image_path=image_path,
+        image_source=image_source,
+        inactive_mode_reason=inactive_mode_reason,
+    )
+    return _build_event_result(
+        cfg,
+        faces=faces,
+        started=started,
+        inactive_mode_reason=inactive_mode_reason,
+        camera_person=recheck_input.camera_person,
+    )
+
+
+def _build_event_result(
+    cfg: FaceRecheckSettings,
+    *,
+    faces: list[FaceRecheckFaceResult],
+    started: float,
+    inactive_mode_reason: str,
+    camera_person: dict[str, Any] | None,
+) -> FaceRecheckResult:
+    if not faces:
+        return FaceRecheckResult(
+            enabled=True,
+            mode=cfg.mode.value,
+            status="filtered",
+            decision="allow_original",
+            reason=_join_reasons("no_face", inactive_mode_reason),
+            image_source="none",
+            face_count=0,
+            selected_face=None,
+            gallery_match=None,
+            elapsed_ms=_elapsed_ms(started),
+            thresholds=_thresholds(cfg),
+            faces=[],
+            accepted_face_count=0,
+            has_identity_conflict=False,
+            camera_target_face_status=_camera_target_face_status([], camera_person),
+        )
+
+    primary = _select_primary_face_result(faces, camera_person)
+    accepted_face_count = sum(1 for face in faces if _gallery_accepted(face.gallery_match))
+    has_identity_conflict = any(
+        _gallery_accepted(face.gallery_match)
+        and face.gallery_match is not None
+        and face.gallery_match.camera_identity_status == "identity_conflict"
+        for face in faces
+    )
+    return FaceRecheckResult(
+        enabled=True,
+        mode=cfg.mode.value,
+        status=primary.status,
+        decision="allow_original",
+        reason=primary.reason,
+        image_source=primary.image_source,
+        face_count=_event_face_count(faces),
+        selected_face=primary.selected_face,
+        gallery_match=primary.gallery_match,
+        elapsed_ms=_elapsed_ms(started),
+        thresholds=_thresholds(cfg),
+        faces=faces,
+        primary_face_key=primary.face_key,
+        accepted_face_count=accepted_face_count,
+        has_identity_conflict=has_identity_conflict,
+        camera_target_face_status=_camera_target_face_status(faces, camera_person),
+    )
+
+
+def _event_face_count(faces: list[FaceRecheckFaceResult]) -> int:
+    background_count = sum(1 for face in faces if face.image_source == "background" and face.selected_face is not None)
+    if background_count:
+        return background_count
+    return sum(1 for face in faces if face.selected_face is not None)
+
+
+def _face_status(summary: DetectedFaceSummary) -> Literal["passed", "filtered"]:
+    blocking_flags = {
+        "low_det_score",
+        "face_too_small",
+        "blurred",
+    }
+    return "filtered" if any(flag in blocking_flags for flag in summary.quality_flags) else "passed"
+
+
+def _should_analyze_capture(
+    background_faces: list[FaceRecheckFaceResult],
+    recheck_input: FaceRecheckInput,
+    settings: FaceRecheckSettings,
+) -> bool:
+    if recheck_input.capture_image_path is None:
+        return False
+    valid_background_faces = [face for face in background_faces if face.selected_face is not None]
+    if not valid_background_faces:
+        return True
+    if len(valid_background_faces) > 1 and recheck_input.route_result == "known":
+        return True
+    if len(valid_background_faces) == 1:
+        match = valid_background_faces[0].gallery_match
+        return match is not None and match.similarity < settings.similarity_threshold
+    return False
+
+
+def _select_primary_face_result(
+    faces: list[FaceRecheckFaceResult],
+    camera_person: dict[str, Any] | None,
+) -> FaceRecheckFaceResult:
+    valid_faces = [face for face in faces if face.selected_face is not None]
+    if not valid_faces:
+        return faces[0]
+
+    aligned_accepted = [
+        face
+        for face in valid_faces
+        if _gallery_accepted(face.gallery_match)
+        and _gallery_identity_matched(face.gallery_match)
+    ]
+    if aligned_accepted:
+        return max(aligned_accepted, key=_face_match_score)
+
+    accepted = [face for face in valid_faces if _gallery_accepted(face.gallery_match)]
+    if accepted:
+        return max(accepted, key=_face_match_score)
+
+    camera_candidate = [
+        face
+        for face in valid_faces
+        if _gallery_identity_matched(face.gallery_match)
+    ]
+    if camera_person and camera_candidate:
+        return max(camera_candidate, key=_face_match_score)
+
+    return max(valid_faces, key=_face_selection_score)
+
+
+def _face_match_score(face: FaceRecheckFaceResult) -> float:
+    if face.gallery_match is None:
+        return 0.0
+    return float(face.gallery_match.similarity)
+
+
+def _face_selection_score(face: FaceRecheckFaceResult) -> float:
+    if face.selected_face is None:
+        return 0.0
+    return face.selected_face.width * face.selected_face.height * face.selected_face.det_score
+
+
+def _gallery_accepted(match: GalleryMatch | None) -> bool:
+    return match is not None and match.accepted is True
+
+
+def _gallery_identity_matched(match: GalleryMatch | None) -> bool:
+    return match is not None and match.camera_identity_status in {
+        "name_matched",
+        "id_matched",
+        "name_and_id_matched",
+    }
+
+
+def _camera_target_face_status(
+    faces: list[FaceRecheckFaceResult],
+    camera_person: dict[str, Any] | None,
+) -> str:
+    if not camera_person:
+        return "camera_unknown"
+    if not any(face.selected_face is not None for face in faces):
+        return "no_face"
+    if any(_gallery_accepted(face.gallery_match) and _gallery_identity_matched(face.gallery_match) for face in faces):
+        return "accepted_match"
+    if any(_gallery_identity_matched(face.gallery_match) for face in faces):
+        return "candidate_below_threshold"
+    if any(
+        _gallery_accepted(face.gallery_match)
+        and face.gallery_match is not None
+        and face.gallery_match.camera_identity_status == "identity_conflict"
+        for face in faces
+    ):
+        return "identity_conflict"
+    return "not_found"
+
+
+def with_face_crops(
+    result: FaceRecheckResult,
+    crops: dict[str, FaceCropSummary],
+) -> FaceRecheckResult:
+    if not crops:
+        return result
+    return replace(
+        result,
+        faces=[
+            face.with_crop(crops[face.face_key])
+            if face.face_key in crops
+            else face
+            for face in result.faces
+        ],
+    )
+
+
+def _legacy_single_image_recheck(
     cfg: FaceRecheckSettings,
     recheck_input: FaceRecheckInput,
     *,

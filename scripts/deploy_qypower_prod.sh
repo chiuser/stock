@@ -86,6 +86,7 @@ PY_FILES=(
   app/routers/camera.py
   app/routers/recognition_monitor.py
   alembic/versions/20260705_0003_create_recognition_events.py
+  alembic/versions/20260705_0004_create_recognition_event_faces.py
   scripts/cleanup_p6s_event_store.py
   scripts/backfill_recognition_events.py
   scripts/generate_attendance_report.py
@@ -209,6 +210,7 @@ if [[ "$SKIP_REMOTE_CHECK" -eq 0 ]]; then
     app/services/report_scheduler.py \
     app/main.py \
     alembic/versions/20260705_0003_create_recognition_events.py \
+    alembic/versions/20260705_0004_create_recognition_event_faces.py \
     scripts/cleanup_p6s_event_store.py \
     scripts/backfill_recognition_events.py \
     scripts/generate_attendance_report.py \

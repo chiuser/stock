@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from datetime import date, timedelta
 from typing import Any, Iterator, Mapping
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import bindparam, create_engine, text
 from sqlalchemy.engine import Connection, Engine
 
 from app.db.config import normalize_database_url
@@ -49,6 +49,9 @@ def upsert_recognition_event(conn: Connection, values: Mapping[str, Any]) -> dic
               recheck_status,
               recheck_reason,
               face_count,
+              accepted_face_count,
+              camera_target_face_status,
+              has_identity_conflict,
               quality_flags,
               det_score,
               face_width,
@@ -92,6 +95,9 @@ def upsert_recognition_event(conn: Connection, values: Mapping[str, Any]) -> dic
               :recheck_status,
               :recheck_reason,
               :face_count,
+              :accepted_face_count,
+              :camera_target_face_status,
+              :has_identity_conflict,
               cast(:quality_flags as jsonb),
               :det_score,
               :face_width,
@@ -135,6 +141,9 @@ def upsert_recognition_event(conn: Connection, values: Mapping[str, Any]) -> dic
               recheck_status = excluded.recheck_status,
               recheck_reason = excluded.recheck_reason,
               face_count = excluded.face_count,
+              accepted_face_count = excluded.accepted_face_count,
+              camera_target_face_status = excluded.camera_target_face_status,
+              has_identity_conflict = excluded.has_identity_conflict,
               quality_flags = excluded.quality_flags,
               det_score = excluded.det_score,
               face_width = excluded.face_width,
@@ -168,6 +177,162 @@ def upsert_recognition_event(conn: Connection, values: Mapping[str, Any]) -> dic
         _params(values),
     ).mappings().first()
     return dict(row) if row else None
+
+
+def upsert_recognition_event_faces(
+    conn: Connection,
+    *,
+    recognition_event_id: int,
+    rows: list[Mapping[str, Any]],
+) -> int:
+    """Upsert per-face recognition rows for one recognition event."""
+    if not rows:
+        return 0
+    count = 0
+    for row in rows:
+        conn.execute(
+            text(
+                """
+                insert into recognition_event_faces (
+                  recognition_event_id,
+                  image_source,
+                  face_index,
+                  face_key,
+                  bbox,
+                  center_x,
+                  center_y,
+                  face_width,
+                  face_height,
+                  det_score,
+                  blur_score,
+                  frontal_score,
+                  quality_flags,
+                  recheck_status,
+                  recheck_reason,
+                  gallery_accepted,
+                  gallery_name,
+                  gallery_person_id,
+                  gallery_person_type,
+                  gallery_group_name,
+                  gallery_similarity,
+                  gallery_second_similarity,
+                  gallery_camera_identity_status,
+                  gallery_top5_candidates,
+                  crop_relative_path,
+                  crop_content_type,
+                  updated_at
+                ) values (
+                  :recognition_event_id,
+                  :image_source,
+                  :face_index,
+                  :face_key,
+                  cast(:bbox as jsonb),
+                  :center_x,
+                  :center_y,
+                  :face_width,
+                  :face_height,
+                  :det_score,
+                  :blur_score,
+                  :frontal_score,
+                  cast(:quality_flags as jsonb),
+                  :recheck_status,
+                  :recheck_reason,
+                  :gallery_accepted,
+                  :gallery_name,
+                  :gallery_person_id,
+                  :gallery_person_type,
+                  :gallery_group_name,
+                  :gallery_similarity,
+                  :gallery_second_similarity,
+                  :gallery_camera_identity_status,
+                  cast(:gallery_top5_candidates as jsonb),
+                  :crop_relative_path,
+                  :crop_content_type,
+                  now()
+                )
+                on conflict (recognition_event_id, image_source, face_index) do update set
+                  face_key = excluded.face_key,
+                  bbox = excluded.bbox,
+                  center_x = excluded.center_x,
+                  center_y = excluded.center_y,
+                  face_width = excluded.face_width,
+                  face_height = excluded.face_height,
+                  det_score = excluded.det_score,
+                  blur_score = excluded.blur_score,
+                  frontal_score = excluded.frontal_score,
+                  quality_flags = excluded.quality_flags,
+                  recheck_status = excluded.recheck_status,
+                  recheck_reason = excluded.recheck_reason,
+                  gallery_accepted = excluded.gallery_accepted,
+                  gallery_name = excluded.gallery_name,
+                  gallery_person_id = excluded.gallery_person_id,
+                  gallery_person_type = excluded.gallery_person_type,
+                  gallery_group_name = excluded.gallery_group_name,
+                  gallery_similarity = excluded.gallery_similarity,
+                  gallery_second_similarity = excluded.gallery_second_similarity,
+                  gallery_camera_identity_status = excluded.gallery_camera_identity_status,
+                  gallery_top5_candidates = excluded.gallery_top5_candidates,
+                  crop_relative_path = excluded.crop_relative_path,
+                  crop_content_type = excluded.crop_content_type,
+                  updated_at = now();
+                """
+            ),
+            _face_params(recognition_event_id=recognition_event_id, values=row),
+        )
+        count += 1
+    return count
+
+
+def delete_stale_faces_for_event(
+    conn: Connection,
+    *,
+    recognition_event_id: int,
+    keep_keys: list[str],
+) -> int:
+    """Remove face rows that no longer exist after a replay/upsert."""
+    if keep_keys:
+        result = conn.execute(
+            text(
+                """
+                delete from recognition_event_faces
+                where recognition_event_id = :recognition_event_id
+                  and face_key not in :keep_keys;
+                """
+            ).bindparams(bindparam("keep_keys", expanding=True)),
+            {"recognition_event_id": recognition_event_id, "keep_keys": keep_keys},
+        )
+    else:
+        result = conn.execute(
+            text(
+                """
+                delete from recognition_event_faces
+                where recognition_event_id = :recognition_event_id;
+                """
+            ),
+            {"recognition_event_id": recognition_event_id},
+        )
+    return int(result.rowcount or 0)
+
+
+def list_recognition_event_faces(
+    conn: Connection,
+    *,
+    recognition_event_id: int,
+) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        text(
+            """
+            select *
+            from recognition_event_faces
+            where recognition_event_id = :recognition_event_id
+            order by
+              case image_source when 'background' then 0 when 'capture' then 1 else 2 end,
+              face_index asc;
+            """
+        ),
+        {"recognition_event_id": recognition_event_id},
+    ).mappings()
+    return [dict(row) for row in rows]
 
 
 def fetch_summary(conn: Connection, *, event_date: date) -> dict[str, Any]:
@@ -469,8 +634,7 @@ def _event_filters(
         filters.append("recheck_reason = :reason")
         params["reason"] = reason
     if accepted is not None:
-        filters.append("gallery_accepted = :accepted")
-        params["accepted"] = accepted
+        filters.append("accepted_face_count > 0" if accepted else "accepted_face_count = 0")
     if person:
         filters.append(
             """
@@ -479,6 +643,15 @@ def _event_filters(
               or camera_person_id ilike :person
               or gallery_name ilike :person
               or gallery_person_id ilike :person
+              or exists (
+                select 1
+                from recognition_event_faces ref
+                where ref.recognition_event_id = recognition_events.recognition_event_id
+                  and (
+                    ref.gallery_name ilike :person
+                    or ref.gallery_person_id ilike :person
+                  )
+              )
             )
             """
         )
@@ -503,6 +676,9 @@ def _params(values: Mapping[str, Any]) -> dict[str, Any]:
         "recheck_status": _text_or_none(values.get("recheck_status")) or "not_rechecked",
         "recheck_reason": _text_or_none(values.get("recheck_reason")),
         "face_count": int(values.get("face_count") or 0),
+        "accepted_face_count": int(values.get("accepted_face_count") or 0),
+        "camera_target_face_status": _text_or_none(values.get("camera_target_face_status")),
+        "has_identity_conflict": bool(values.get("has_identity_conflict") or False),
         "quality_flags": _json(values.get("quality_flags"), default=[]),
         "det_score": _float_or_none(values.get("det_score")),
         "face_width": _float_or_none(values.get("face_width")),
@@ -529,6 +705,40 @@ def _params(values: Mapping[str, Any]) -> dict[str, Any]:
         "raw_relative_path": _text_or_none(values.get("raw_relative_path")),
         "face_recheck": _json(values.get("face_recheck"), default={}),
         "thresholds": _json(values.get("thresholds"), default={}),
+    }
+
+
+def _face_params(*, recognition_event_id: int, values: Mapping[str, Any]) -> dict[str, Any]:
+    bbox = values.get("bbox")
+    if not isinstance(bbox, list):
+        bbox = []
+    return {
+        "recognition_event_id": recognition_event_id,
+        "image_source": _text_or_none(values.get("image_source")) or "background",
+        "face_index": int(values.get("face_index") or 0),
+        "face_key": _text_or_none(values.get("face_key")) or "background:0",
+        "bbox": _json(bbox, default=[]),
+        "center_x": _float_or_none(values.get("center_x")),
+        "center_y": _float_or_none(values.get("center_y")),
+        "face_width": _float_or_none(values.get("face_width")),
+        "face_height": _float_or_none(values.get("face_height")),
+        "det_score": _float_or_none(values.get("det_score")),
+        "blur_score": _float_or_none(values.get("blur_score")),
+        "frontal_score": _float_or_none(values.get("frontal_score")),
+        "quality_flags": _json(values.get("quality_flags"), default=[]),
+        "recheck_status": _text_or_none(values.get("recheck_status")) or "filtered",
+        "recheck_reason": _text_or_none(values.get("recheck_reason")),
+        "gallery_accepted": values.get("gallery_accepted"),
+        "gallery_name": _text_or_none(values.get("gallery_name")),
+        "gallery_person_id": _text_or_none(values.get("gallery_person_id")),
+        "gallery_person_type": _text_or_none(values.get("gallery_person_type")),
+        "gallery_group_name": _text_or_none(values.get("gallery_group_name")),
+        "gallery_similarity": _float_or_none(values.get("gallery_similarity")),
+        "gallery_second_similarity": _float_or_none(values.get("gallery_second_similarity")),
+        "gallery_camera_identity_status": _text_or_none(values.get("gallery_camera_identity_status")),
+        "gallery_top5_candidates": _json(values.get("gallery_top5_candidates"), default=[]),
+        "crop_relative_path": _text_or_none(values.get("crop_relative_path")),
+        "crop_content_type": _text_or_none(values.get("crop_content_type")),
     }
 
 

@@ -778,6 +778,7 @@ body.admin-body {
 }
 
 .monitor-image-frame {
+  position: relative;
   display: grid;
   place-items: center;
   min-height: 220px;
@@ -790,6 +791,48 @@ body.admin-body {
 
 .monitor-image-large {
   min-height: 360px;
+}
+
+.monitor-image-large img {
+  object-fit: contain;
+}
+
+.monitor-bbox-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.monitor-bbox {
+  position: absolute;
+  pointer-events: auto;
+  border: 2px solid rgba(154, 103, 25, 0.96);
+  border-radius: 10px;
+  background: rgba(154, 103, 25, 0.10);
+  box-shadow: 0 0 0 1px rgba(255, 250, 240, 0.88);
+}
+
+.monitor-bbox.accepted {
+  border-color: rgba(37, 120, 79, 0.96);
+  background: rgba(37, 120, 79, 0.12);
+}
+
+.monitor-bbox.active {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px rgba(179, 58, 43, 0.22);
+}
+
+.monitor-bbox span {
+  position: absolute;
+  top: -14px;
+  left: -2px;
+  min-width: 20px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(32, 37, 31, 0.88);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .monitor-image-frame img[hidden],
@@ -813,7 +856,8 @@ body.admin-body {
 }
 
 .monitor-detail-grid h4,
-.monitor-safe-json h4 {
+.monitor-safe-json h4,
+.monitor-face-section h4 {
   margin: 0 0 12px;
 }
 
@@ -863,6 +907,80 @@ body.admin-body {
 
 .monitor-safe-json {
   margin-top: 14px;
+}
+
+.monitor-face-section {
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid rgba(32, 37, 31, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.monitor-face-results {
+  display: grid;
+  gap: 14px;
+}
+
+.monitor-face-group h5 {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.monitor-face-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.monitor-face-card {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+  text-align: left;
+  border: 1px solid rgba(32, 37, 31, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.60);
+}
+
+.monitor-face-card.active {
+  border-color: rgba(31, 111, 91, 0.42);
+  box-shadow: 0 0 0 3px rgba(31, 111, 91, 0.10);
+}
+
+.monitor-face-crop {
+  display: grid;
+  place-items: center;
+  width: 86px;
+  height: 96px;
+  overflow: hidden;
+  color: var(--muted);
+  border-radius: 14px;
+  background: rgba(246, 236, 216, 0.86);
+  font-size: 12px;
+}
+
+.monitor-face-crop img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.monitor-face-card-body {
+  display: grid;
+  gap: 4px;
+}
+
+.monitor-face-card-body small,
+.monitor-face-candidates {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.monitor-face-candidates {
+  overflow-wrap: anywhere;
 }
 
 .monitor-safe-json pre {

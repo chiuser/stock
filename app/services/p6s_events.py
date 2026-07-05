@@ -257,6 +257,7 @@ def _handle_known_face(
         route_result="known",
         face_images=face_images,
         camera_person=_matched_person_summary(person),
+        root=root,
         notify=notify,
     )
     draft = attendance.build_known_draft(
@@ -379,6 +380,7 @@ def _handle_stranger(
         route_result="stranger",
         face_images=face_images,
         camera_person=None,
+        root=root,
         notify=notify,
     )
 
@@ -487,6 +489,7 @@ def _handle_parse_error(
         route_result="parse_error",
         face_images=face_images,
         camera_person=None,
+        root=root,
         notify=notify,
     )
     ack = _face_reco_ack(
@@ -1022,6 +1025,7 @@ def _run_face_recheck_for_event(
     route_result: str,
     face_images: SavedFaceRecoImages,
     camera_person: dict[str, Any] | None,
+    root: Path | str | None,
     notify: bool,
 ) -> tuple[face_recheck.FaceRecheckResult, dict[str, Any]]:
     primary_image = face_images.primary()
@@ -1036,6 +1040,15 @@ def _run_face_recheck_for_event(
             background_view_url=_image_view_url(face_images.background),
             capture_view_url=_image_view_url(face_images.capture),
         )
+    )
+    recheck_result = recognition_monitor.attach_face_crops_to_recheck(
+        recheck_result,
+        identity=identity,
+        source_images={
+            "background": face_images.background.stored_image if face_images.background else None,
+            "capture": face_images.capture.stored_image if face_images.capture else None,
+        },
+        root=root,
     )
     if not notify:
         return recheck_result, _notification_skipped("notify disabled")

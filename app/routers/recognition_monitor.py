@@ -77,11 +77,19 @@ def get_recognition_event(
     try:
         with recognition_repo.transaction() as conn:
             row = recognition_repo.fetch_event(conn, event_key=event_key)
+            face_rows = (
+                recognition_repo.list_recognition_event_faces(
+                    conn,
+                    recognition_event_id=int(row["recognition_event_id"]),
+                )
+                if row is not None
+                else []
+            )
     except Exception as exc:
         raise _db_unavailable(exc)
     if row is None:
         raise HTTPException(status_code=404, detail="recognition event not found")
-    return recognition_monitor.row_to_event(row, include_detail=True)
+    return recognition_monitor.row_to_event(row, include_detail=True, faces=face_rows)
 
 
 @router.get("/recognition-monitor/quality")
