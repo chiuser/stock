@@ -469,7 +469,7 @@ def _handle_stranger(
         db_result,
         feishu_result=feishu_result,
         should_send=should_send,
-        title="发现陌生人入场",
+        title="‼️ 发现陌生人入场",
         suppressed_reason=None if should_send else feishu_result.get("reason"),
     )
 
@@ -836,7 +836,7 @@ def _execute_final_trigger(
         db_result,
         feishu_result=feishu_result,
         should_send=should_send,
-        title="发现陌生人入场",
+        title="‼️ 发现陌生人入场",
         suppressed_reason=None if should_send else feishu_result.get("reason"),
     )
     return _trigger_result(
@@ -845,7 +845,7 @@ def _execute_final_trigger(
         feishu_result,
         notification_record,
         should_send,
-        "发现陌生人入场",
+        "‼️ 发现陌生人入场",
         event_dedupe_key,
     )
 
@@ -946,11 +946,11 @@ def _final_business_result(
 
 def _title_for_person_type(person_type: str | None) -> str:
     if person_type == "member":
-        return "会员入场提醒"
+        return "😊 会员入场提醒"
     if person_type == "coach":
-        return "教练入场提醒"
+        return "🧑‍🏫 教练入场提醒"
     if person_type == "staff":
-        return "员工入场提醒"
+        return "🧑‍💼 员工入场提醒"
     return "人员入场提醒"
 
 
@@ -1055,21 +1055,21 @@ def _configured_person_roles() -> list[PersonRole]:
             "P6S_FACE_GROUP_MEMBERS_ID",
             "P6S_FACE_GROUP_MEMBERS_NAME",
             "会员",
-            "会员入场提醒",
+            "😊 会员入场提醒",
         ),
         (
             "coaches",
             "P6S_FACE_GROUP_COACHES_ID",
             "P6S_FACE_GROUP_COACHES_NAME",
             "教练",
-            "教练入场提醒",
+            "🧑‍🏫 教练入场提醒",
         ),
         (
             "staff",
             "P6S_FACE_GROUP_STAFF_ID",
             "P6S_FACE_GROUP_STAFF_NAME",
             "员工",
-            "员工入场提醒",
+            "🧑‍💼 员工入场提醒",
         ),
     ):
         group_id = os.environ.get(id_env, "").strip()
@@ -1090,7 +1090,7 @@ def _configured_person_roles() -> list[PersonRole]:
                 name=legacy_group_name,
                 group_id=legacy_group_id,
                 group_name=legacy_group_name,
-                notification_title="会员入场提醒",
+                notification_title="😊 会员入场提醒",
             )
         )
     return roles

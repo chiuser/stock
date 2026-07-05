@@ -327,16 +327,15 @@ def build_known_face_post(
 
     lines = [
         _text_line("姓名", name),
-        _text_line("人员 ID", person_id),
-        _text_line("设备", device_sn or "unknown"),
-        _text_line("时间", event_time or "unknown"),
-        _text_line("事件 ID", event_id or "unknown"),
     ]
     if role_name:
-        # Put the user-facing role at the end so existing field order stays stable.
         lines.append(_text_line("身份类型", role_name))
-    if storage_path:
-        lines.append(_text_line("保存位置", storage_path))
+    lines.extend(
+        [
+            _text_line("时间", event_time or "unknown"),
+            _text_line("事件 ID", event_id or "unknown"),
+        ]
+    )
     _append_image_links(
         lines,
         view_url=view_url,
@@ -392,21 +391,17 @@ def build_unknown_face_post(
 ) -> dict[str, Any]:
     """Build the post payload for an unknown face."""
 
-    resolved_storage_path = storage_path or (str(image_path) if image_path else "")
     lines = [
-        _text_line("设备", device_sn or "unknown"),
         _text_line("时间", event_time or "unknown"),
         _text_line("事件 ID", event_id or "unknown"),
     ]
-    if resolved_storage_path:
-        lines.append(_text_line("保存位置", resolved_storage_path))
     _append_image_links(
         lines,
         view_url=view_url,
         background_view_url=background_view_url,
         capture_view_url=capture_view_url,
     )
-    return build_post_payload("发现陌生人入场", lines)
+    return build_post_payload("‼️ 发现陌生人入场", lines)
 
 
 def notify_event_error(

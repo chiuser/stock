@@ -139,9 +139,9 @@ async def validate() -> None:
         assert dual_monitor_row["capture_relative_path"] == dual_record["images"]["capture"]["relative_path"]
 
         for fixture, role, role_name, title in (
-            ("p6s_face_reco_member.json", "members", "会员", "会员入场提醒"),
-            ("p6s_face_reco_coach.json", "coaches", "教练", "教练入场提醒"),
-            ("p6s_face_reco_staff.json", "staff", "员工", "员工入场提醒"),
+            ("p6s_face_reco_member.json", "members", "会员", "😊 会员入场提醒"),
+            ("p6s_face_reco_coach.json", "coaches", "教练", "🧑‍🏫 教练入场提醒"),
+            ("p6s_face_reco_staff.json", "staff", "员工", "🧑‍💼 员工入场提醒"),
             ("p6s_face_reco_unknown_role.json", "unknown", "未知身份", "人员入场提醒"),
         ):
             result = await p6s_events.handle_event(
@@ -224,12 +224,20 @@ def validate_feishu_payloads() -> None:
         event_time="2026-07-02 10:10:00",
         event_id="member-001",
         role_name="会员",
-        title="会员入场提醒",
+        title="😊 会员入场提醒",
         storage_path="/var/lib/camera-face-guard/p6s_events/faces/2026-07-02/member.jpg",
         background_view_url="http://example.test/api/p6s/event-images/view/member-background-token",
         capture_view_url="http://example.test/api/p6s/event-images/view/member-capture-token",
     )
-    assert _post_title(known_payload) == "会员入场提醒"
+    assert _post_title(known_payload) == "😊 会员入场提醒"
+    known_text = "\n".join(_post_plain_texts(known_payload))
+    assert "姓名: 苏苏" in known_text
+    assert "身份类型: 会员" in known_text
+    assert "时间: 2026-07-02 10:10:00" in known_text
+    assert "事件 ID: member-001" in known_text
+    assert "人员 ID:" not in known_text
+    assert "设备:" not in known_text
+    assert "保存位置:" not in known_text
     assert any(
         item.get("text") == "身份类型: 会员"
         for line in _post_lines(known_payload)
@@ -255,7 +263,13 @@ def validate_feishu_payloads() -> None:
         background_view_url="http://example.test/api/p6s/event-images/view/stranger-background-token",
         capture_view_url="http://example.test/api/p6s/event-images/view/stranger-capture-token",
     )
-    assert _post_title(unknown_payload) == "发现陌生人入场"
+    assert _post_title(unknown_payload) == "‼️ 发现陌生人入场"
+    unknown_text = "\n".join(_post_plain_texts(unknown_payload))
+    assert "时间: 2026-07-02 10:05:00" in unknown_text
+    assert "事件 ID: stranger-001" in unknown_text
+    assert "人员 ID:" not in unknown_text
+    assert "设备:" not in unknown_text
+    assert "保存位置:" not in unknown_text
     assert any(
         item.get("tag") == "a" and item.get("text") == "查看背景全图"
         for line in _post_lines(unknown_payload)
@@ -1209,6 +1223,15 @@ def _post_title(payload: dict) -> str:
 
 def _post_lines(payload: dict) -> list[list[dict[str, str]]]:
     return payload["content"]["post"]["zh_cn"]["content"]
+
+
+def _post_plain_texts(payload: dict) -> list[str]:
+    return [
+        item.get("text", "")
+        for line in _post_lines(payload)
+        for item in line
+        if item.get("tag") == "text"
+    ]
 
 
 if __name__ == "__main__":
