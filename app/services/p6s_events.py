@@ -260,6 +260,29 @@ def _handle_known_face(
         root=root,
         notify=notify,
     )
+    final_decision = face_recheck.build_final_recognition_decision(
+        camera_result="known",
+        camera_person=_matched_person_summary(person),
+        recheck_result=recheck_result,
+    )
+    if final_decision.action != "allow_original":
+        return _handle_final_recognition_decision(
+            payload,
+            identity=identity,
+            raw_file=raw_file,
+            root=root,
+            notify=notify,
+            original_result="known",
+            original_matched_person=person,
+            face_images=face_images,
+            primary_image=primary_image,
+            representative_image=representative_image,
+            recheck_result=recheck_result,
+            recheck_shadow_result=recheck_shadow_result,
+            final_decision=final_decision,
+            match_number=match_number,
+            extra_record={},
+        )
     draft = attendance.build_known_draft(
         identity=identity,
         raw_file=raw_file,
@@ -383,6 +406,29 @@ def _handle_stranger(
         root=root,
         notify=notify,
     )
+    final_decision = face_recheck.build_final_recognition_decision(
+        camera_result="stranger",
+        camera_person=None,
+        recheck_result=recheck_result,
+    )
+    if final_decision.action != "allow_original":
+        return _handle_final_recognition_decision(
+            payload,
+            identity=identity,
+            raw_file=raw_file,
+            root=root,
+            notify=notify,
+            original_result="stranger",
+            original_matched_person=None,
+            face_images=face_images,
+            primary_image=primary_image,
+            representative_image=representative_image,
+            recheck_result=recheck_result,
+            recheck_shadow_result=recheck_shadow_result,
+            final_decision=final_decision,
+            match_number=match_number,
+            extra_record={"match_number_missing": match_number_missing},
+        )
 
     draft = attendance.build_stranger_draft(
         identity=identity,
@@ -492,6 +538,29 @@ def _handle_parse_error(
         root=root,
         notify=notify,
     )
+    final_decision = face_recheck.build_final_recognition_decision(
+        camera_result="parse_error",
+        camera_person=None,
+        recheck_result=recheck_result,
+    )
+    if final_decision.action != "allow_original":
+        return _handle_final_recognition_decision(
+            payload,
+            identity=identity,
+            raw_file=raw_file,
+            root=root,
+            notify=notify,
+            original_result="parse_error",
+            original_matched_person=None,
+            face_images=face_images,
+            primary_image=primary_image,
+            representative_image=representative_image,
+            recheck_result=recheck_result,
+            recheck_shadow_result=recheck_shadow_result,
+            final_decision=final_decision,
+            match_number=match_number,
+            extra_record={"error": message},
+        )
     ack = _face_reco_ack(
         payload,
         matched_person=None,
@@ -560,6 +629,343 @@ def _handle_parse_error(
         feishu_result=feishu_result,
         attendance_result=db_result.to_dict(),
     )
+
+
+def _handle_final_recognition_decision(
+    payload: dict[str, Any],
+    *,
+    identity: event_store.EventIdentity,
+    raw_file: event_store.StoredFile,
+    root: Path | str | None,
+    notify: bool,
+    original_result: str,
+    original_matched_person: MatchedPerson | None,
+    face_images: SavedFaceRecoImages,
+    primary_image: SavedFaceRecoImage | None,
+    representative_image: SavedFaceRecoImage | None,
+    recheck_result: face_recheck.FaceRecheckResult,
+    recheck_shadow_result: dict[str, Any],
+    final_decision: face_recheck.FinalRecognitionDecision,
+    match_number: int | None,
+    extra_record: dict[str, Any],
+) -> EventHandleResult:
+    ack = _face_reco_ack(
+        payload,
+        matched_person=original_matched_person,
+        stored_image=_stored_image_path(primary_image),
+    )
+    if final_decision.action == "suppress":
+        feishu_result = _notification_skipped(final_decision.reason)
+        record_file = _write_record(
+            identity,
+            _final_record_payload(
+                original_result=original_result,
+                result="filtered",
+                original_matched_person=original_matched_person,
+                representative_image=representative_image,
+                primary_image=primary_image,
+                face_images=face_images,
+                recheck_result=recheck_result,
+                recheck_shadow_result=recheck_shadow_result,
+                final_decision=final_decision,
+                trigger_results=[],
+                feishu_result=feishu_result,
+                attendance_result={"skipped": True, "reason": final_decision.reason},
+                notification_record={"ok": True, "skipped": True, "reason": final_decision.reason},
+                ack=ack,
+                extra_record=extra_record,
+            ),
+            root=root,
+        )
+        return EventHandleResult(
+            ack=ack,
+            result="filtered",
+            identity=identity,
+            raw_file=raw_file,
+            record_file=record_file,
+            image=primary_image.stored_image if primary_image else None,
+            link=primary_image.created_link if primary_image else None,
+            feishu_result=feishu_result,
+            attendance_result={"skipped": True, "reason": final_decision.reason},
+        )
+
+    trigger_results = [
+        _execute_final_trigger(
+            trigger,
+            identity=identity,
+            raw_file=raw_file,
+            notify=notify,
+            face_images=face_images,
+            primary_image=primary_image,
+            match_number=match_number,
+        )
+        for trigger in final_decision.primary_and_extra_triggers
+    ]
+    primary_result = trigger_results[0] if trigger_results else {}
+    feishu_result = _dict_or_skipped(primary_result.get("feishu"), "final decision had no trigger")
+    attendance_result = _dict_or_skipped(primary_result.get("attendance"), "final decision had no attendance")
+    notification_record = _dict_or_skipped(
+        primary_result.get("attendance_notification"),
+        "final decision had no notification",
+    )
+    record_file = _write_record(
+        identity,
+            _final_record_payload(
+                original_result=original_result,
+                result=_final_business_result(final_decision, original_result),
+                original_matched_person=original_matched_person,
+                representative_image=representative_image,
+                primary_image=primary_image,
+            face_images=face_images,
+            recheck_result=recheck_result,
+            recheck_shadow_result=recheck_shadow_result,
+            final_decision=final_decision,
+            trigger_results=trigger_results,
+            feishu_result=feishu_result,
+            attendance_result=attendance_result,
+            notification_record=notification_record,
+            ack=ack,
+            extra_record=extra_record,
+        ),
+        root=root,
+    )
+    return EventHandleResult(
+        ack=ack,
+        result=final_decision.primary_trigger.kind if final_decision.primary_trigger else original_result,
+        identity=identity,
+        raw_file=raw_file,
+        record_file=record_file,
+        image=primary_image.stored_image if primary_image else None,
+        link=primary_image.created_link if primary_image else None,
+        feishu_result=feishu_result,
+        attendance_result=attendance_result,
+    )
+
+
+def _execute_final_trigger(
+    trigger: face_recheck.FinalRecognitionTrigger,
+    *,
+    identity: event_store.EventIdentity,
+    raw_file: event_store.StoredFile,
+    notify: bool,
+    face_images: SavedFaceRecoImages,
+    primary_image: SavedFaceRecoImage | None,
+    match_number: int | None,
+) -> dict[str, Any]:
+    event_dedupe_key = _trigger_event_dedupe_key(identity, trigger)
+    if trigger.kind == "known":
+        title = _title_for_person_type(trigger.person_type)
+        role_name = trigger.group_name or _role_name_for_person_type(trigger.person_type)
+        draft = attendance.build_known_draft(
+            identity=identity,
+            raw_file=raw_file,
+            person_type=trigger.person_type or "unknown_known",
+            person_ref_id=trigger.person_id,
+            name=trigger.name or "未知姓名",
+            camera_person_id=None,
+            face_group_id=trigger.group_id,
+            face_group_name=trigger.group_name,
+            match_number=match_number,
+            stored_image=primary_image.stored_image if primary_image else None,
+            image_url=_image_view_url(primary_image),
+            token_hash=_image_token_hash(primary_image),
+            image_source=_image_source(primary_image),
+            event_dedupe_key=event_dedupe_key,
+        )
+        db_result = attendance.safe_record_event(draft)
+        should_send = notify and _notify_known_enabled() and db_result.should_notify
+        skip_reason = db_result.suppressed_reason
+        if should_send:
+            feishu_result = _safe_notify(
+                feishu.notify_known_face,
+                name=trigger.name or "未知姓名",
+                person_id=trigger.person_id or "",
+                device_sn=identity.serial_number,
+                event_time=identity.event_time,
+                event_id=identity.event_id,
+                role_name=role_name,
+                title=title,
+                storage_path=_stored_image_path(primary_image),
+                view_url=_image_view_url(primary_image),
+                background_view_url=_image_view_url(face_images.background),
+                capture_view_url=_image_view_url(face_images.capture),
+            )
+        else:
+            skip_reason = skip_reason or ("notify disabled" if not notify else "known notification disabled")
+            feishu_result = _notification_skipped(skip_reason)
+        notification_record = attendance.safe_record_notification(
+            db_result,
+            feishu_result=feishu_result,
+            should_send=should_send,
+            title=title,
+            suppressed_reason=None if should_send else skip_reason,
+        )
+        return _trigger_result(trigger, db_result, feishu_result, notification_record, should_send, title, event_dedupe_key)
+
+    draft = attendance.build_stranger_draft(
+        identity=identity,
+        raw_file=raw_file,
+        stored_image=primary_image.stored_image if primary_image else None,
+        image_url=_image_view_url(primary_image),
+        token_hash=_image_token_hash(primary_image),
+        image_source=_image_source(primary_image),
+        match_number=match_number,
+        event_dedupe_key=event_dedupe_key,
+    )
+    db_result = attendance.safe_record_event(draft)
+    should_send = notify and db_result.should_notify
+    if not should_send:
+        feishu_result = _notification_skipped(
+            db_result.suppressed_reason or ("notify disabled" if not notify else "attendance notification suppressed")
+        )
+    elif primary_image and primary_image.stored_image and primary_image.created_link:
+        feishu_result = _notify_unknown(
+            notify=notify,
+            image_path=primary_image.stored_image.path,
+            device_sn=identity.serial_number,
+            event_time=identity.event_time,
+            event_id=identity.event_id,
+            storage_path=str(primary_image.stored_image.path),
+            view_url=primary_image.created_link.view_url,
+            background_view_url=_image_view_url(face_images.background),
+            capture_view_url=_image_view_url(face_images.capture),
+        )
+    else:
+        feishu_result = _notification_skipped("unknown face image unavailable")
+    notification_record = attendance.safe_record_notification(
+        db_result,
+        feishu_result=feishu_result,
+        should_send=should_send,
+        title="发现陌生人入场",
+        suppressed_reason=None if should_send else feishu_result.get("reason"),
+    )
+    return _trigger_result(
+        trigger,
+        db_result,
+        feishu_result,
+        notification_record,
+        should_send,
+        "发现陌生人入场",
+        event_dedupe_key,
+    )
+
+
+def _trigger_result(
+    trigger: face_recheck.FinalRecognitionTrigger,
+    db_result: attendance.AttendanceRecordResult,
+    feishu_result: dict[str, Any],
+    notification_record: dict[str, Any],
+    should_send: bool,
+    title: str,
+    event_dedupe_key: str,
+) -> dict[str, Any]:
+    return {
+        "trigger": trigger.to_dict(),
+        "event_dedupe_key": event_dedupe_key,
+        "attendance": db_result.to_dict(),
+        "feishu": feishu_result,
+        "attendance_notification": notification_record,
+        "should_send": should_send,
+        "title": title,
+    }
+
+
+def _final_record_payload(
+    *,
+    original_result: str,
+    result: str,
+    original_matched_person: MatchedPerson | None,
+    representative_image: SavedFaceRecoImage | None,
+    primary_image: SavedFaceRecoImage | None,
+    face_images: SavedFaceRecoImages,
+    recheck_result: face_recheck.FaceRecheckResult,
+    recheck_shadow_result: dict[str, Any],
+    final_decision: face_recheck.FinalRecognitionDecision,
+    trigger_results: list[dict[str, Any]],
+    feishu_result: dict[str, Any],
+    attendance_result: dict[str, Any],
+    notification_record: dict[str, Any],
+    ack: dict[str, Any],
+    extra_record: dict[str, Any],
+) -> dict[str, Any]:
+    payload = {
+        "result": result,
+        "camera_result": original_result,
+        "matched_person": _matched_person_record(original_matched_person),
+        "image": representative_image.image_record if representative_image else None,
+        "link": _link_to_dict(primary_image.created_link) if primary_image else None,
+        "images": face_images.image_records(),
+        "links": face_images.link_records(),
+        "face_recheck": recheck_result.to_dict(),
+        "final_recognition_decision": final_decision.to_dict(),
+        "final_trigger_results": trigger_results,
+        "face_recheck_shadow_feishu": _notify_result_summary(recheck_shadow_result),
+        "feishu": feishu_result,
+        "attendance": attendance_result,
+        "attendance_notification": notification_record,
+        "ack": _ack_summary(ack),
+    }
+    payload.update(extra_record)
+    return payload
+
+
+def _matched_person_record(person: MatchedPerson | None) -> dict[str, Any]:
+    if person is None:
+        return {"name": "", "id": ""}
+    return {
+        "name": person.name,
+        "id": person.person_id,
+        "person_id": person.ack_person_id,
+        "camera_person_id": person.camera_person_id,
+        "person_name_missing": person.person_name_missing,
+        "person_id_missing": person.person_id_missing,
+        "person_role": person.role.code,
+        "person_role_name": person.role.name,
+        "person_group_id": person.role.group_id,
+        "person_group_name": person.role.group_name,
+        "notification_title": person.role.notification_title,
+    }
+
+
+def _trigger_event_dedupe_key(
+    identity: event_store.EventIdentity,
+    trigger: face_recheck.FinalRecognitionTrigger,
+) -> str:
+    identity_part = trigger.person_id if trigger.kind == "known" and trigger.person_id else trigger.face_key
+    return f"{identity.dedupe_key}:{trigger.face_key}:{trigger.kind}:{identity_part}"
+
+
+def _final_business_result(
+    final_decision: face_recheck.FinalRecognitionDecision,
+    fallback: str,
+) -> str:
+    if final_decision.primary_trigger:
+        return final_decision.primary_trigger.kind
+    return fallback
+
+
+def _title_for_person_type(person_type: str | None) -> str:
+    if person_type == "member":
+        return "会员入场提醒"
+    if person_type == "coach":
+        return "教练入场提醒"
+    if person_type == "staff":
+        return "员工入场提醒"
+    return "人员入场提醒"
+
+
+def _role_name_for_person_type(person_type: str | None) -> str:
+    if person_type == "member":
+        return "会员"
+    if person_type == "coach":
+        return "教练"
+    if person_type == "staff":
+        return "员工"
+    return ""
+
+
+def _dict_or_skipped(value: Any, reason: str) -> dict[str, Any]:
+    return value if isinstance(value, dict) else _notification_skipped(reason)
 
 
 def _route_face_reco(match_number: int | None, person_info_value: Any) -> str:

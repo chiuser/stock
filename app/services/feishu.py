@@ -202,7 +202,12 @@ def build_face_recheck_shadow_post(
                     _gallery_threshold_text(
                         thresholds.get("similarity_threshold"),
                         thresholds.get("similarity_margin"),
+                        thresholds.get("camera_match_similarity_threshold"),
                     ),
+                ),
+                _text_line(
+                    "Gallery 本次判定阈值",
+                    _min_threshold_text(gallery_match.get("accepted_threshold")),
                 ),
                 _text_line(
                     "Gallery 第二名分数",
@@ -557,13 +562,14 @@ def _face_size_threshold_text(width: Any, height: Any) -> str:
     return f">= {width}x{height}"
 
 
-def _gallery_threshold_text(similarity: Any, margin: Any) -> str:
+def _gallery_threshold_text(similarity: Any, margin: Any, camera_match_similarity: Any = None) -> str:
     if similarity in (None, "") and margin in (None, ""):
         return "unknown"
-    return (
-        f"相似度 {_min_threshold_text(similarity)}；"
-        f"领先第二名 {_min_threshold_text(margin)}"
-    )
+    parts = [f"通用相似度 {_min_threshold_text(similarity)}"]
+    if camera_match_similarity not in (None, ""):
+        parts.append(f"摄像头同人 {_min_threshold_text(camera_match_similarity)}")
+    parts.append(f"领先第二名 {_min_threshold_text(margin)}")
+    return "；".join(parts)
 
 
 def _gallery_candidates_text(candidates: list[dict[str, Any]]) -> str:

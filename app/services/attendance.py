@@ -111,6 +111,7 @@ def build_known_draft(
     image_url: str | None = None,
     token_hash: str | None = None,
     image_source: str = "",
+    event_dedupe_key: str | None = None,
 ) -> AttendanceEventDraft:
     image = _attendance_image(
         stored_image=stored_image,
@@ -119,7 +120,7 @@ def build_known_draft(
         image_source=image_source,
     )
     return AttendanceEventDraft(
-        event_dedupe_key=identity.dedupe_key,
+        event_dedupe_key=event_dedupe_key or identity.dedupe_key,
         camera_serial_number=identity.serial_number,
         camera_event_id=identity.event_id,
         event_time=_identity_event_time(identity),
@@ -147,6 +148,7 @@ def build_stranger_draft(
     token_hash: str | None,
     image_source: str,
     match_number: int | None,
+    event_dedupe_key: str | None = None,
 ) -> AttendanceEventDraft:
     image = None
     if stored_image or image_url or image_source:
@@ -157,7 +159,7 @@ def build_stranger_draft(
             token_hash=token_hash,
         )
     return AttendanceEventDraft(
-        event_dedupe_key=identity.dedupe_key,
+        event_dedupe_key=event_dedupe_key or identity.dedupe_key,
         camera_serial_number=identity.serial_number,
         camera_event_id=identity.event_id,
         event_time=_identity_event_time(identity),

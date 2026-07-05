@@ -384,8 +384,18 @@
           </tr>
           <tr>
             <td>verify_and_override</td>
-            <td>允许把摄像头陌生人纠正为会员/教练/员工</td>
-            <td>仅当 gallery 命中超过 <code>FACE_RECHECK_SIMILARITY_THRESHOLD</code> 且领先第二名超过 <code>FACE_RECHECK_SIMILARITY_MARGIN</code> 时生效。摄像头 already-known 结果与 gallery 冲突时，不覆盖，只记录冲突。</td>
+            <td>允许以 InsightFace 有效识别结果纠偏摄像头结果</td>
+            <td>有效人脸高置信命中 Gallery 时按命中人员处理；有效人脸未高置信命中熟人时按陌生人处理。摄像头 known 与 Gallery 命中冲突时信任 InsightFace 纠偏；复核不可用时不得覆盖摄像头结果。</td>
+          </tr>
+          <tr>
+            <td>陌生人召回优先</td>
+            <td>熟人必须高置信确认</td>
+            <td>Gallery 相似度未达到熟人阈值时，不按熟人放行；如果该脸是有效人脸，则按陌生人触发。多人脸事件逐脸决策，多个有效未知脸按未知人脸数量触发陌生人通知。</td>
+          </tr>
+          <tr>
+            <td>复核不可用语义</td>
+            <td>不等同于确认陌生人</td>
+            <td><code>no_face</code>、模糊、小脸、侧脸、低检测分、图片读取失败、模型异常都属于不可确认状态。可过滤主飞书和 <code>attendance_events</code>，但必须写入处理记录和监控表。</td>
           </tr>
           <tr>
             <td>Gallery 构建失败</td>
@@ -395,7 +405,7 @@
           <tr>
             <td>其余默认项</td>
             <td>按技术方案和本文档默认建议执行</td>
-            <td>CPU-only、<code>buffalo_l</code>、模型不进 Git、embedding 不进 Git、默认 fail-open、侧脸首版只 shadow 观测不强过滤。</td>
+            <td>CPU-only、<code>buffalo_l</code>、模型不进 Git、embedding 不进 Git、默认 fail-open、侧脸和模糊阈值先用真实样本校准，启用后作为复核不可用过滤原因。</td>
           </tr>
         </tbody>
       </table>
@@ -556,10 +566,16 @@
             <td>gallery 命中的最低余弦相似度。</td>
           </tr>
           <tr>
-            <td><code>FACE_RECHECK_SIMILARITY_MARGIN</code></td>
-            <td><code>0.03</code></td>
+            <td><code>FACE_RECHECK_CAMERA_MATCH_SIMILARITY_THRESHOLD</code></td>
+            <td><code>0.30</code></td>
             <td><code>FaceGalleryService</code></td>
-            <td>第一名需要领先第二名的最小差值，降低误认。</td>
+            <td>摄像头已识别为 known，且 Gallery Top1 与摄像头姓名或 ID 对齐时使用的放宽阈值。其他场景仍使用 <code>FACE_RECHECK_SIMILARITY_THRESHOLD</code>。</td>
+          </tr>
+          <tr>
+            <td><code>FACE_RECHECK_SIMILARITY_MARGIN</code></td>
+            <td><code>0.00</code></td>
+            <td><code>FaceGalleryService</code></td>
+            <td>预留的候选领先分差阈值。当前按用户拍板不作为强约束；后续出现明显 badcase 时再调大并启用。</td>
           </tr>
           <tr>
             <td><code>FACE_RECHECK_GALLERY_PATH</code></td>
@@ -699,12 +715,37 @@ class FaceRecheckResult:
     elapsed_ms: int | None
     error_type: str | None = None
     thresholds: FaceRecheckThresholds | None = None</code></pre>
+      <h3>最终确认结构</h3>
+      <pre><code>@dataclass(frozen=True)
+class FinalRecognitionTrigger:
+    kind: Literal["known", "stranger"]
+    face_key: str
+    person_type: Literal["member", "coach", "staff"] | None
+    person_id: str | None
+    name: str | None
+    reason: str
+
+@dataclass(frozen=True)
+class SuppressedFaceDecision:
+    face_key: str
+    reason: str
+    quality_flags: list[str]
+
+@dataclass(frozen=True)
+class FinalRecognitionDecision:
+    action: Literal["trigger", "suppress", "allow_original"]
+    reason: str
+    primary_trigger: FinalRecognitionTrigger | None
+    extra_triggers: list[FinalRecognitionTrigger]
+    suppressed_faces: list[SuppressedFaceDecision]</code></pre>
+      <p class="small"><code>FinalRecognitionDecision</code> 由 <code>FaceRecheckResult</code> 和摄像头原始结果合成，只在事件处理主链路内使用。它必须在写 <code>attendance_events</code> 和发送主飞书前生成；<code>recognition_events</code> / <code>recognition_event_faces</code> 只保存最终决策和逐脸事实，不能反向驱动主流程。</p>
       <h3>JSON 序列化要求</h3>
       <ul>
         <li><code>FaceRecheckResult.to_dict()</code> 不包含 embedding 原始向量，不包含图片 base64，不包含机器人 token。</li>
         <li><code>GalleryMatch.candidates</code> 最多保留 Top 5 候选摘要，用于 shadow 飞书展示排名、人员、角色、组名和相似度。</li>
         <li><code>FaceRecheckResult.thresholds</code> 固化本次判断使用的阈值，便于消息里同时展示分数和判断口径。</li>
         <li>写入事件记录时字段名为 <code>face_recheck</code>。</li>
+        <li>最终确认结果写入 <code>final_recognition_decision</code>，必须包含主触发、额外触发、被过滤人脸和原因，便于监控后台解释为什么某张脸没有触发主飞书。</li>
         <li>shadow 机器人发送结果另写入 <code>face_recheck_shadow_feishu</code>，只保存 <code>ok/status_code/text 摘要</code>，不保存签名。</li>
       </ul>
     </section>
@@ -771,6 +812,9 @@ def should_fallback_to_capture(result, capture_path, settings):
     <section class="panel">
       <h2>七、质量过滤规则</h2>
       <p>质量门控由 <code>FaceQualityGate</code> 负责。它输出 flags，不直接发飞书、不写 DB。业务是否抑制由 <code>FaceRecheckDecision</code> 根据模式处理。</p>
+      <div class="callout warn" style="margin: 14px 0 18px;">
+        <p><strong>语义约束：</strong><code>no_face</code>、低检测分、小脸、模糊、侧脸、图片读取失败、模型异常都属于 <code>IF-NA</code>（复核不可用），不属于 <code>IF-U</code>（有效人脸但 Gallery 未命中）。<code>IF-NA</code> 可以过滤掉主飞书和 <code>attendance_events</code>，但必须保留原始事件、处理记录、质量指标、过滤原因和监控后台记录。</p>
+      </div>
       <table>
         <thead>
           <tr>
@@ -814,22 +858,22 @@ def should_fallback_to_capture(result, capture_path, settings):
             <td><code>side_face</code></td>
             <td>关键点估算侧脸分数高于阈值。</td>
             <td>记录并发 shadow。</td>
-            <td>首版不强制抑制，除非配置另开。</td>
-            <td>不参与身份覆盖，只记录。</td>
+            <td>抑制；写入过滤原因。</td>
+            <td>抑制；不得当作确认陌生人，也不得参与身份覆盖。</td>
           </tr>
           <tr>
             <td><code>multiple_faces</code></td>
             <td>背景图中检测到多张脸。</td>
-            <td>记录人脸数。</td>
-            <td>默认不抑制，选最大且置信度最高的人脸。</td>
-            <td>只对选中人脸做 gallery 比对。</td>
+            <td>记录每张脸的质量、bbox、TopN 和建议动作。</td>
+            <td>不因多人脸整体抑制；逐脸判断，低质量脸抑制，有效未知脸触发陌生人。</td>
+            <td>逐脸判断；熟人高置信命中按熟人触发，有效未知脸按陌生人触发。</td>
           </tr>
         </tbody>
       </table>
       <h3>侧脸估算</h3>
       <ul>
         <li>优先读取 InsightFace face 对象可能提供的姿态字段；若无字段，则使用五点关键点几何估算。</li>
-        <li>几何估算只作为 shadow 观测指标，首版不作为强过滤条件，避免阈值未校准导致漏报。</li>
+        <li>侧脸阈值在进入 filter / verify 前必须用真实样本校准。启用后，侧脸只作为复核不可用过滤原因，不触发主飞书，不写入 <code>attendance_events</code>。</li>
         <li>LLD 不引入新模型做姿态识别，避免超出技术方案范围。</li>
       </ul>
     </section>
@@ -991,13 +1035,41 @@ def should_fallback_to_capture(result, capture_path, settings):
       <ul>
         <li>摄像头事件里如果返回姓名，则优先用 <code>name</code> 与 Gallery 命中姓名判断是否一致。</li>
         <li>摄像头事件里如果返回人员 ID 或证件号，则同时与 Gallery 的 <code>person_id</code> / <code>credential_no</code> 比对。</li>
-        <li>姓名一致但 ID 缺失时，shadow 消息标记为 <code>name_matched</code>；姓名或 ID 冲突时标记为 <code>identity_conflict</code>，本阶段只记录，不覆盖业务结果。</li>
+        <li>当摄像头已识别为 known，且 Gallery Top1 与摄像头姓名或 ID 对齐时，accepted 相似度阈值使用 <code>FACE_RECHECK_CAMERA_MATCH_SIMILARITY_THRESHOLD</code>，当前用于 shadow 调参默认值为 <code>0.30</code>。</li>
+        <li>姓名一致但 ID 缺失时，shadow 消息标记为 <code>name_matched</code>；姓名或 ID 冲突时标记为 <code>identity_conflict</code>。进入 <code>verify_and_override</code> 后，冲突不再只记录，而是以高置信 Gallery 命中结果纠偏。</li>
         <li>目录角色决定 Gallery 身份类型：会员、员工、教练；不从文件名或摄像头返回字段反推角色。</li>
       </ul>
     </section>
 
     <section class="panel">
       <h2>九、决策矩阵</h2>
+      <p>决策输入分为三类：摄像头原始结果、InsightFace 质量状态、Gallery 高置信命中结果。必须先把 InsightFace 结果拆成 <code>IF-K</code>、<code>IF-U</code>、<code>IF-NA</code>，再进入业务决策。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>符号</th>
+            <th>含义</th>
+            <th>是否可触发主飞书</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>IF-K(A)</code></td>
+            <td>InsightFace 检测到质量合格的有效人脸，并且 Gallery 高置信命中熟人 A。</td>
+            <td>可以按熟人 A 触发。</td>
+          </tr>
+          <tr>
+            <td><code>IF-U</code></td>
+            <td>InsightFace 检测到质量合格的有效人脸，但 Gallery 未高置信命中任何熟人。</td>
+            <td>可以按陌生人触发。</td>
+          </tr>
+          <tr>
+            <td><code>IF-NA</code></td>
+            <td><code>no_face</code>、模糊、小脸、侧脸、低检测分、图片读取失败、模型异常等复核不可用状态。</td>
+            <td>不触发主飞书；只记录过滤原因。</td>
+          </tr>
+        </tbody>
+      </table>
       <table>
         <thead>
           <tr>
@@ -1010,56 +1082,71 @@ def should_fallback_to_capture(result, capture_path, settings):
         </thead>
         <tbody>
           <tr>
-            <td>known</td>
-            <td>质量通过，无 gallery 或 gallery 一致</td>
+            <td><code>C-K(A)</code></td>
+            <td>单脸 <code>IF-K(A)</code></td>
             <td>原流程继续，发送 shadow。</td>
             <td>原流程继续。</td>
-            <td>原流程继续。</td>
+            <td>原流程继续，按 A 写库、去重和发主飞书。</td>
           </tr>
           <tr>
-            <td>known</td>
-            <td>质量不通过</td>
-            <td>原流程继续，发送 shadow。</td>
-            <td>抑制写库和主飞书，记录过滤原因。</td>
-            <td>抑制写库和主飞书，记录过滤原因。</td>
-          </tr>
-          <tr>
-            <td>known</td>
-            <td>gallery 命中其他人</td>
+            <td><code>C-K(A)</code></td>
+            <td>单脸 <code>IF-K(B)</code></td>
             <td>原流程继续，shadow 标记冲突。</td>
             <td>原流程继续，记录冲突。</td>
-            <td>不覆盖摄像头 known 身份，只记录冲突。</td>
+            <td>信任 InsightFace，纠偏为 B，按 B 写库、去重和发主飞书。</td>
           </tr>
           <tr>
-            <td>stranger</td>
-            <td>质量不通过</td>
+            <td><code>C-K(A)</code></td>
+            <td>单脸 <code>IF-U</code></td>
+            <td>原流程继续，shadow 标记疑似陌生人。</td>
+            <td>原流程继续，记录疑似陌生人。</td>
+            <td>按陌生人处理，避免低分熟人命中放过陌生人。</td>
+          </tr>
+          <tr>
+            <td><code>C-K(A)</code></td>
+            <td><code>IF-NA</code></td>
             <td>原流程继续，发送 shadow。</td>
             <td>抑制写库和主飞书，记录过滤原因。</td>
             <td>抑制写库和主飞书，记录过滤原因。</td>
           </tr>
           <tr>
-            <td>stranger</td>
-            <td>质量通过但 gallery 未命中</td>
+            <td><code>C-U</code></td>
+            <td>单脸 <code>IF-K(A)</code></td>
+            <td>原流程继续，shadow 展示建议覆盖。</td>
+            <td>原流程继续。</td>
+            <td>纠偏为 A，按 A 写库、去重和发主飞书。</td>
+          </tr>
+          <tr>
+            <td><code>C-U</code></td>
+            <td>单脸 <code>IF-U</code></td>
             <td>原流程继续，发送 shadow。</td>
             <td>原流程继续。</td>
-            <td>原流程继续，仍作为陌生人。</td>
+            <td>保持陌生人流程。</td>
           </tr>
           <tr>
-            <td>stranger</td>
-            <td>质量通过且 gallery 高置信命中</td>
-            <td>原流程继续，shadow 展示建议覆盖。</td>
-            <td>原流程继续，仍作为陌生人。</td>
-            <td>覆盖为对应 member/coach/staff，使用命中人员姓名、ID、身份类型写库和发主飞书。</td>
-          </tr>
-          <tr>
-            <td>parse_error</td>
-            <td>任意</td>
+            <td><code>C-U</code></td>
+            <td><code>IF-NA</code></td>
             <td>原流程继续，发送 shadow。</td>
-            <td>不做身份覆盖；是否抑制只依据质量硬失败。</td>
-            <td>不做身份覆盖；避免把解析异常直接改身份。</td>
+            <td>抑制写库和主飞书，记录过滤原因。</td>
+            <td>抑制写库和主飞书，记录过滤原因。</td>
+          </tr>
+          <tr>
+            <td>任意</td>
+            <td>多脸，包含多个 <code>IF-K</code> / <code>IF-U</code> / <code>IF-NA</code></td>
+            <td>原流程继续，shadow 展示逐脸结果。</td>
+            <td>只处理质量合格的有效脸；<code>IF-NA</code> 只记录。</td>
+            <td>逐脸触发：<code>IF-K</code> 按熟人触发，<code>IF-U</code> 按陌生人触发，<code>IF-NA</code> 只记录。同一人员同一事件内去重。</td>
+          </tr>
+          <tr>
+            <td><code>parse_error</code></td>
+            <td>有可用图片且产生 <code>IF-K</code> / <code>IF-U</code></td>
+            <td>原流程继续，发送 shadow。</td>
+            <td>只记录，不覆盖主流程。</td>
+            <td>可基于有效人脸生成最终决策，但必须保留原解析错误字段，便于排查 P6S payload 问题。</td>
           </tr>
         </tbody>
       </table>
+      <p class="small">最终确认逻辑必须在 <code>_run_face_recheck_for_event()</code> 之后、<code>attendance.safe_record_event()</code> 和主飞书通知之前执行。只在 <code>recognition_events</code> / <code>recognition_event_faces</code> 中分类已经太晚，无法影响去重和主通知。</p>
     </section>
 
     <section class="panel">
@@ -1079,30 +1166,45 @@ def should_fallback_to_capture(result, capture_path, settings):
       <h3>known 分支顺序</h3>
       <pre><code>face_images = _save_face_reco_images(...)
 recheck_result, shadow_result = _run_face_recheck_for_event(...)
+final_decision = face_recheck_decision.build_final_decision(
+    camera_result="known",
+    camera_person=person,
+    recheck_result=recheck_result,
+)
 
-if _should_suppress_by_recheck(recheck_result):
+if final_decision.action == "suppress":
     ack = _face_reco_ack(...)
-    record_file = _write_record(... result="filtered", face_recheck=..., ...)
-    return EventHandleResult(... feishu_result=_notification_skipped("face recheck filtered"))
+    record_file = _write_record(... result="filtered", final_decision=..., face_recheck=..., ...)
+    return EventHandleResult(... feishu_result=_notification_skipped(final_decision.reason))
 
-# shadow 默认走到现有逻辑
-draft = attendance.build_known_draft(...)
-db_result = attendance.safe_record_event(draft)
+# 主结果可能是原摄像头熟人、InsightFace 纠偏后的熟人，或有效未知人脸。
+for trigger in final_decision.primary_and_extra_triggers:
+    if trigger.kind == "known":
+        draft = attendance.build_known_draft(... trigger.person ...)
+    else:
+        draft = attendance.build_stranger_draft(... trigger.face ...)
+    db_result = attendance.safe_record_event(draft)
+    # 后续沿用现有去重和飞书发送规则。
 ...</code></pre>
       <h3>stranger 分支顺序</h3>
       <pre><code>face_images = _save_face_reco_images(...)
 recheck_result, shadow_result = _run_face_recheck_for_event(...)
+final_decision = face_recheck_decision.build_final_decision(
+    camera_result="stranger",
+    camera_person=None,
+    recheck_result=recheck_result,
+)
 
-if _should_suppress_by_recheck(recheck_result):
+if final_decision.action == "suppress":
     return filtered result
 
-if recheck_result.decision == "override_to_known":
-    # 使用 gallery_match 的 person_type/name/person_id/group_id/group_name
-    draft = attendance.build_known_draft(...)
-    feishu.notify_known_face(...)
-else:
-    # 现有 stranger 逻辑
-    draft = attendance.build_stranger_draft(...)</code></pre>
+for trigger in final_decision.primary_and_extra_triggers:
+    if trigger.kind == "known":
+        draft = attendance.build_known_draft(...)
+        feishu.notify_known_face(...)
+    else:
+        draft = attendance.build_stranger_draft(...)
+        feishu.notify_unknown_face(...)</code></pre>
       <h3>处理记录新增字段</h3>
       <pre><code>{
   "result": "known|stranger|parse_error|filtered",
@@ -1117,6 +1219,18 @@ else:
     "selected_face": {...},
     "gallery_match": null,
     "elapsed_ms": 312
+  },
+  "final_recognition_decision": {
+    "mode": "verify_and_override",
+    "action": "trigger",
+    "reason": "valid_face_unknown_or_known_match",
+    "primary_trigger": {"kind": "known|stranger|suppress", "person": {...}, "face_key": "background:0"},
+    "extra_triggers": [
+      {"kind": "known|stranger", "person": {...}, "face_key": "background:1"}
+    ],
+    "suppressed_faces": [
+      {"face_key": "background:2", "reason": "side_face"}
+    ]
   },
   "face_recheck_shadow_feishu": {
     "ok": true,
@@ -1174,7 +1288,7 @@ InsightFace 建议: override_to_known
 侧脸阈值: <= 0.35
 质量标记: 无
 Gallery 命中: 小明 / staff / 3427976339944670 / 0.63
-Gallery 阈值: 相似度 >= 0.50；领先第二名 >= 0.03
+Gallery 阈值: 相似度 >= 0.50；领先第二名当前仅观测，不强制
 Gallery 第二名分数: 0.42
 Gallery 是否通过: True
 Gallery 候选集: 1. 小明 / staff / 3427976339944670 / 0.63; 2. 苏苏 / member / 3785841386866689 / 0.42

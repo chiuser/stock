@@ -1,8 +1,4 @@
-"""InsightFace shadow recheck helpers for P6S FaceReco events.
-
-Milestone 1-3 intentionally only records shadow conclusions. It never
-suppresses attendance records or overrides camera identity decisions.
-"""
+"""InsightFace recheck helpers for P6S FaceReco events."""
 
 from __future__ import annotations
 
@@ -21,7 +17,14 @@ from app.services import event_store
 _FACE_ANALYSIS_SINGLETON: Any | None = None
 _FACE_ANALYSIS_KEY: tuple[str, str, str, float] | None = None
 _REQUIRED_MODEL_FILES = ("det_10g.onnx", "w600k_r50.onnx")
-_MILESTONE_ACTIVE_MODES = {"shadow"}
+_MILESTONE_ACTIVE_MODES = {"shadow", "filter", "verify_and_override"}
+_INTERVENTION_MODES = {"filter", "verify_and_override"}
+_BLOCKING_QUALITY_FLAGS = {
+    "low_det_score",
+    "face_too_small",
+    "blurred",
+    "side_face",
+}
 
 
 class FaceRecheckMode(str, Enum):
@@ -44,6 +47,7 @@ class FaceRecheckSettings:
     blur_threshold: float
     frontal_max_yaw_score: float
     similarity_threshold: float
+    camera_match_similarity_threshold: float
     similarity_margin: float
     gallery_path: str
     gallery_manifest_path: str
@@ -67,7 +71,11 @@ class FaceRecheckSettings:
             blur_threshold=_env_float("FACE_RECHECK_BLUR_THRESHOLD", 80.0),
             frontal_max_yaw_score=_env_float("FACE_RECHECK_FRONTAL_MAX_YAW_SCORE", 0.35),
             similarity_threshold=_env_float("FACE_RECHECK_SIMILARITY_THRESHOLD", 0.50),
-            similarity_margin=_env_float("FACE_RECHECK_SIMILARITY_MARGIN", 0.03),
+            camera_match_similarity_threshold=_env_float(
+                "FACE_RECHECK_CAMERA_MATCH_SIMILARITY_THRESHOLD",
+                0.30,
+            ),
+            similarity_margin=_env_float("FACE_RECHECK_SIMILARITY_MARGIN", 0.0),
             gallery_path=os.environ.get(
                 "FACE_RECHECK_GALLERY_PATH",
                 "/var/lib/camera-face-guard/face-gallery/gallery.npz",
@@ -131,6 +139,7 @@ class FaceRecheckThresholds:
     blur_threshold: float
     frontal_max_yaw_score: float
     similarity_threshold: float
+    camera_match_similarity_threshold: float
     similarity_margin: float
 
     def to_dict(self) -> dict[str, Any]:
@@ -141,6 +150,7 @@ class FaceRecheckThresholds:
             "blur_threshold": round(self.blur_threshold, 6),
             "frontal_max_yaw_score": round(self.frontal_max_yaw_score, 6),
             "similarity_threshold": round(self.similarity_threshold, 6),
+            "camera_match_similarity_threshold": round(self.camera_match_similarity_threshold, 6),
             "similarity_margin": round(self.similarity_margin, 6),
         }
 
@@ -186,6 +196,7 @@ class GalleryMatch:
     similarity: float
     second_similarity: float | None
     accepted: bool
+    accepted_threshold: float
     camera_identity_status: Literal[
         "not_compared",
         "name_matched",
@@ -209,6 +220,7 @@ class GalleryMatch:
             "similarity": round(self.similarity, 6),
             "second_similarity": _rounded_or_none(self.second_similarity),
             "accepted": self.accepted,
+            "accepted_threshold": round(self.accepted_threshold, 6),
             "camera_identity_status": self.camera_identity_status,
             "candidates": [candidate.to_dict() for candidate in self.candidates],
         }
@@ -303,6 +315,80 @@ class FaceRecheckResult:
         }
 
 
+@dataclass(frozen=True)
+class FinalRecognitionTrigger:
+    kind: Literal["known", "stranger"]
+    face_key: str
+    image_source: str
+    face_index: int
+    reason: str
+    person_type: Literal["member", "coach", "staff"] | None = None
+    person_id: str | None = None
+    name: str | None = None
+    group_id: str | None = None
+    group_name: str | None = None
+    similarity: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "face_key": self.face_key,
+            "image_source": self.image_source,
+            "face_index": self.face_index,
+            "reason": self.reason,
+            "person_type": self.person_type,
+            "person_id": self.person_id,
+            "name": self.name,
+            "group_id": self.group_id,
+            "group_name": self.group_name,
+            "similarity": _rounded_or_none(self.similarity),
+        }
+
+
+@dataclass(frozen=True)
+class SuppressedFaceDecision:
+    face_key: str
+    image_source: str
+    face_index: int
+    reason: str
+    quality_flags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "face_key": self.face_key,
+            "image_source": self.image_source,
+            "face_index": self.face_index,
+            "reason": self.reason,
+            "quality_flags": list(self.quality_flags),
+        }
+
+
+@dataclass(frozen=True)
+class FinalRecognitionDecision:
+    mode: str
+    action: Literal["allow_original", "trigger", "suppress"]
+    reason: str
+    primary_trigger: FinalRecognitionTrigger | None = None
+    extra_triggers: list[FinalRecognitionTrigger] = field(default_factory=list)
+    suppressed_faces: list[SuppressedFaceDecision] = field(default_factory=list)
+
+    @property
+    def primary_and_extra_triggers(self) -> list[FinalRecognitionTrigger]:
+        if self.primary_trigger is None:
+            return list(self.extra_triggers)
+        return [self.primary_trigger, *self.extra_triggers]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "action": self.action,
+            "reason": self.reason,
+            "primary_trigger": self.primary_trigger.to_dict() if self.primary_trigger else None,
+            "extra_triggers": [trigger.to_dict() for trigger in self.extra_triggers],
+            "suppressed_faces": [face.to_dict() for face in self.suppressed_faces],
+        }
+
+
 def run_face_recheck(
     recheck_input: FaceRecheckInput,
     *,
@@ -356,6 +442,63 @@ def run_face_recheck(
         started=started,
         inactive_mode_reason=inactive_mode_reason,
         camera_person=recheck_input.camera_person,
+    )
+
+
+def build_final_recognition_decision(
+    *,
+    camera_result: str,
+    camera_person: dict[str, Any] | None,
+    recheck_result: FaceRecheckResult,
+) -> FinalRecognitionDecision:
+    """Convert recheck facts into the business action used by attendance/Feishu."""
+
+    if (
+        not recheck_result.enabled
+        or recheck_result.mode == FaceRecheckMode.OFF.value
+        or recheck_result.mode not in _INTERVENTION_MODES
+    ):
+        return FinalRecognitionDecision(
+            mode=recheck_result.mode,
+            action="allow_original",
+            reason=f"mode_{recheck_result.mode}_does_not_intervene",
+        )
+
+    triggers: list[FinalRecognitionTrigger] = []
+    suppressed: list[SuppressedFaceDecision] = []
+    for face in recheck_result.faces:
+        if _face_unavailable(face):
+            suppressed.append(_suppressed_face(face))
+            continue
+        if _gallery_accepted(face.gallery_match):
+            triggers.append(_known_trigger(face))
+        elif face.selected_face is not None:
+            triggers.append(_stranger_trigger(face))
+        else:
+            suppressed.append(_suppressed_face(face))
+
+    triggers = _dedupe_known_triggers(triggers)
+    if not triggers:
+        return FinalRecognitionDecision(
+            mode=recheck_result.mode,
+            action="suppress",
+            reason=_join_reasons(recheck_result.reason, "no_valid_face_trigger"),
+            suppressed_faces=suppressed or [_event_suppression(recheck_result)],
+        )
+
+    primary = _select_primary_trigger(
+        triggers,
+        camera_result=camera_result,
+        recheck_result=recheck_result,
+    )
+    extras = [trigger for trigger in triggers if trigger is not primary]
+    return FinalRecognitionDecision(
+        mode=recheck_result.mode,
+        action="trigger",
+        reason="valid_face_decision",
+        primary_trigger=primary,
+        extra_triggers=extras,
+        suppressed_faces=suppressed,
     )
 
 
@@ -519,12 +662,105 @@ def _event_face_count(faces: list[FaceRecheckFaceResult]) -> int:
 
 
 def _face_status(summary: DetectedFaceSummary) -> Literal["passed", "filtered"]:
-    blocking_flags = {
-        "low_det_score",
-        "face_too_small",
-        "blurred",
-    }
-    return "filtered" if any(flag in blocking_flags for flag in summary.quality_flags) else "passed"
+    return "filtered" if any(flag in _BLOCKING_QUALITY_FLAGS for flag in summary.quality_flags) else "passed"
+
+
+def _face_unavailable(face: FaceRecheckFaceResult) -> bool:
+    return face.status != "passed" or face.selected_face is None
+
+
+def _known_trigger(face: FaceRecheckFaceResult) -> FinalRecognitionTrigger:
+    match = face.gallery_match
+    if match is None:
+        return _stranger_trigger(face)
+    return FinalRecognitionTrigger(
+        kind="known",
+        face_key=face.face_key,
+        image_source=face.image_source,
+        face_index=face.face_index,
+        reason="gallery_high_confidence_match",
+        person_type=match.person_type,
+        person_id=match.person_id,
+        name=match.name,
+        group_id=match.group_id,
+        group_name=match.group_name,
+        similarity=match.similarity,
+    )
+
+
+def _stranger_trigger(face: FaceRecheckFaceResult) -> FinalRecognitionTrigger:
+    return FinalRecognitionTrigger(
+        kind="stranger",
+        face_key=face.face_key,
+        image_source=face.image_source,
+        face_index=face.face_index,
+        reason="valid_face_without_gallery_match",
+    )
+
+
+def _suppressed_face(face: FaceRecheckFaceResult) -> SuppressedFaceDecision:
+    flags = list(face.selected_face.quality_flags) if face.selected_face else []
+    return SuppressedFaceDecision(
+        face_key=face.face_key,
+        image_source=face.image_source,
+        face_index=face.face_index,
+        reason=face.reason or face.status,
+        quality_flags=flags,
+    )
+
+
+def _event_suppression(recheck_result: FaceRecheckResult) -> SuppressedFaceDecision:
+    return SuppressedFaceDecision(
+        face_key="none:0",
+        image_source=recheck_result.image_source,
+        face_index=0,
+        reason=recheck_result.reason or recheck_result.status,
+        quality_flags=_reason_flags(recheck_result.reason),
+    )
+
+
+def _reason_flags(reason: str | None) -> list[str]:
+    if not reason:
+        return []
+    return [part for part in str(reason).split(",") if part]
+
+
+def _dedupe_known_triggers(
+    triggers: list[FinalRecognitionTrigger],
+) -> list[FinalRecognitionTrigger]:
+    deduped: list[FinalRecognitionTrigger] = []
+    seen_known: set[tuple[str, str]] = set()
+    for trigger in triggers:
+        if trigger.kind != "known":
+            deduped.append(trigger)
+            continue
+        key = (trigger.person_type or "", trigger.person_id or "")
+        if key in seen_known:
+            continue
+        seen_known.add(key)
+        deduped.append(trigger)
+    return deduped
+
+
+def _select_primary_trigger(
+    triggers: list[FinalRecognitionTrigger],
+    *,
+    camera_result: str,
+    recheck_result: FaceRecheckResult,
+) -> FinalRecognitionTrigger:
+    if camera_result == "known":
+        matched_face_keys = {
+            face.face_key
+            for face in recheck_result.faces
+            if _gallery_identity_matched(face.gallery_match)
+        }
+        for trigger in triggers:
+            if trigger.face_key in matched_face_keys:
+                return trigger
+    for trigger in triggers:
+        if trigger.kind == "known":
+            return trigger
+    return triggers[0]
 
 
 def _should_analyze_capture(
@@ -690,14 +926,9 @@ def _legacy_single_image_recheck(
             settings=cfg,
             multiple_faces=len(faces) > 1,
         )
-        blocking_flags = {
-            "low_det_score",
-            "face_too_small",
-            "blurred",
-        }
         status: Literal["passed", "filtered"] = (
             "filtered"
-            if any(flag in blocking_flags for flag in summary.quality_flags)
+            if any(flag in _BLOCKING_QUALITY_FLAGS for flag in summary.quality_flags)
             else "passed"
         )
         gallery_match = _match_gallery(cfg, selected_face, recheck_input.camera_person)
@@ -948,6 +1179,7 @@ def _match_gallery(
         match = index.match(
             embedding,
             similarity_threshold=settings.similarity_threshold,
+            camera_match_similarity_threshold=settings.camera_match_similarity_threshold,
             similarity_margin=settings.similarity_margin,
             camera_person=camera_person,
         )
@@ -967,6 +1199,7 @@ def _match_gallery(
         similarity=match.similarity,
         second_similarity=match.second_similarity,
         accepted=match.accepted,
+        accepted_threshold=match.accepted_threshold,
         camera_identity_status=match.camera_identity_status,
         candidates=[
             GalleryCandidate(
@@ -1010,6 +1243,7 @@ def _thresholds(settings: FaceRecheckSettings) -> FaceRecheckThresholds:
         blur_threshold=settings.blur_threshold,
         frontal_max_yaw_score=settings.frontal_max_yaw_score,
         similarity_threshold=settings.similarity_threshold,
+        camera_match_similarity_threshold=settings.camera_match_similarity_threshold,
         similarity_margin=settings.similarity_margin,
     )
 

@@ -291,6 +291,18 @@ Capture 图：
     </section>
 
     <section>
+      <h2>七补充、多人脸最终确认口径</h2>
+      <p>后续进入 <code>filter</code> / <code>verify_and_override</code> 时，多人脸不再压缩成一个主脸判断，而是逐脸生成业务触发结果。该补充只定义决策口径，不授权本方案阶段直接切换运行模式。</p>
+      <ul>
+        <li>陌生人召回优先：熟人必须由 InsightFace 对有效人脸高置信命中 Gallery 才能按熟人处理。</li>
+        <li>有效人脸但 Gallery 未高置信命中熟人时，按陌生人触发；多个有效未知脸按未知人脸数量触发。</li>
+        <li><code>no_face</code>、模糊、小脸、侧脸、低检测分、图片读取失败、模型异常属于复核不可用，不等同于确认陌生人。</li>
+        <li>复核不可用的人脸可以过滤掉主飞书和 <code>attendance_events</code>，但必须写入处理记录、质量指标、过滤原因和监控后台。</li>
+        <li>同一事件中同一熟人可能同时出现在 <code>BackgroundImage</code> 和 <code>CaptureImage</code>，必须按 <code>person_type + person_id</code> 去重，避免重复触发熟人通知。</li>
+      </ul>
+    </section>
+
+    <section>
       <h2>八、上线方式</h2>
       <ol>
         <li>先实现 <code>shadow</code> 下的多脸逐脸记录，不改变主飞书和 attendance 行为。</li>

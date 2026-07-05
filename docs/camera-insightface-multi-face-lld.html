@@ -461,6 +461,43 @@ def analyze_image_faces(image_path, image_source):
     </section>
 
     <section>
+      <h2>十二补充、filter / verify 最终确认约束</h2>
+      <p>本 LLD 的数据结构必须支持后续最终确认逻辑。当前多人脸落库仍可保持 shadow 行为，但字段设计和回填结果要能解释每张脸后续是否会触发主飞书。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>逐脸状态</th>
+            <th>业务含义</th>
+            <th>落库与页面要求</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>IF-K</code></td>
+            <td>有效人脸且 Gallery 高置信命中熟人。</td>
+            <td>子表保留命中人员、角色、相似度、Top5、<code>business_action=known_trigger</code>。</td>
+          </tr>
+          <tr>
+            <td><code>IF-U</code></td>
+            <td>有效人脸但 Gallery 未高置信命中熟人；按陌生人召回优先原则，需要触发陌生人。</td>
+            <td>子表保留质量分、bbox、crop、<code>business_action=stranger_trigger</code>，页面展示为有效未知脸。</td>
+          </tr>
+          <tr>
+            <td><code>IF-NA</code></td>
+            <td><code>no_face</code>、模糊、小脸、侧脸、低检测分、图片读取失败、模型异常；复核不可用，不等同于确认陌生人。</td>
+            <td>子表或父记录必须保留 <code>business_action=suppressed</code>、<code>suppress_reason</code>、质量指标；页面展示“已过滤，不触发主飞书”。</td>
+          </tr>
+        </tbody>
+      </table>
+      <ul>
+        <li>多人脸事件逐脸触发：多个有效未知脸按未知人脸数量触发陌生人通知。</li>
+        <li>摄像头 known 与 InsightFace 高置信命中其他熟人冲突时，后续 <code>verify_and_override</code> 以 InsightFace 为准。</li>
+        <li>同一事件中同一熟人跨 <code>background</code> / <code>capture</code> 重复出现时，按 <code>person_type + person_id</code> 去重。</li>
+        <li>最终确认必须发生在主链路写 <code>attendance_events</code> 和发送主飞书之前；监控表只负责记录和展示，不反向驱动主流程。</li>
+      </ul>
+    </section>
+
+    <section>
       <h2>十三、待确认项</h2>
       <table>
         <thead>

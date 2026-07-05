@@ -54,7 +54,7 @@ def build_event_row(
         "camera_serial_number": _text(record.get("camera_serial_number")),
         "camera_event_id": _text(record.get("event_id")),
         "operator": _text(record.get("operator")) or "FaceReco",
-        "camera_result": _text(record.get("result")) or "unknown",
+        "camera_result": _first_text(record.get("camera_result"), record.get("result")) or "unknown",
         "camera_person_name": _first_text(matched_person.get("name")),
         "camera_person_id": _first_text(
             matched_person.get("id"),
@@ -94,6 +94,7 @@ def build_event_row(
         "record_relative_path": _relative_path(record_path, root=root),
         "raw_relative_path": _relative_path(raw_path, root=root) or _inferred_raw_relative_path(record),
         "face_recheck": face_recheck,
+        "final_recognition_decision": _dict(record.get("final_recognition_decision")),
         "thresholds": _dict(face_recheck.get("thresholds")),
     }
 
@@ -101,6 +102,7 @@ def build_event_row(
 def build_event_face_rows(record: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Convert face_recheck.faces into DB rows for recognition_event_faces."""
     face_recheck_payload = _dict(record.get("face_recheck"))
+    trigger_map, suppress_map = _final_decision_face_maps(record)
     rows: list[dict[str, Any]] = []
     for fallback_index, face in enumerate(_list(face_recheck_payload.get("faces"))):
         face_payload = _dict(face)
@@ -111,11 +113,17 @@ def build_event_face_rows(record: Mapping[str, Any]) -> list[dict[str, Any]]:
         width = _float(selected.get("width"))
         height = _float(selected.get("height"))
         center_x, center_y = _bbox_center(bbox)
+        face_key = _text(face_payload.get("face_key")) or f"background:{fallback_index}"
+        business_action, suppress_reason = _face_business_action(
+            face_payload,
+            trigger_map=trigger_map,
+            suppress_map=suppress_map,
+        )
         rows.append(
             {
                 "image_source": _text(face_payload.get("image_source")) or "background",
                 "face_index": _int(face_payload.get("face_index") if "face_index" in face_payload else fallback_index),
-                "face_key": _text(face_payload.get("face_key")) or f"background:{fallback_index}",
+                "face_key": face_key,
                 "bbox": bbox,
                 "center_x": center_x,
                 "center_y": center_y,
@@ -136,6 +144,8 @@ def build_event_face_rows(record: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "gallery_second_similarity": _float(gallery.get("second_similarity")),
                 "gallery_camera_identity_status": _text(gallery.get("camera_identity_status")),
                 "gallery_top5_candidates": _list(gallery.get("candidates")),
+                "business_action": business_action,
+                "suppress_reason": suppress_reason,
                 "crop_relative_path": _text(crop.get("relative_path")) if crop.get("status") == "saved" else "",
                 "crop_content_type": _text(crop.get("content_type")) if crop.get("status") == "saved" else "",
             }
@@ -186,7 +196,7 @@ def safe_upsert_processing_record_file(
 
 
 def classify_event(record: Mapping[str, Any], face_recheck: Mapping[str, Any] | None = None) -> str:
-    camera_result = str(record.get("result") or "")
+    camera_result = _first_text(record.get("camera_result"), record.get("result"))
     recheck = _dict(face_recheck if face_recheck is not None else record.get("face_recheck"))
     status = str(recheck.get("status") or "")
     face_gallery_matches = _face_gallery_matches(recheck)
@@ -312,6 +322,7 @@ def row_to_event(
             "record_relative_path": _text(row.get("record_relative_path")),
             "raw_relative_path": _text(row.get("raw_relative_path")),
             "face_recheck": _json_dict(row.get("face_recheck")),
+            "final_recognition_decision": _json_dict(row.get("final_recognition_decision")),
             "thresholds": _json_dict(row.get("thresholds")),
         }
     return event
@@ -328,6 +339,8 @@ def face_row_to_event(row: Mapping[str, Any]) -> dict[str, Any]:
         "position_hint": _position_hint(row),
         "status": _text(row.get("recheck_status")),
         "reason": _text(row.get("recheck_reason")),
+        "business_action": _text(row.get("business_action")),
+        "suppress_reason": _text(row.get("suppress_reason")),
         "quality": {
             "det_score": _float(row.get("det_score")),
             "face_size": _face_size(row),
@@ -478,6 +491,56 @@ def rebuild_face_recheck_for_record(
         source_images={"background": background_path, "capture": capture_path},
         root=root,
     )
+
+
+def _final_decision_face_maps(
+    record: Mapping[str, Any],
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    final_decision = _dict(record.get("final_recognition_decision"))
+    action = _text(final_decision.get("action"))
+    if action not in {"trigger", "suppress"}:
+        return {}, {}
+
+    trigger_map: dict[str, dict[str, Any]] = {}
+    primary_trigger = _dict(final_decision.get("primary_trigger"))
+    if primary_trigger:
+        face_key = _text(primary_trigger.get("face_key"))
+        if face_key:
+            trigger_map[face_key] = primary_trigger
+    for trigger_value in _list(final_decision.get("extra_triggers")):
+        trigger = _dict(trigger_value)
+        face_key = _text(trigger.get("face_key"))
+        if face_key:
+            trigger_map[face_key] = trigger
+
+    suppress_map: dict[str, dict[str, Any]] = {}
+    for suppress_value in _list(final_decision.get("suppressed_faces")):
+        suppression = _dict(suppress_value)
+        face_key = _text(suppression.get("face_key"))
+        if face_key:
+            suppress_map[face_key] = suppression
+    return trigger_map, suppress_map
+
+
+def _face_business_action(
+    face_payload: Mapping[str, Any],
+    *,
+    trigger_map: Mapping[str, Mapping[str, Any]],
+    suppress_map: Mapping[str, Mapping[str, Any]],
+) -> tuple[str | None, str | None]:
+    face_key = _text(face_payload.get("face_key"))
+    if face_key and face_key in trigger_map:
+        trigger = _dict(trigger_map[face_key])
+        trigger_kind = _text(trigger.get("kind"))
+        if trigger_kind == "known":
+            return "known_trigger", None
+        if trigger_kind == "stranger":
+            return "stranger_trigger", None
+        return "trigger", None
+    if face_key and face_key in suppress_map:
+        suppression = _dict(suppress_map[face_key])
+        return "suppressed", _text(suppression.get("reason")) or "suppressed"
+    return None, None
 
 
 def _image_record(record: Mapping[str, Any], key: str) -> dict[str, Any]:

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -206,6 +207,7 @@ async def validate() -> None:
         validate_face_gallery_matching()
         validate_face_recheck_fallback_order()
         await validate_face_recheck_shadow_flow(request_meta)
+        await validate_final_decision_flow(request_meta)
         validate_recognition_monitor_backfill(root)
         validate_recognition_monitor_api_helpers(root, known_monitor_row)
         validate_image_routes(root)
@@ -357,6 +359,7 @@ def validate_face_gallery_matching() -> None:
     match = index.match(
         np.array([1.0, 0.0], dtype=np.float32),
         similarity_threshold=0.5,
+        camera_match_similarity_threshold=0.3,
         similarity_margin=0.03,
         camera_person={"name": "小明", "person_id": "3427976339944670"},
     )
@@ -370,6 +373,7 @@ def validate_face_gallery_matching() -> None:
     conflict = index.match(
         np.array([1.0, 0.0], dtype=np.float32),
         similarity_threshold=0.5,
+        camera_match_similarity_threshold=0.3,
         similarity_margin=0.03,
         camera_person={"name": "其他人", "person_id": "000"},
     )
@@ -379,12 +383,42 @@ def validate_face_gallery_matching() -> None:
     low_confidence = index.match(
         np.array([0.51, 0.49], dtype=np.float32),
         similarity_threshold=0.8,
+        camera_match_similarity_threshold=0.3,
         similarity_margin=0.03,
         camera_person=None,
     )
     assert low_confidence is not None
     assert low_confidence.accepted is False
     assert low_confidence.camera_identity_status == "camera_unknown"
+
+    low_camera_match_index = face_gallery.FaceGalleryIndex(
+        embeddings=np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32),
+        records=records,
+        manifest={"records": records},
+    )
+    low_camera_match = low_camera_match_index.match(
+        np.array([0.31, 0.10, 0.9454626], dtype=np.float32),
+        similarity_threshold=0.35,
+        camera_match_similarity_threshold=0.30,
+        similarity_margin=0.0,
+        camera_person={"name": "小明", "person_id": "3427976339944670"},
+    )
+    assert low_camera_match is not None
+    assert low_camera_match.camera_identity_status == "name_and_id_matched"
+    assert low_camera_match.accepted is True
+    assert low_camera_match.accepted_threshold == 0.30
+
+    low_conflict = low_camera_match_index.match(
+        np.array([0.31, 0.10, 0.9454626], dtype=np.float32),
+        similarity_threshold=0.35,
+        camera_match_similarity_threshold=0.30,
+        similarity_margin=0.0,
+        camera_person={"name": "其他人", "person_id": "000"},
+    )
+    assert low_conflict is not None
+    assert low_conflict.camera_identity_status == "identity_conflict"
+    assert low_conflict.accepted is False
+    assert low_conflict.accepted_threshold == 0.35
 
 
 def validate_face_recheck_fallback_order() -> None:
@@ -484,6 +518,7 @@ def _fallback_settings() -> face_recheck.FaceRecheckSettings:
         blur_threshold=80.0,
         frontal_max_yaw_score=0.35,
         similarity_threshold=0.35,
+        camera_match_similarity_threshold=0.30,
         similarity_margin=0.0,
         gallery_path="/tmp/gallery.npz",
         gallery_manifest_path="/tmp/gallery_manifest.json",
@@ -559,6 +594,7 @@ def _fallback_gallery_match(similarity: float) -> face_recheck.GalleryMatch:
         similarity=similarity,
         second_similarity=None,
         accepted=similarity >= 0.35,
+        accepted_threshold=0.35,
         camera_identity_status="name_matched",
     )
 
@@ -603,6 +639,141 @@ async def validate_face_recheck_shadow_flow(request_meta: RequestMeta) -> None:
     assert face_rows[0]["gallery_name"] == "小明"
 
 
+async def validate_final_decision_flow(request_meta: RequestMeta) -> None:
+    env = {
+        "ATTENDANCE_DB_ENABLED": "false",
+        "FACE_RECHECK_ENABLED": "true",
+        "FACE_RECHECK_MODE": "verify_and_override",
+        "FACE_RECHECK_SHADOW_FEISHU_WEBHOOK_URL": "",
+        "FACE_RECHECK_SHADOW_FEISHU_WEBHOOK_SECRET": "",
+        "FEISHU_WEBHOOK_URL": "",
+        "FEISHU_WEBHOOK_SECRET": "",
+    }
+
+    async def run_case(payload: dict, result: face_recheck.FaceRecheckResult) -> tuple[p6s_events.EventHandleResult, dict]:
+        with patched_env(env), tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(p6s_events.face_recheck, "run_face_recheck", return_value=result):
+                handled = await p6s_events.handle_event(
+                    with_capture_image(payload),
+                    request_meta=request_meta,
+                    root=Path(temp_dir),
+                    notify=False,
+                )
+            assert handled.record_file is not None
+            record = json.loads(handled.record_file.path.read_text(encoding="utf-8"))
+            return handled, record
+
+    known_payload = load_fixture("p6s_face_reco_known.json")
+    stranger_payload = load_fixture("p6s_face_reco_stranger.json")
+    disabled_decision = face_recheck.build_final_recognition_decision(
+        camera_result="known",
+        camera_person={"name": "小明", "person_id": "3427976339944670"},
+        recheck_result=replace(
+            _result_for_faces([], mode="verify_and_override"),
+            enabled=False,
+            status="skipped",
+            reason="disabled",
+        ),
+    )
+    assert disabled_decision.action == "allow_original"
+
+    same_person = _result_for_faces(
+        [
+            _known_face(
+                name="小明",
+                person_id="3427976339944670",
+                person_type="staff",
+                group_id="4dcafc2c9fbd4d1fa267ccbf145c8861",
+                group_name="员工",
+                camera_identity_status="name_and_id_matched",
+            )
+        ]
+    )
+    handled, record = await run_case(known_payload, same_person)
+    assert handled.result == "known"
+    assert record["result"] == "known"
+    assert record["camera_result"] == "known"
+    assert record["final_recognition_decision"]["action"] == "trigger"
+    assert record["final_recognition_decision"]["primary_trigger"]["name"] == "小明"
+    face_rows = recognition_monitor.build_event_face_rows(record)
+    assert face_rows[0]["business_action"] == "known_trigger"
+
+    conflict_person = _result_for_faces(
+        [
+            _known_face(
+                name="苏苏",
+                person_id="3785841386866689",
+                person_type="member",
+                group_id="c1e42a1f2531467bae464da8a79dad53",
+                group_name="会员",
+                camera_identity_status="identity_conflict",
+            )
+        ]
+    )
+    handled, record = await run_case(known_payload, conflict_person)
+    assert handled.result == "known"
+    assert record["camera_result"] == "known"
+    assert record["final_recognition_decision"]["primary_trigger"]["name"] == "苏苏"
+    assert record["final_recognition_decision"]["primary_trigger"]["person_type"] == "member"
+
+    handled, record = await run_case(stranger_payload, same_person)
+    assert handled.result == "known"
+    assert record["result"] == "known"
+    assert record["camera_result"] == "stranger"
+    assert record["final_recognition_decision"]["primary_trigger"]["kind"] == "known"
+
+    unknown_face = _result_for_faces([_unknown_face(face_index=0)])
+    handled, record = await run_case(stranger_payload, unknown_face)
+    assert handled.result == "stranger"
+    assert record["result"] == "stranger"
+    assert record["final_recognition_decision"]["primary_trigger"]["kind"] == "stranger"
+
+    multi_known_unknown = _result_for_faces(
+        [
+            _known_face(
+                name="小明",
+                person_id="3427976339944670",
+                person_type="staff",
+                group_id="4dcafc2c9fbd4d1fa267ccbf145c8861",
+                group_name="员工",
+                camera_identity_status="camera_unknown",
+                face_index=0,
+            ),
+            _unknown_face(face_index=1),
+        ]
+    )
+    handled, record = await run_case(stranger_payload, multi_known_unknown)
+    assert handled.result == "known"
+    assert [item["trigger"]["kind"] for item in record["final_trigger_results"]] == ["known", "stranger"]
+    face_rows = recognition_monitor.build_event_face_rows(record)
+    assert [row["business_action"] for row in face_rows] == ["known_trigger", "stranger_trigger"]
+
+    multi_unknown = _result_for_faces([_unknown_face(face_index=0), _unknown_face(face_index=1)])
+    handled, record = await run_case(stranger_payload, multi_unknown)
+    assert handled.result == "stranger"
+    assert [item["trigger"]["kind"] for item in record["final_trigger_results"]] == ["stranger", "stranger"]
+
+    filter_env = dict(env)
+    filter_env["FACE_RECHECK_MODE"] = "filter"
+    side_face = _result_for_faces([_suppressed_face(reason="side_face")], mode="filter")
+    with patched_env(filter_env), tempfile.TemporaryDirectory() as temp_dir:
+        with patch.object(p6s_events.face_recheck, "run_face_recheck", return_value=side_face):
+            handled = await p6s_events.handle_event(
+                with_capture_image(known_payload),
+                request_meta=request_meta,
+                root=Path(temp_dir),
+                notify=False,
+            )
+        assert handled.record_file is not None
+        record = json.loads(handled.record_file.path.read_text(encoding="utf-8"))
+    assert handled.result == "filtered"
+    assert record["result"] == "filtered"
+    assert record["final_recognition_decision"]["action"] == "suppress"
+    face_rows = recognition_monitor.build_event_face_rows(record)
+    assert face_rows[0]["business_action"] == "suppressed"
+    assert "side_face" in face_rows[0]["suppress_reason"]
+
+
 def _mock_recheck_result() -> face_recheck.FaceRecheckResult:
     selected_face = face_recheck.DetectedFaceSummary(
         index=0,
@@ -626,6 +797,7 @@ def _mock_recheck_result() -> face_recheck.FaceRecheckResult:
         similarity=0.91,
         second_similarity=0.42,
         accepted=True,
+        accepted_threshold=0.5,
         camera_identity_status="camera_unknown",
         candidates=[
             face_recheck.GalleryCandidate(
@@ -672,6 +844,7 @@ def _mock_recheck_result() -> face_recheck.FaceRecheckResult:
             blur_threshold=80.0,
             frontal_max_yaw_score=0.35,
             similarity_threshold=0.5,
+            camera_match_similarity_threshold=0.3,
             similarity_margin=0.03,
         ),
         faces=[
@@ -689,6 +862,138 @@ def _mock_recheck_result() -> face_recheck.FaceRecheckResult:
         accepted_face_count=1,
         has_identity_conflict=False,
         camera_target_face_status="camera_unknown",
+    )
+
+
+def _result_for_faces(
+    faces: list[face_recheck.FaceRecheckFaceResult],
+    *,
+    mode: str = "verify_and_override",
+) -> face_recheck.FaceRecheckResult:
+    base = _mock_recheck_result()
+    selected = faces[0].selected_face if faces else None
+    gallery = faces[0].gallery_match if faces else None
+    return replace(
+        base,
+        mode=mode,
+        status=faces[0].status if faces else "filtered",
+        reason=faces[0].reason if faces else "no_face",
+        image_source=faces[0].image_source if faces else "none",
+        face_count=sum(1 for face in faces if face.selected_face is not None),
+        selected_face=selected,
+        gallery_match=gallery,
+        faces=faces,
+        primary_face_key=faces[0].face_key if faces else None,
+        accepted_face_count=sum(1 for face in faces if face.gallery_match and face.gallery_match.accepted),
+        has_identity_conflict=any(
+            face.gallery_match
+            and face.gallery_match.accepted
+            and face.gallery_match.camera_identity_status == "identity_conflict"
+            for face in faces
+        ),
+        camera_target_face_status=(
+            "accepted_match"
+            if any(
+                face.gallery_match
+                and face.gallery_match.accepted
+                and face.gallery_match.camera_identity_status in {"name_matched", "id_matched", "name_and_id_matched"}
+                for face in faces
+            )
+            else "camera_unknown"
+        ),
+    )
+
+
+def _known_face(
+    *,
+    name: str,
+    person_id: str,
+    person_type: str,
+    group_id: str,
+    group_name: str,
+    camera_identity_status: str,
+    face_index: int = 0,
+    similarity: float = 0.91,
+) -> face_recheck.FaceRecheckFaceResult:
+    selected_face = _detected_face(face_index)
+    gallery_match = face_recheck.GalleryMatch(
+        person_id=person_id,
+        credential_no=person_id,
+        credential_type="2",
+        name=name,
+        sex="0",
+        person_type=person_type,  # type: ignore[arg-type]
+        group_id=group_id,
+        group_name=group_name,
+        similarity=similarity,
+        second_similarity=0.20,
+        accepted=True,
+        accepted_threshold=0.50,
+        camera_identity_status=camera_identity_status,  # type: ignore[arg-type]
+        candidates=[
+            face_recheck.GalleryCandidate(
+                rank=1,
+                person_id=person_id,
+                credential_no=person_id,
+                credential_type="2",
+                name=name,
+                sex="0",
+                person_type=person_type,  # type: ignore[arg-type]
+                group_id=group_id,
+                group_name=group_name,
+                similarity=similarity,
+            )
+        ],
+    )
+    return face_recheck.FaceRecheckFaceResult(
+        image_source="background",
+        face_index=face_index,
+        face_key=f"background:{face_index}",
+        selected_face=selected_face,
+        status="passed",
+        reason="quality_passed",
+        gallery_match=gallery_match,
+    )
+
+
+def _unknown_face(*, face_index: int) -> face_recheck.FaceRecheckFaceResult:
+    return face_recheck.FaceRecheckFaceResult(
+        image_source="background",
+        face_index=face_index,
+        face_key=f"background:{face_index}",
+        selected_face=_detected_face(face_index),
+        status="passed",
+        reason="quality_passed",
+        gallery_match=None,
+    )
+
+
+def _suppressed_face(*, reason: str) -> face_recheck.FaceRecheckFaceResult:
+    return face_recheck.FaceRecheckFaceResult(
+        image_source="background",
+        face_index=0,
+        face_key="background:0",
+        selected_face=_detected_face(0, quality_flags=[reason]),
+        status="filtered",
+        reason=reason,
+        gallery_match=None,
+    )
+
+
+def _detected_face(
+    face_index: int,
+    *,
+    quality_flags: list[str] | None = None,
+) -> face_recheck.DetectedFaceSummary:
+    return face_recheck.DetectedFaceSummary(
+        index=face_index,
+        bbox=(1.0 + (face_index * 20.0), 2.0, 101.0 + (face_index * 20.0), 122.0),
+        det_score=0.91,
+        width=100.0,
+        height=120.0,
+        blur_score=132.4,
+        frontal_score=0.12,
+        quality_flags=quality_flags or [],
     )
 
 

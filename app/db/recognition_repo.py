@@ -77,6 +77,7 @@ def upsert_recognition_event(conn: Connection, values: Mapping[str, Any]) -> dic
               record_relative_path,
               raw_relative_path,
               face_recheck,
+              final_recognition_decision,
               thresholds,
               updated_at
             ) values (
@@ -123,6 +124,7 @@ def upsert_recognition_event(conn: Connection, values: Mapping[str, Any]) -> dic
               :record_relative_path,
               :raw_relative_path,
               cast(:face_recheck as jsonb),
+              cast(:final_recognition_decision as jsonb),
               cast(:thresholds as jsonb),
               now()
             )
@@ -169,6 +171,7 @@ def upsert_recognition_event(conn: Connection, values: Mapping[str, Any]) -> dic
               record_relative_path = excluded.record_relative_path,
               raw_relative_path = excluded.raw_relative_path,
               face_recheck = excluded.face_recheck,
+              final_recognition_decision = excluded.final_recognition_decision,
               thresholds = excluded.thresholds,
               updated_at = now()
             returning recognition_event_id;
@@ -218,6 +221,8 @@ def upsert_recognition_event_faces(
                   gallery_second_similarity,
                   gallery_camera_identity_status,
                   gallery_top5_candidates,
+                  business_action,
+                  suppress_reason,
                   crop_relative_path,
                   crop_content_type,
                   updated_at
@@ -246,6 +251,8 @@ def upsert_recognition_event_faces(
                   :gallery_second_similarity,
                   :gallery_camera_identity_status,
                   cast(:gallery_top5_candidates as jsonb),
+                  :business_action,
+                  :suppress_reason,
                   :crop_relative_path,
                   :crop_content_type,
                   now()
@@ -272,6 +279,8 @@ def upsert_recognition_event_faces(
                   gallery_second_similarity = excluded.gallery_second_similarity,
                   gallery_camera_identity_status = excluded.gallery_camera_identity_status,
                   gallery_top5_candidates = excluded.gallery_top5_candidates,
+                  business_action = excluded.business_action,
+                  suppress_reason = excluded.suppress_reason,
                   crop_relative_path = excluded.crop_relative_path,
                   crop_content_type = excluded.crop_content_type,
                   updated_at = now();
@@ -704,6 +713,7 @@ def _params(values: Mapping[str, Any]) -> dict[str, Any]:
         "record_relative_path": _text_or_none(values.get("record_relative_path")),
         "raw_relative_path": _text_or_none(values.get("raw_relative_path")),
         "face_recheck": _json(values.get("face_recheck"), default={}),
+        "final_recognition_decision": _json(values.get("final_recognition_decision"), default={}),
         "thresholds": _json(values.get("thresholds"), default={}),
     }
 
@@ -737,6 +747,8 @@ def _face_params(*, recognition_event_id: int, values: Mapping[str, Any]) -> dic
         "gallery_second_similarity": _float_or_none(values.get("gallery_second_similarity")),
         "gallery_camera_identity_status": _text_or_none(values.get("gallery_camera_identity_status")),
         "gallery_top5_candidates": _json(values.get("gallery_top5_candidates"), default=[]),
+        "business_action": _text_or_none(values.get("business_action")),
+        "suppress_reason": _text_or_none(values.get("suppress_reason")),
         "crop_relative_path": _text_or_none(values.get("crop_relative_path")),
         "crop_content_type": _text_or_none(values.get("crop_content_type")),
     }

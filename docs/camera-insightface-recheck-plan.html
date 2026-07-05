@@ -532,15 +532,15 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
           </tr>
           <tr>
             <td><code>filter</code></td>
-            <td>对低质量、侧脸、无脸、过小、模糊事件进行抑制，不写入到场记录，不发飞书；原始事件仍保存。</td>
+            <td>对无脸、过小、模糊、侧脸、低检测分、模型异常等复核不可用事件进行抑制，不写入到场记录，不发主飞书；原始事件和处理记录仍保存。</td>
             <td>阈值验证后启用。</td>
-            <td>阈值过严可能漏掉真实入场。</td>
+            <td>这些状态不等同于“确认陌生人”，只能作为不可确认原因；阈值过严可能漏掉真实入场。</td>
           </tr>
           <tr>
             <td><code>verify_and_override</code></td>
-            <td>在 <code>filter</code> 基础上，用本地人脸库二次比对。高置信度命中时，可把摄像头陌生人纠正为会员/教练/员工。</td>
+            <td>在 <code>filter</code> 基础上，用本地人脸库二次比对。有效人脸高置信度命中时，以 InsightFace 为最终确认结果；有效人脸未高置信命中时，按陌生人处理。</td>
             <td>人脸库 embedding 校准完成后启用。</td>
-            <td>相似阈值不准可能造成误认，需要充分样本验证。</td>
+            <td>相似阈值不准可能造成误认；本项目按“陌生人召回优先”设计，宁可误报陌生人，也不能把陌生人误放成熟人。</td>
           </tr>
         </tbody>
       </table>
@@ -581,6 +581,9 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
     <section class="panel">
       <h2>七、噪音过滤策略</h2>
       <p>过滤对象主要是摄像头误触发或低质量识别事件，不是替代全部业务判断。所有过滤原因都应写入处理记录，便于后续复盘。</p>
+      <div class="callout warn">
+        <p><strong>语义边界：</strong><code>no_face</code>、模糊、小脸、侧脸、低检测分、图片读取失败、模型异常都属于“复核不可用”，不等同于“确认陌生人”。在 <code>filter</code> / <code>verify_and_override</code> 下，这类事件可以过滤掉，不触发主飞书消息，但必须保存原始事件、处理记录、质量指标和过滤原因，供监控后台和后续日报排查。</p>
+      </div>
       <table>
         <thead>
           <tr>
@@ -618,14 +621,14 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
           <tr>
             <td>侧脸</td>
             <td>优先使用 InsightFace 返回的姿态字段；如果字段不可用，用五点关键点几何关系估算正脸程度。</td>
-            <td>先 shadow 观测，不首版强过滤</td>
-            <td>这是本需求关键点，但需要真实样本校准，避免侧身经过和真实入场混淆。</td>
+            <td>阈值校准后过滤；过滤时只记录，不触发主飞书</td>
+            <td>侧脸不应被当成熟人或确认陌生人。它是复核不可用原因，阈值需要用真实样本校准，避免侧身经过污染入场统计。</td>
           </tr>
           <tr>
             <td>多人脸</td>
             <td>同一背景图中检测到多张脸。</td>
-            <td>选择最大且置信度最高的人脸；保留多人脸标记</td>
-            <td>如果后续误判多，可升级为必须与 <code>CaptureImage</code> 对齐后再判断。</td>
+            <td>逐脸识别、逐脸决策、逐脸触发</td>
+            <td>不能再压缩成一张主脸。熟人按人员去重触发，未知有效人脸按未知人脸数量触发陌生人通知；低质量脸只记录过滤原因。</td>
           </tr>
         </tbody>
       </table>
@@ -647,10 +650,63 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
       <ul>
         <li>对通过质量过滤的人脸提取 <code>normed_embedding</code>。</li>
         <li>与本地 gallery embedding 做余弦相似度比对。</li>
-        <li>超过 <code>FACE_RECHECK_SIMILARITY_THRESHOLD</code> 且明显高于第二名时，认为服务器侧命中。</li>
-        <li>如果摄像头识别为陌生人，但服务器高置信度命中员工/会员/教练，可在 <code>verify_and_override</code> 模式下纠正通知标题和入场类型。</li>
-        <li>如果摄像头识别为已知人员，但服务器比对结果冲突，首版不直接覆盖，应记录冲突并按原摄像头结果处理，避免误改身份。</li>
+        <li>超过 <code>FACE_RECHECK_SIMILARITY_THRESHOLD</code> 时，认为服务器侧高置信命中熟人；领先第二名阈值暂不作为强约束，后续出现明显 badcase 再启用。</li>
+        <li>如果摄像头识别为陌生人，但服务器高置信度命中员工/会员/教练，在 <code>verify_and_override</code> 模式下纠正通知标题、入场类型和去重身份。</li>
+        <li>如果摄像头识别为已知人员，但服务器高置信命中另一个人，在 <code>verify_and_override</code> 模式下信任 InsightFace，纠偏为服务器命中的人员。</li>
+        <li>如果 InsightFace 有效检测到人脸但未高置信命中任何熟人，该人脸按陌生人处理；这是“确认未知人脸”，不同于 <code>no_face</code>、模糊、小脸、侧脸或模型异常。</li>
       </ul>
+    </section>
+
+    <section class="panel">
+      <h2>八补充、最终确认逻辑</h2>
+      <p>最终确认逻辑遵循“陌生人召回优先”：只有 InsightFace 对有效人脸高置信命中 Gallery 时，才按熟人处理；只要有效人脸无法高置信证明是熟人，就倾向于按陌生人提醒。复核不可用不等同于确认陌生人，可以过滤主飞书，但必须留记录。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>摄像头结果</th>
+            <th>InsightFace 有效结果</th>
+            <th>最终业务动作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>熟人 A</td>
+            <td>单脸，高置信命中 A</td>
+            <td>直接通过，沿用摄像头熟人流程、去重和飞书模板。</td>
+          </tr>
+          <tr>
+            <td>熟人 A</td>
+            <td>单脸，高置信命中 B</td>
+            <td>信任 InsightFace，纠偏为 B，按 B 的熟人流程写入和通知。</td>
+          </tr>
+          <tr>
+            <td>熟人 A</td>
+            <td>单脸，有效人脸但未高置信命中熟人</td>
+            <td>按陌生人处理，避免把疑似陌生人误放成熟人。</td>
+          </tr>
+          <tr>
+            <td>陌生人</td>
+            <td>单脸，高置信命中 A</td>
+            <td>纠偏为 A，按熟人流程写入和通知，后续去重基于 A 生效。</td>
+          </tr>
+          <tr>
+            <td>陌生人</td>
+            <td>单脸，有效人脸但未高置信命中熟人</td>
+            <td>保持陌生人流程。</td>
+          </tr>
+          <tr>
+            <td>任意</td>
+            <td>多张有效脸</td>
+            <td>逐脸决策：高置信命中熟人的脸按熟人触发；未高置信命中的有效脸按陌生人逐张触发；同一人员在同一事件内去重。</td>
+          </tr>
+          <tr>
+            <td>任意</td>
+            <td><code>no_face</code> / 模糊 / 小脸 / 侧脸 / 模型异常</td>
+            <td>复核不可用。可以过滤主飞书，不写入 <code>attendance_events</code>，但必须保存处理记录和原因；不得把它当作确认陌生人。</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small">该逻辑必须插入在图片保存和 InsightFace 复核之后、<code>attendance_events</code> 写入和主飞书通知之前，否则无法正确影响通知去重。</p>
     </section>
 
     <section class="panel">
@@ -821,7 +877,7 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
         </div>
         <div class="card">
           <span class="tag warn">二次误认</span>
-          <p>相似度阈值过低可能把陌生人误认为会员/员工。应对：二次比对必须先 shadow，启用时要求最高分超过阈值且领先第二名。</p>
+          <p>相似度阈值过低可能把陌生人误认为会员/员工。应对：二次比对必须先 shadow，启用时要求最高分超过熟人阈值；领先第二名暂不作为强约束，后续出现明显 badcase 再启用。</p>
         </div>
         <div class="card">
           <span class="tag warn">模型文件缺失</span>
@@ -908,13 +964,23 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
           </tr>
           <tr>
             <td>已知人员与服务器比对冲突时如何处理</td>
-            <td>不覆盖摄像头已知人员结果。</td>
-            <td>只记录冲突，防止服务器侧误认直接改错身份。</td>
+            <td>在 <code>verify_and_override</code> 模式下信任 InsightFace。</td>
+            <td>如果 InsightFace 对有效人脸高置信命中 B，而摄像头识别为 A，则纠偏为 B。若 InsightFace 结果属于复核不可用，则不推翻摄像头结果，只记录原因。</td>
           </tr>
           <tr>
             <td>摄像头陌生人但服务器高置信命中时如何处理</td>
             <td><code>verify_and_override</code> 模式下允许纠正为会员/教练/员工。</td>
-            <td>必须满足 gallery 相似度超过阈值且领先第二名，才允许覆盖摄像头陌生人结果。</td>
+            <td>必须满足 gallery 相似度超过阈值，才允许覆盖摄像头陌生人结果。领先第二名阈值暂不强制，后续出现明显 badcase 再启用。</td>
+          </tr>
+          <tr>
+            <td>陌生人召回优先</td>
+            <td>熟人必须高置信确认；有效人脸未高置信命中熟人时，倾向按陌生人提醒。</td>
+            <td>不能把低分熟人命中当成熟人放行。多人脸中每张有效未知脸都按陌生人数量触发通知。</td>
+          </tr>
+          <tr>
+            <td>复核不可用语义</td>
+            <td><code>no_face</code>、模糊、小脸、侧脸、低检测分、图片/模型异常不等同于确认陌生人。</td>
+            <td>这些状态可以过滤主飞书和 <code>attendance_events</code>，但必须保存原始事件、处理记录、质量指标和过滤原因。</td>
           </tr>
           <tr>
             <td>是否做 RTSP 全量识别</td>
@@ -929,7 +995,7 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
           <tr>
             <td>其他默认项</td>
             <td>按本方案和 LLD 默认建议执行。</td>
-            <td>包括 CPU-only、<code>buffalo_l</code>、模型不进 Git、embedding 不进 Git、默认 fail-open、侧脸首版只 shadow 观测不强过滤。</td>
+            <td>包括 CPU-only、<code>buffalo_l</code>、模型不进 Git、embedding 不进 Git、默认 fail-open、侧脸阈值先用真实样本校准后再作为过滤条件。</td>
           </tr>
         </tbody>
       </table>

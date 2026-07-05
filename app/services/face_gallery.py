@@ -21,6 +21,7 @@ _P6S_NAMED_IMAGE_RE = re.compile(
 )
 _GALLERY_CACHE: dict[tuple[str, str, float, float], "FaceGalleryIndex"] = {}
 _GALLERY_CANDIDATE_LIMIT = 5
+_CAMERA_MATCHED_STATUSES = {"name_matched", "id_matched", "name_and_id_matched"}
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,7 @@ class GallerySearchResult:
     similarity: float
     second_similarity: float | None
     accepted: bool
+    accepted_threshold: float
     camera_identity_status: Literal[
         "not_compared",
         "name_matched",
@@ -102,6 +104,7 @@ class FaceGalleryIndex:
         embedding: Any,
         *,
         similarity_threshold: float,
+        camera_match_similarity_threshold: float,
         similarity_margin: float,
         camera_person: dict[str, Any] | None,
     ) -> GallerySearchResult | None:
@@ -124,12 +127,18 @@ class FaceGalleryIndex:
         second_similarity = (
             float(similarities[int(order[1])]) if len(order) > 1 else None
         )
+        record = self.records[best_index]
+        camera_identity_status = compare_camera_identity(record, camera_person)
+        accepted_threshold = _accepted_threshold(
+            similarity_threshold=similarity_threshold,
+            camera_match_similarity_threshold=camera_match_similarity_threshold,
+            camera_identity_status=camera_identity_status,
+        )
         margin_ok = (
             second_similarity is None
             or best_similarity - second_similarity >= similarity_margin
         )
-        accepted = best_similarity >= similarity_threshold and margin_ok
-        record = self.records[best_index]
+        accepted = best_similarity >= accepted_threshold and margin_ok
         candidates = [
             _candidate_from_record(
                 rank=rank,
@@ -150,7 +159,8 @@ class FaceGalleryIndex:
             similarity=best_similarity,
             second_similarity=second_similarity,
             accepted=accepted,
-            camera_identity_status=compare_camera_identity(record, camera_person),
+            accepted_threshold=accepted_threshold,
+            camera_identity_status=camera_identity_status,
             candidates=candidates,
         )
 
@@ -268,6 +278,17 @@ def compare_camera_identity(
     if name_matched:
         return "name_matched"
     return "identity_conflict"
+
+
+def _accepted_threshold(
+    *,
+    similarity_threshold: float,
+    camera_match_similarity_threshold: float,
+    camera_identity_status: str,
+) -> float:
+    if camera_identity_status in _CAMERA_MATCHED_STATUSES:
+        return min(similarity_threshold, camera_match_similarity_threshold)
+    return similarity_threshold
 
 
 def _normalize_rows(embeddings: Any) -> Any:
