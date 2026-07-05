@@ -576,6 +576,15 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
         <li>候选集最多展示 Gallery Top 5，只包含排名、姓名、身份类型、人员 ID、组名和相似度分数；不得展示 embedding 原始向量、图片 base64、webhook 或 secret。</li>
         <li>阈值展示包括检测分、最小人脸尺寸、模糊分、侧脸分、Gallery 相似度阈值和 Gallery 领先分差阈值。</li>
       </ul>
+      <h3>消息结构优化</h3>
+      <p>Shadow 机器人用于人工校验，应优先给出可读结论，而不是把底层字段平铺堆在一起。消息标题后第一段必须展示“本次最终判断”：最终动作、采信来源、主触发对象、额外触发数量和被过滤人脸数量。</p>
+      <ul>
+        <li>第一段为结论摘要，例如“最终判断：触发熟人通知；采信 InsightFace；主触发：小明 / 员工 / background:0；额外触发 1 个，过滤 2 张”。</li>
+        <li>第二段展示事件基础信息，只保留事件时间、发送时间、事件 ID、设备、摄像头原始结果和摄像头人员。</li>
+        <li>第三段展示 InsightFace 总览，包括状态、过滤原因、人脸数、Gallery 通过数、摄像头目标状态、冲突标记和关键阈值。</li>
+        <li>逐脸结果按卡片化文本分组展示，每张脸单独列出状态、原因、质量指标、Gallery Top1、是否通过和结果对齐。</li>
+        <li>Gallery 候选集按每个候选单独一行展示，格式固定为“#排名 姓名 / 分组 / ID / 分数”，避免多个候选挤在同一行。</li>
+      </ul>
     </section>
 
     <section class="panel">

@@ -412,18 +412,36 @@ def analyze_image_faces(image_path, image_source):
 
     <section>
       <h2>九、Shadow 飞书调整</h2>
-      <p>Shadow 飞书不再只展示一个 Gallery 命中，应展示事件级摘要和前若干张人脸明细。</p>
+      <p>Shadow 飞书不再只展示一个 Gallery 命中，应展示事件级摘要、最终确认结论和前若干张人脸明细。</p>
       <pre><code>InsightFace Shadow 对比
+【最终结论】
+最终判断：触发熟人通知
+采信来源：InsightFace
+主触发：石峰 / 会员 / background:0
+额外触发：0，过滤人脸：1
+
+【事件基础】
 事件：672 / 2026-07-04 20:33:34
 摄像头：董小双 / 会员
+
+【InsightFace 总览】
 检测人脸：2，Gallery 通过：1，冲突：是
 
-人脸 1：background:0 左侧
-  石峰 / 0.441697 / 通过
+【人脸 1】background:0
+状态：passed，原因：quality_passed
+Gallery：石峰 / 会员 / 0.441697 / 通过
+候选 #1：石峰 / 会员 / 0.441697
+候选 #2：董小双 / 会员 / 0.219165
 
-人脸 2：background:1 右侧
-  董小双 / 0.219165 / 未通过 / Top1 与摄像头一致</code></pre>
+【人脸 2】background:1
+状态：filtered，原因：side_face
+Gallery：董小双 / 会员 / 0.219165 / 未通过 / Top1 与摄像头一致</code></pre>
       <p class="small">飞书消息不能包含 embedding、base64、密钥、token 原文。图片仍只发管理员可访问链接或安全摘要链接。</p>
+      <ul>
+        <li><code>feishu.notify_face_recheck_shadow()</code> 必须接收可选 <code>final_decision</code> 摘要；调用点应在 <code>build_final_recognition_decision()</code> 后发送 shadow 消息。</li>
+        <li>如果 <code>final_decision</code> 缺失，模板可以降级为“仅复核观察”，但不能伪造采信来源。</li>
+        <li>候选集和逐脸结果必须分行展示，不再把 Top5 候选拼成一个长字符串。</li>
+      </ul>
     </section>
 
     <section>

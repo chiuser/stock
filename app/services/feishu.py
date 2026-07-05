@@ -98,6 +98,7 @@ def notify_face_recheck_shadow(
     camera_result: str,
     camera_person_summary: dict[str, Any] | None,
     recheck_result: dict[str, Any],
+    final_decision: dict[str, Any] | None = None,
     background_view_url: str | None = None,
     capture_view_url: str | None = None,
     config: FeishuConfig | None = None,
@@ -119,6 +120,7 @@ def notify_face_recheck_shadow(
             camera_result=camera_result,
             camera_person_summary=camera_person_summary,
             recheck_result=recheck_result,
+            final_decision=final_decision,
             background_view_url=background_view_url,
             capture_view_url=capture_view_url,
         ),
@@ -134,22 +136,30 @@ def build_face_recheck_shadow_post(
     camera_result: str,
     camera_person_summary: dict[str, Any] | None,
     recheck_result: dict[str, Any],
+    final_decision: dict[str, Any] | None = None,
     background_view_url: str | None = None,
     capture_view_url: str | None = None,
 ) -> dict[str, Any]:
     """Build a shadow-only InsightFace comparison post."""
 
-    selected_face = recheck_result.get("selected_face") or {}
     gallery_match = recheck_result.get("gallery_match") or {}
     faces = recheck_result.get("faces") if isinstance(recheck_result.get("faces"), list) else []
     thresholds = recheck_result.get("thresholds") or {}
     lines = [
+        _section_line("最终结论"),
+        *_final_decision_lines(
+            final_decision=final_decision,
+            camera_result=camera_result,
+            camera_person_summary=camera_person_summary,
+        ),
+        _section_line("事件基础"),
         _text_line("事件时间", event_time or "unknown"),
         _text_line("发送时间", _now_text()),
-        _text_line("设备", device_sn or "unknown"),
         _text_line("事件 ID", event_id or "unknown"),
+        _text_line("设备", device_sn or "unknown"),
         _text_line("摄像头结果", camera_result or "unknown"),
         _text_line("摄像头人员", _camera_person_text(camera_person_summary)),
+        _section_line("InsightFace 总览"),
         _text_line("InsightFace 模式", recheck_result.get("mode") or "unknown"),
         _text_line("InsightFace 状态", recheck_result.get("status") or "unknown"),
         _text_line("InsightFace 建议", recheck_result.get("decision") or "unknown"),
@@ -159,31 +169,10 @@ def build_face_recheck_shadow_post(
         _text_line("摄像头目标状态", recheck_result.get("camera_target_face_status") or "unknown"),
         _text_line("是否存在身份冲突", "是" if recheck_result.get("has_identity_conflict") else "否"),
         _text_line("是否检测到人脸", "是" if recheck_result.get("face_count", 0) else "否"),
+        _text_line("关键阈值", _threshold_summary_text(thresholds)),
     ]
-    if selected_face:
-        lines.extend(
-            [
-                _text_line("检测分数", selected_face.get("det_score", "unknown")),
-                _text_line("检测分阈值", _min_threshold_text(thresholds.get("det_score_threshold"))),
-                _text_line(
-                    "人脸尺寸",
-                    f"{selected_face.get('width', 'unknown')}x{selected_face.get('height', 'unknown')}",
-                ),
-                _text_line(
-                    "尺寸阈值",
-                    _face_size_threshold_text(
-                        thresholds.get("min_face_width"),
-                        thresholds.get("min_face_height"),
-                    ),
-                ),
-                _text_line("模糊分数", selected_face.get("blur_score", "unknown")),
-                _text_line("模糊阈值", _min_threshold_text(thresholds.get("blur_threshold"))),
-                _text_line("侧脸分数", selected_face.get("frontal_score", "unknown")),
-                _text_line("侧脸阈值", _max_threshold_text(thresholds.get("frontal_max_yaw_score"))),
-                _text_line("质量标记", ", ".join(selected_face.get("quality_flags") or []) or "无"),
-            ]
-        )
     if gallery_match:
+        lines.append(_section_line("主脸 Gallery"))
         lines.append(
             _text_line(
                 "Gallery 命中",
@@ -215,15 +204,12 @@ def build_face_recheck_shadow_post(
                 ),
                 _text_line("Gallery 是否通过", gallery_match.get("accepted", False)),
                 _text_line(
-                    "Gallery 候选集",
-                    _gallery_candidates_text(gallery_match.get("candidates") or []),
-                ),
-                _text_line(
                     "结果对齐",
                     gallery_match.get("camera_identity_status", "not_compared"),
                 ),
             ]
         )
+        lines.extend(_gallery_candidate_lines(gallery_match.get("candidates") or [], prefix="主脸候选"))
     else:
         lines.append(_text_line("Gallery 命中", "未启用"))
     lines.extend(_face_detail_lines(faces))
@@ -539,8 +525,85 @@ def _camera_person_text(person: dict[str, Any] | None) -> str:
     return " / ".join(parts) if parts else "未知"
 
 
+def _section_line(title: str) -> list[dict[str, str]]:
+    return [{"tag": "text", "text": f"【{title}】"}]
+
+
 def _text_line(label: str, value: Any) -> list[dict[str, str]]:
     return [{"tag": "text", "text": f"{label}: {value}"}]
+
+
+def _final_decision_lines(
+    *,
+    final_decision: dict[str, Any] | None,
+    camera_result: str,
+    camera_person_summary: dict[str, Any] | None,
+) -> list[list[dict[str, str]]]:
+    if not final_decision:
+        return [
+            _text_line("最终判断", "仅复核观察，未生成最终确认"),
+            _text_line("采信来源", "未介入主流程"),
+        ]
+
+    action = str(final_decision.get("action") or "unknown")
+    primary = final_decision.get("primary_trigger") if isinstance(final_decision.get("primary_trigger"), dict) else {}
+    extras = final_decision.get("extra_triggers") if isinstance(final_decision.get("extra_triggers"), list) else []
+    suppressed = final_decision.get("suppressed_faces") if isinstance(final_decision.get("suppressed_faces"), list) else []
+
+    if action == "allow_original":
+        judgement = f"维持摄像头原始流程：{camera_result or 'unknown'}"
+        trusted_source = "摄像头"
+        primary_text = _camera_person_text(camera_person_summary)
+    elif action == "suppress":
+        judgement = "过滤本次事件，不触发主通知"
+        trusted_source = "InsightFace"
+        primary_text = "无主触发"
+    elif action == "trigger":
+        judgement = _trigger_judgement(primary)
+        trusted_source = "InsightFace"
+        primary_text = _trigger_text(primary)
+    else:
+        judgement = action
+        trusted_source = "unknown"
+        primary_text = _trigger_text(primary) if primary else "unknown"
+
+    return [
+        _text_line("最终判断", judgement),
+        _text_line("采信来源", trusted_source),
+        _text_line("主触发", primary_text),
+        _text_line("额外触发", len(extras)),
+        _text_line("过滤人脸", len(suppressed)),
+        _text_line("结论原因", final_decision.get("reason") or "unknown"),
+    ]
+
+
+def _trigger_judgement(trigger: dict[str, Any]) -> str:
+    kind = str(trigger.get("kind") or "")
+    if kind == "known":
+        return "触发熟人通知"
+    if kind == "stranger":
+        return "触发陌生人通知"
+    return "触发主流程通知"
+
+
+def _trigger_text(trigger: dict[str, Any]) -> str:
+    if not trigger:
+        return "无"
+    kind = str(trigger.get("kind") or "")
+    if kind == "stranger":
+        label = "陌生人"
+    else:
+        label = str(trigger.get("name") or "未知人员").strip()
+    parts = [
+        label,
+        str(trigger.get("group_name") or trigger.get("person_type") or "").strip(),
+        str(trigger.get("person_id") or "").strip(),
+        str(trigger.get("face_key") or "").strip(),
+    ]
+    similarity = trigger.get("similarity")
+    if similarity not in (None, ""):
+        parts.append(f"相似度 {similarity}")
+    return " / ".join(part for part in parts if part)
 
 
 def _min_threshold_text(value: Any) -> str:
@@ -567,6 +630,21 @@ def _gallery_threshold_text(similarity: Any, margin: Any, camera_match_similarit
     return "；".join(parts)
 
 
+def _threshold_summary_text(thresholds: dict[str, Any]) -> str:
+    if not thresholds:
+        return "unknown"
+    parts = [
+        f"检测{_min_threshold_text(thresholds.get('det_score_threshold'))}",
+        f"尺寸{_face_size_threshold_text(thresholds.get('min_face_width'), thresholds.get('min_face_height'))}",
+        f"模糊{_min_threshold_text(thresholds.get('blur_threshold'))}",
+        f"侧脸{_max_threshold_text(thresholds.get('frontal_max_yaw_score'))}",
+    ]
+    if thresholds.get("head_pitch_min") not in (None, ""):
+        parts.append(f"低头>={thresholds.get('head_pitch_min')}")
+    parts.append(f"Gallery{_min_threshold_text(thresholds.get('similarity_threshold'))}")
+    return "；".join(parts)
+
+
 def _gallery_candidates_text(candidates: list[dict[str, Any]]) -> str:
     if not candidates:
         return "无"
@@ -583,42 +661,76 @@ def _gallery_candidates_text(candidates: list[dict[str, Any]]) -> str:
     return "; ".join(items)
 
 
+def _gallery_candidate_lines(
+    candidates: list[dict[str, Any]],
+    *,
+    prefix: str,
+) -> list[list[dict[str, str]]]:
+    if not candidates:
+        return [_text_line(prefix, "无")]
+    lines: list[list[dict[str, str]]] = []
+    for candidate in candidates[:5]:
+        name = str(candidate.get("name") or "未知").strip()
+        person_id = str(candidate.get("person_id") or candidate.get("credential_no") or "").strip()
+        group_name = str(candidate.get("group_name") or candidate.get("person_type") or "unknown").strip()
+        similarity = candidate.get("similarity", "unknown")
+        rank = candidate.get("rank", len(lines) + 1)
+        lines.append(
+            _text_line(
+                f"{prefix} #{rank}",
+                " / ".join(part for part in (name, group_name, person_id, f"相似度 {similarity}") if part),
+            )
+        )
+    if len(candidates) > 5:
+        lines.append(_text_line(prefix, f"仅展示前 5 个，另有 {len(candidates) - 5} 个未展示"))
+    return lines
+
+
 def _face_detail_lines(faces: list[Any]) -> list[list[dict[str, str]]]:
     if not faces:
         return []
     lines: list[list[dict[str, str]]] = [
+        _section_line("逐脸结果"),
         _text_line("逐脸结果数", len(faces)),
     ]
     for index, face_value in enumerate(faces[:5], start=1):
         face = face_value if isinstance(face_value, dict) else {}
         selected = face.get("selected_face") if isinstance(face.get("selected_face"), dict) else {}
         gallery = face.get("gallery_match") if isinstance(face.get("gallery_match"), dict) else {}
-        label = f"人脸 {index}"
-        identity = "未命中"
-        if gallery:
-            identity = (
-                f"{gallery.get('name') or '未知'} / "
-                f"{gallery.get('person_type') or gallery.get('group_name') or 'unknown'} / "
-                f"{gallery.get('person_id') or 'unknown'} / "
-                f"{gallery.get('similarity', 'unknown')} / "
-                f"{'通过' if gallery.get('accepted') else '未通过'} / "
-                f"{gallery.get('camera_identity_status') or 'not_compared'}"
+        label = f"人脸 {index} {face.get('face_key') or 'unknown'}"
+        lines.append(_section_line(label))
+        lines.append(_text_line("状态", f"{face.get('status') or 'unknown'} / {face.get('reason') or 'unknown'}"))
+        lines.append(
+            _text_line(
+                "质量",
+                (
+                    f"检测 {selected.get('det_score', 'unknown')}；"
+                    f"尺寸 {selected.get('width', 'unknown')}x{selected.get('height', 'unknown')}；"
+                    f"模糊 {selected.get('blur_score', 'unknown')}；"
+                    f"侧脸 {selected.get('frontal_score', 'unknown')}；"
+                    f"低头 {selected.get('head_pitch', 'unknown')}；"
+                    f"标记 {', '.join(selected.get('quality_flags') or []) or '无'}"
+                ),
             )
-        face_text = (
-            f"{face.get('face_key') or 'unknown'} · "
-            f"{face.get('status') or 'unknown'} · "
-            f"{face.get('reason') or 'unknown'} · "
-            f"检测分 {selected.get('det_score', 'unknown')} · "
-            f"{identity}"
         )
-        lines.append(_text_line(label, face_text))
         if gallery:
+            group = gallery.get("group_name") or gallery.get("person_type") or "unknown"
             lines.append(
                 _text_line(
-                    f"人脸 {index} 候选",
-                    _gallery_candidates_text(gallery.get("candidates") or []),
+                    "Gallery",
+                    (
+                        f"{gallery.get('name') or '未知'} / {group} / "
+                        f"{gallery.get('person_id') or 'unknown'} / "
+                        f"相似度 {gallery.get('similarity', 'unknown')} / "
+                        f"第二名 {gallery.get('second_similarity', '无')} / "
+                        f"{'通过' if gallery.get('accepted') else '未通过'} / "
+                        f"{gallery.get('camera_identity_status') or 'not_compared'}"
+                    ),
                 )
             )
+            lines.extend(_gallery_candidate_lines(gallery.get("candidates") or [], prefix=f"人脸 {index} 候选"))
+        else:
+            lines.append(_text_line("Gallery", "未命中/未启用"))
     if len(faces) > 5:
         lines.append(_text_line("逐脸结果", f"仅展示前 5 张，另有 {len(faces) - 5} 张未展示"))
     return lines

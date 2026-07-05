@@ -288,10 +288,36 @@ def validate_feishu_payloads() -> None:
         camera_result="stranger",
         camera_person_summary=None,
         recheck_result=_mock_recheck_result().to_dict(),
+        final_decision={
+            "mode": "verify_and_override",
+            "action": "trigger",
+            "reason": "valid_face_decision",
+            "primary_trigger": {
+                "kind": "known",
+                "face_key": "background:0",
+                "image_source": "background",
+                "face_index": 0,
+                "reason": "gallery_high_confidence_match",
+                "person_type": "staff",
+                "person_id": "3427976339944670",
+                "name": "小明",
+                "group_name": "员工",
+                "similarity": 0.91,
+            },
+            "extra_triggers": [],
+            "suppressed_faces": [],
+        },
         background_view_url="http://example.test/api/p6s/event-images/view/shadow-background-token",
         capture_view_url="http://example.test/api/p6s/event-images/view/shadow-capture-token",
     )
     assert _post_title(shadow_payload) == "InsightFace Shadow 对比"
+    shadow_text = "\n".join(_post_plain_texts(shadow_payload))
+    assert "【最终结论】" in shadow_text
+    assert "最终判断: 触发熟人通知" in shadow_text
+    assert "采信来源: InsightFace" in shadow_text
+    assert "主触发: 小明 / 员工 / 3427976339944670 / background:0 / 相似度 0.91" in shadow_text
+    assert "【InsightFace 总览】" in shadow_text
+    assert "【逐脸结果】" in shadow_text
     assert any(
         item.get("text") == "摄像头结果: stranger"
         for line in _post_lines(shadow_payload)
@@ -308,7 +334,7 @@ def validate_feishu_payloads() -> None:
         for item in line
     )
     assert any(
-        item.get("text") == "检测分阈值: >= 0.65"
+        item.get("text", "").startswith("关键阈值: 检测>= 0.65")
         for line in _post_lines(shadow_payload)
         for item in line
     )
@@ -318,7 +344,12 @@ def validate_feishu_payloads() -> None:
         for item in line
     )
     assert any(
-        item.get("text", "").startswith("Gallery 候选集: 1. 小明")
+        item.get("text", "").startswith("主脸候选 #1: 小明 / 员工 / 3427976339944670 / 相似度 0.91")
+        for line in _post_lines(shadow_payload)
+        for item in line
+    )
+    assert any(
+        item.get("text", "").startswith("人脸 1 候选 #2: 苏苏 / 会员 / 3785841386866689 / 相似度 0.42")
         for line in _post_lines(shadow_payload)
         for item in line
     )

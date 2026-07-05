@@ -252,18 +252,26 @@ def _handle_known_face(
     )
     primary_image = face_images.primary()
     representative_image = _representative_image(face_images)
-    recheck_result, recheck_shadow_result = _run_face_recheck_for_event(
+    recheck_result = _run_face_recheck_for_event(
         identity=identity,
         route_result="known",
         face_images=face_images,
         camera_person=_matched_person_summary(person),
         root=root,
-        notify=notify,
     )
     final_decision = face_recheck.build_final_recognition_decision(
         camera_result="known",
         camera_person=_matched_person_summary(person),
         recheck_result=recheck_result,
+    )
+    recheck_shadow_result = _notify_face_recheck_shadow_for_event(
+        identity=identity,
+        route_result="known",
+        face_images=face_images,
+        camera_person=_matched_person_summary(person),
+        notify=notify,
+        recheck_result=recheck_result,
+        final_decision=final_decision,
     )
     if final_decision.action != "allow_original":
         return _handle_final_recognition_decision(
@@ -398,18 +406,26 @@ def _handle_stranger(
     )
     primary_image = face_images.primary()
     representative_image = _representative_image(face_images)
-    recheck_result, recheck_shadow_result = _run_face_recheck_for_event(
+    recheck_result = _run_face_recheck_for_event(
         identity=identity,
         route_result="stranger",
         face_images=face_images,
         camera_person=None,
         root=root,
-        notify=notify,
     )
     final_decision = face_recheck.build_final_recognition_decision(
         camera_result="stranger",
         camera_person=None,
         recheck_result=recheck_result,
+    )
+    recheck_shadow_result = _notify_face_recheck_shadow_for_event(
+        identity=identity,
+        route_result="stranger",
+        face_images=face_images,
+        camera_person=None,
+        notify=notify,
+        recheck_result=recheck_result,
+        final_decision=final_decision,
     )
     if final_decision.action != "allow_original":
         return _handle_final_recognition_decision(
@@ -530,18 +546,26 @@ def _handle_parse_error(
     )
     primary_image = face_images.primary()
     representative_image = _representative_image(face_images)
-    recheck_result, recheck_shadow_result = _run_face_recheck_for_event(
+    recheck_result = _run_face_recheck_for_event(
         identity=identity,
         route_result="parse_error",
         face_images=face_images,
         camera_person=None,
         root=root,
-        notify=notify,
     )
     final_decision = face_recheck.build_final_recognition_decision(
         camera_result="parse_error",
         camera_person=None,
         recheck_result=recheck_result,
+    )
+    recheck_shadow_result = _notify_face_recheck_shadow_for_event(
+        identity=identity,
+        route_result="parse_error",
+        face_images=face_images,
+        camera_person=None,
+        notify=notify,
+        recheck_result=recheck_result,
+        final_decision=final_decision,
     )
     if final_decision.action != "allow_original":
         return _handle_final_recognition_decision(
@@ -1432,8 +1456,7 @@ def _run_face_recheck_for_event(
     face_images: SavedFaceRecoImages,
     camera_person: dict[str, Any] | None,
     root: Path | str | None,
-    notify: bool,
-) -> tuple[face_recheck.FaceRecheckResult, dict[str, Any]]:
+) -> face_recheck.FaceRecheckResult:
     primary_image = face_images.primary()
     recheck_result = face_recheck.run_face_recheck(
         face_recheck.FaceRecheckInput(
@@ -1456,10 +1479,23 @@ def _run_face_recheck_for_event(
         },
         root=root,
     )
+    return recheck_result
+
+
+def _notify_face_recheck_shadow_for_event(
+    *,
+    identity: event_store.EventIdentity,
+    route_result: str,
+    face_images: SavedFaceRecoImages,
+    camera_person: dict[str, Any] | None,
+    notify: bool,
+    recheck_result: face_recheck.FaceRecheckResult,
+    final_decision: face_recheck.FinalRecognitionDecision,
+) -> dict[str, Any]:
     if not notify:
-        return recheck_result, _notification_skipped("notify disabled")
+        return _notification_skipped("notify disabled")
     if not recheck_result.enabled or recheck_result.mode == "off":
-        return recheck_result, _notification_skipped("face recheck disabled")
+        return _notification_skipped("face recheck disabled")
     shadow_result = _safe_notify(
         feishu.notify_face_recheck_shadow,
         device_sn=identity.serial_number,
@@ -1468,10 +1504,11 @@ def _run_face_recheck_for_event(
         camera_result=route_result,
         camera_person_summary=camera_person,
         recheck_result=recheck_result.to_dict(),
+        final_decision=final_decision.to_dict(),
         background_view_url=_image_view_url(face_images.background),
         capture_view_url=_image_view_url(face_images.capture),
     )
-    return recheck_result, shadow_result
+    return shadow_result
 
 
 def _stored_image_file(image: SavedFaceRecoImage | None) -> Path | None:
