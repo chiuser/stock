@@ -1036,7 +1036,105 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
     </section>
 
     <section class="panel">
-      <h2>十八、已拍板结论</h2>
+      <h2>十八、新增人员类型：上课会员</h2>
+      <p>上课会员是“只上课但尚未注册为正式会员”的人员类型，应与会员、教练、员工同级管理。该类型进入服务器侧 InsightFace Gallery 后，可以把摄像头识别为陌生人的事件纠正为“上课会员”，从而避免把已知上课人员误报为陌生人。</p>
+      <h3>目标</h3>
+      <ul>
+        <li>新增业务展示名 <strong>上课会员</strong>，内部类型建议为 <code>class_member</code>。</li>
+        <li>Gallery 构建源新增上课会员 P6S 命名图片目录，当前本地目录为 <code>unregister_class_member</code>。</li>
+        <li>本次样本 <code>I杜全浩紫发会员#S0#T2#M2026070501.png</code> 已通过质量预检：单人脸、正脸、检测分 <code>0.848676</code>、尺寸 <code>106.8x145.725</code>、无质量过滤标记。</li>
+        <li><code>verify_and_override</code> 模式下，如果摄像头识别为陌生人但 InsightFace 高置信命中上课会员，应按上课会员触发主飞书和入场记录。</li>
+      </ul>
+
+      <h3>范围</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>模块</th>
+            <th>需要调整</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Gallery 构建</td>
+            <td>新增 <code>class_member</code> 来源目录。</td>
+            <td>按目录注入 <code>person_type=class_member</code>、<code>group_name=上课会员</code>；仍从 P6S 文件名解析姓名、性别、证件类型和 ID。</td>
+          </tr>
+          <tr>
+            <td>Gallery 匹配</td>
+            <td>扩展允许的人员类型。</td>
+            <td><code>GalleryCandidate</code>、<code>GalleryMatch</code>、manifest 校验和 Top5 展示都要支持 <code>class_member</code>。</td>
+          </tr>
+          <tr>
+            <td>最终确认逻辑</td>
+            <td>把上课会员作为熟人类型处理。</td>
+            <td>高置信命中时触发熟人通知；低分或质量不可用仍按现有陌生人召回和过滤规则执行。</td>
+          </tr>
+          <tr>
+            <td>主飞书</td>
+            <td>新增标题和身份文案。</td>
+            <td>建议标题为 <code>📚 上课会员入场提醒</code>；正文保留姓名、身份类型、时间、事件 ID 和图片链接。</td>
+          </tr>
+          <tr>
+            <td>入场记录与日报</td>
+            <td>新增人员类型统计。</td>
+            <td><code>attendance_events.person_type</code> 需要允许 <code>class_member</code>；日报建议新增 <code>class_member_entries</code>，避免混入正式会员统计。</td>
+          </tr>
+          <tr>
+            <td>监控后台</td>
+            <td>展示新类型。</td>
+            <td>列表筛选、详情身份标签、Gallery 候选集和最终结论都要展示“上课会员”。</td>
+          </tr>
+          <tr>
+            <td>本地资产</td>
+            <td>保持私有目录不进 Git。</td>
+            <td><code>unregister_class_member/</code> 或后续规范目录都必须被 <code>.gitignore</code> 忽略，只提交代码和文档，不提交人脸图片。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>不做事项</h3>
+      <ul>
+        <li>不把上课会员写入摄像头人脸库，不创建摄像头脸库分组，不修改摄像头配置。</li>
+        <li>不把上课会员归入正式会员 <code>member</code>，避免污染会员入场统计和提醒去重。</li>
+        <li>不提交真实人脸图片、Gallery embedding、manifest 或远程运行时资产。</li>
+      </ul>
+
+      <h3>数据与命名规则</h3>
+      <ul>
+        <li>图片命名继续使用 <code>I名称#S性别#T证件类型#M证件号码.jpg/png</code>。</li>
+        <li>样本姓名为 <code>杜全浩紫发会员</code>，人员 ID 为 <code>2026070501</code>。</li>
+        <li>Gallery 内部唯一键仍为 <code>person_type + person_id</code>，所以上课会员可以和正式会员使用相同 ID 空间但不会互相覆盖；实际录入时仍建议 ID 全局唯一，便于人工排查。</li>
+      </ul>
+
+      <h3>风险点</h3>
+      <ul>
+        <li>当前代码多处使用 <code>Literal["member", "coach", "staff"]</code> 和数据库 <code>check</code> 约束，新增类型必须整体扩展，不能只改 Gallery 构建脚本。</li>
+        <li>日报字段如果写死为会员、教练、员工、陌生人，新增类型后需要同步调整统计 SQL 和飞书日报文案。</li>
+        <li>上课会员和正式会员都属于“熟人”，需要沿用 2 小时去重逻辑；否则同一上课会员多次识别会重复提醒。</li>
+        <li>上课会员来自人工维护目录，命名错误或重复 ID 会直接影响 Gallery 匹配结果，构建报告必须阻断重复 <code>person_type + person_id</code>。</li>
+      </ul>
+
+      <h3>回滚方式</h3>
+      <ul>
+        <li>最快运行时回滚：从 Gallery 资产中移除上课会员记录或恢复旧版 Gallery，并重启服务。</li>
+        <li>代码回滚：回滚新增 <code>class_member</code> 支持的提交，并执行对应 Alembic downgrade 或兼容迁移。</li>
+        <li>业务降级：临时将 <code>FACE_RECHECK_MODE</code> 切回 <code>shadow</code>，只观察上课会员命中，不影响主飞书和入场记录。</li>
+      </ul>
+
+      <h3>验证方式</h3>
+      <ul>
+        <li>本地 Gallery 构建预检：确认 <code>unregister_class_member</code> 中 P6S 命名图片可解析，重复 ID 为 0，InsightFace 检测为单人脸且质量通过。</li>
+        <li>本地 fixture：覆盖摄像头陌生人但 Gallery 命中上课会员，最终决策应为熟人触发，标题应为 <code>📚 上课会员入场提醒</code>。</li>
+        <li>DB 验证：<code>attendance_events.person_type=class_member</code> 可写入，去重窗口与会员/教练/员工一致。</li>
+        <li>监控验证：识别详情、逐脸 Gallery 候选、最终结论和筛选项都能显示“上课会员”。</li>
+        <li>远程部署验证：备份旧 Gallery，上传新 Gallery 后确认 manifest 中出现 <code>person_type=class_member</code>、<code>name=杜全浩紫发会员</code>、<code>person_id=2026070501</code>。</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>十九、已拍板结论</h2>
       <table>
         <thead>
           <tr>

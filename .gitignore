@@ -18,6 +18,7 @@ staff/
 teacher_p6s_named/
 staff_p6s_named/
 styd_member_sync_runs/
+unregister_class_member/
 
 # InsightFace gallery runtime assets are private derived face embeddings.
 face-gallery/
