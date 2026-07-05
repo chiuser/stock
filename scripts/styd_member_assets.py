@@ -12,6 +12,7 @@ import base64
 import csv
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -27,7 +28,18 @@ DEFAULT_APP_BRAND_ID = os.environ.get("STYD_APP_BRAND_ID", "2155116073975893")
 DEFAULT_APP_SHOP_ID = os.environ.get("STYD_APP_SHOP_ID", "2179180977014260")
 DEFAULT_CDP_URL = os.environ.get("STYD_CDP_URL", "http://127.0.0.1:9222")
 DEFAULT_FACE_SELECTOR = "img.biz-face-upload__face, .biz-face-upload__face img"
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 REPORT_FIELDS = ["member_id", "status", "file", "bytes", "error", "url"]
+P6S_REPORT_FIELDS = [
+    "member_id",
+    "status",
+    "source_file",
+    "file",
+    "bytes",
+    "name",
+    "stale_removed",
+    "error",
+]
 MEMBER_FIELDS = [
     "page",
     "id",
@@ -89,6 +101,13 @@ def write_report(output_dir: Path, rows: list[dict[str, Any]]) -> None:
     )
 
 
+def write_p6s_report_files(csv_path: Path, json_path: Path, rows: list[dict[str, Any]]) -> None:
+    write_csv_rows(csv_path, P6S_REPORT_FIELDS, rows)
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    with json_path.open("w", encoding="utf-8") as f:
+        json.dump(rows, f, ensure_ascii=False, indent=2)
+
+
 def merge_report(output_dir: Path, new_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Merge per-run download rows into an output directory's cumulative report."""
     report_path = output_dir / "_download_report.csv"
@@ -123,6 +142,163 @@ def iter_limited(rows: list[dict[str, str]], limit: int | None) -> list[dict[str
 
 def is_nonempty_file(path: Path) -> bool:
     return path.exists() and path.is_file() and path.stat().st_size > 0
+
+
+def is_image_file(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+
+
+def default_p6s_named_dir(source_dir: Path) -> Path:
+    return source_dir.with_name(source_dir.name + "_p6s_named")
+
+
+def clean_p6s_segment(value: str, fallback: str) -> str:
+    cleaned = re.sub(r"[/\\:#\0\r\n\t]+", "", value or "").strip()
+    return cleaned or fallback
+
+
+def p6s_member_id_from_filename(path: Path) -> str:
+    stem = path.stem
+    if "#M" not in stem:
+        return ""
+    return stem.rsplit("#M", 1)[1]
+
+
+def has_p6s_named_file(output_dir: Path, member_id: str) -> bool:
+    if not output_dir.exists():
+        return False
+    return any(
+        is_nonempty_file(path) and p6s_member_id_from_filename(path) == member_id
+        for path in output_dir.iterdir()
+        if is_image_file(path)
+    )
+
+
+def locate_source_image(
+    source_dir: Path,
+    row: dict[str, str],
+    id_column: str,
+    image_column: str | None,
+) -> Path | None:
+    image_name = row.get(image_column or "", "").strip() if image_column else ""
+    if image_name:
+        candidate = source_dir / image_name
+        return candidate if is_nonempty_file(candidate) else None
+
+    member_id = row.get(id_column, "").strip()
+    for suffix in sorted(IMAGE_EXTENSIONS):
+        candidate = source_dir / f"{member_id}{suffix}"
+        if is_nonempty_file(candidate):
+            return candidate
+    for candidate in source_dir.glob(f"{member_id}.*"):
+        if is_image_file(candidate) and is_nonempty_file(candidate):
+            return candidate
+    return None
+
+
+def row_display_name(row: dict[str, str], name_columns: list[str], member_id: str) -> str:
+    for column in name_columns:
+        value = row.get(column, "").strip()
+        if value:
+            return clean_p6s_segment(value, member_id)
+    return member_id
+
+
+def build_p6s_filename(display_name: str, member_id: str, suffix: str) -> str:
+    safe_name = clean_p6s_segment(display_name, member_id)
+    safe_id = clean_p6s_segment(member_id, member_id)
+    return f"I{safe_name}#S0#T2#M{safe_id}{suffix}"
+
+
+def matching_p6s_files(output_dir: Path, member_id: str) -> list[Path]:
+    if not output_dir.exists():
+        return []
+    return [
+        path
+        for path in output_dir.iterdir()
+        if is_image_file(path) and p6s_member_id_from_filename(path) == member_id
+    ]
+
+
+def copy_p6s_named_rows(
+    rows: list[dict[str, str]],
+    source_dir: Path,
+    output_dir: Path,
+    id_column: str,
+    name_columns: list[str],
+    image_column: str | None,
+    skip_existing: bool,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    target_rows = iter_limited(rows, limit)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for index, row in enumerate(target_rows, 1):
+        member_id = row.get(id_column, "").strip()
+        try:
+            if not member_id:
+                raise StydError(f"empty {id_column}")
+            source_file = locate_source_image(source_dir, row, id_column, image_column)
+            if source_file is None:
+                raise StydError(f"source image not found in {source_dir}")
+            display_name = row_display_name(row, name_columns, member_id)
+            target_file = output_dir / build_p6s_filename(display_name, member_id, source_file.suffix)
+            stale_files = [path for path in matching_p6s_files(output_dir, member_id) if path != target_file]
+            if skip_existing and is_nonempty_file(target_file):
+                print(f"[p6s {index}/{len(target_rows)}] skip {member_id} {target_file.name}")
+                results.append(
+                    {
+                        "member_id": member_id,
+                        "status": "skipped_existing",
+                        "source_file": str(source_file),
+                        "file": target_file.name,
+                        "bytes": target_file.stat().st_size,
+                        "name": display_name,
+                        "stale_removed": "",
+                        "error": "",
+                    }
+                )
+                continue
+
+            tmp = target_file.with_suffix(target_file.suffix + ".tmp")
+            try:
+                shutil.copy2(source_file, tmp)
+                tmp.replace(target_file)
+            finally:
+                if tmp.exists():
+                    tmp.unlink()
+            stale_removed: list[str] = []
+            for stale_file in stale_files:
+                stale_file.unlink()
+                stale_removed.append(stale_file.name)
+            print(f"[p6s {index}/{len(target_rows)}] ok {member_id} {target_file.name}")
+            results.append(
+                {
+                    "member_id": member_id,
+                    "status": "ok",
+                    "source_file": str(source_file),
+                    "file": target_file.name,
+                    "bytes": target_file.stat().st_size,
+                    "name": display_name,
+                    "stale_removed": ",".join(stale_removed),
+                    "error": "",
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - keep per-row failures in the report.
+            print(f"[p6s {index}/{len(target_rows)}] failed {member_id}: {exc}")
+            results.append(
+                {
+                    "member_id": member_id,
+                    "status": "failed",
+                    "source_file": "",
+                    "file": "",
+                    "bytes": 0,
+                    "name": "",
+                    "stale_removed": "",
+                    "error": str(exc)[:500],
+                }
+            )
+    return results
 
 
 def looks_like_image(data: bytes, content_type: str) -> bool:
@@ -758,9 +934,37 @@ def command_download_detail_faces(args: argparse.Namespace) -> None:
         client.close()
 
     write_report(output_dir, results)
+    p6s_results: list[dict[str, Any]] = []
+    if args.p6s_named_dir and not args.skip_p6s_named:
+        p6s_output_dir = resolve_path(args.p6s_named_dir)
+        p6s_results = copy_p6s_named_rows(
+            target_rows,
+            output_dir,
+            p6s_output_dir,
+            args.id_column,
+            [args.p6s_name_column, *args.p6s_fallback_name_column],
+            image_column=None,
+            skip_existing=args.skip_existing,
+        )
+        write_p6s_report_files(
+            p6s_output_dir / "_p6s_named_report.csv",
+            p6s_output_dir / "_p6s_named_report.json",
+            p6s_results,
+        )
     ok = sum(1 for result in results if result["status"] in {"ok", "skipped_existing"})
     failed = sum(1 for result in results if result["status"] == "failed")
-    print(json.dumps({"total": len(results), "ok_or_existing": ok, "failed": failed}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "total": len(results),
+                "ok_or_existing": ok,
+                "failed": failed,
+                "p6s_named_total": len(p6s_results),
+                "p6s_named_failed": sum(1 for result in p6s_results if result["status"] == "failed"),
+            },
+            ensure_ascii=False,
+        )
+    )
 
 
 def command_download_avatar_full(args: argparse.Namespace) -> None:
@@ -819,9 +1023,37 @@ def command_download_avatar_full(args: argparse.Namespace) -> None:
             )
 
     write_report(output_dir, results)
+    p6s_results: list[dict[str, Any]] = []
+    if args.p6s_named_dir and not args.skip_p6s_named:
+        p6s_output_dir = resolve_path(args.p6s_named_dir)
+        p6s_results = copy_p6s_named_rows(
+            target_rows,
+            output_dir,
+            p6s_output_dir,
+            args.id_column,
+            [args.p6s_name_column, *args.p6s_fallback_name_column],
+            image_column=None,
+            skip_existing=args.skip_existing,
+        )
+        write_p6s_report_files(
+            p6s_output_dir / "_p6s_named_report.csv",
+            p6s_output_dir / "_p6s_named_report.json",
+            p6s_results,
+        )
     ok = sum(1 for result in results if result["status"] in {"ok", "skipped_existing"})
     failed = sum(1 for result in results if result["status"] == "failed")
-    print(json.dumps({"total": len(results), "ok_or_existing": ok, "failed": failed}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "total": len(results),
+                "ok_or_existing": ok,
+                "failed": failed,
+                "p6s_named_total": len(p6s_results),
+                "p6s_named_failed": sum(1 for result in p6s_results if result["status"] == "failed"),
+            },
+            ensure_ascii=False,
+        )
+    )
 
 
 def command_filter_by_faces(args: argparse.Namespace) -> None:
@@ -920,6 +1152,16 @@ def command_incremental_sync(args: argparse.Namespace) -> None:
     master_csv = resolve_path(args.master_csv)
     faces_dir = resolve_path(args.faces_dir)
     full_faces_dir = resolve_path(args.full_faces_dir)
+    faces_p6s_named_dir = (
+        resolve_path(args.faces_p6s_named_dir)
+        if args.faces_p6s_named_dir
+        else default_p6s_named_dir(faces_dir)
+    )
+    full_faces_p6s_named_dir = (
+        resolve_path(args.full_faces_p6s_named_dir)
+        if args.full_faces_p6s_named_dir
+        else default_p6s_named_dir(full_faces_dir)
+    )
     run_dir = (
         resolve_path(args.run_dir)
         if args.run_dir
@@ -988,9 +1230,37 @@ def command_incremental_sync(args: argparse.Namespace) -> None:
             )
         detail_rows = [current_by_id[member_id] for member_id in current_by_id if member_id in detail_target_ids]
         full_rows = [current_by_id[member_id] for member_id in current_by_id if member_id in full_target_ids]
+        detail_p6s_target_ids = set(detail_target_ids)
+        full_p6s_target_ids = set(full_target_ids)
+        if args.refresh_existing:
+            detail_p6s_target_ids.update(current_by_id)
+            full_p6s_target_ids.update(current_by_id)
+        if args.fill_missing_existing:
+            detail_p6s_target_ids.update(
+                member_id
+                for member_id in current_by_id
+                if not has_p6s_named_file(faces_p6s_named_dir, member_id)
+            )
+            full_p6s_target_ids.update(
+                member_id
+                for member_id in current_by_id
+                if not has_p6s_named_file(full_faces_p6s_named_dir, member_id)
+            )
+        detail_p6s_rows = [
+            current_by_id[member_id]
+            for member_id in current_by_id
+            if member_id in detail_p6s_target_ids
+        ]
+        full_p6s_rows = [
+            current_by_id[member_id]
+            for member_id in current_by_id
+            if member_id in full_p6s_target_ids
+        ]
 
         detail_results: list[dict[str, Any]] = []
         full_results: list[dict[str, Any]] = []
+        detail_p6s_results: list[dict[str, Any]] = []
+        full_p6s_results: list[dict[str, Any]] = []
         if args.dry_run:
             print("dry-run: skip image downloads and master CSV write")
         else:
@@ -1028,6 +1298,37 @@ def command_incremental_sync(args: argparse.Namespace) -> None:
                     full_results,
                 )
                 merge_report(full_faces_dir, full_results)
+            if not args.skip_p6s_named:
+                if not args.skip_detail_faces:
+                    detail_p6s_results = copy_p6s_named_rows(
+                        detail_p6s_rows,
+                        faces_dir,
+                        faces_p6s_named_dir,
+                        args.id_column,
+                        [args.p6s_name_column, *args.p6s_fallback_name_column],
+                        image_column=None,
+                        skip_existing=not args.refresh_existing,
+                    )
+                    write_p6s_report_files(
+                        run_dir / "p6s_detail_faces_report.csv",
+                        run_dir / "p6s_detail_faces_report.json",
+                        detail_p6s_results,
+                    )
+                if not args.skip_avatar_full:
+                    full_p6s_results = copy_p6s_named_rows(
+                        full_p6s_rows,
+                        full_faces_dir,
+                        full_faces_p6s_named_dir,
+                        args.id_column,
+                        [args.p6s_name_column, *args.p6s_fallback_name_column],
+                        image_column=None,
+                        skip_existing=not args.refresh_existing,
+                    )
+                    write_p6s_report_files(
+                        run_dir / "p6s_avatar_full_report.csv",
+                        run_dir / "p6s_avatar_full_report.json",
+                        full_p6s_results,
+                    )
 
         summary = {
             "list_total": list_meta.get("total"),
@@ -1046,9 +1347,21 @@ def command_incremental_sync(args: argparse.Namespace) -> None:
                 1 for result in full_results if result["status"] in {"ok", "skipped_existing"}
             ),
             "avatar_full_failed": sum(1 for result in full_results if result["status"] == "failed"),
+            "p6s_detail_face_targets": len(detail_p6s_rows),
+            "p6s_avatar_full_targets": len(full_p6s_rows),
+            "p6s_detail_face_ok_or_existing": sum(
+                1 for result in detail_p6s_results if result["status"] in {"ok", "skipped_existing"}
+            ),
+            "p6s_detail_face_failed": sum(1 for result in detail_p6s_results if result["status"] == "failed"),
+            "p6s_avatar_full_ok_or_existing": sum(
+                1 for result in full_p6s_results if result["status"] in {"ok", "skipped_existing"}
+            ),
+            "p6s_avatar_full_failed": sum(1 for result in full_p6s_results if result["status"] == "failed"),
             "master_csv": str(master_csv),
             "faces_dir": str(faces_dir),
             "full_faces_dir": str(full_faces_dir),
+            "faces_p6s_named_dir": str(faces_p6s_named_dir),
+            "full_faces_p6s_named_dir": str(full_faces_p6s_named_dir),
             "run_dir": str(run_dir),
             "dry_run": args.dry_run,
         }
@@ -1110,6 +1423,16 @@ def command_refresh_member(args: argparse.Namespace) -> None:
     master_csv = resolve_path(args.master_csv)
     faces_dir = resolve_path(args.faces_dir)
     full_faces_dir = resolve_path(args.full_faces_dir)
+    faces_p6s_named_dir = (
+        resolve_path(args.faces_p6s_named_dir)
+        if args.faces_p6s_named_dir
+        else default_p6s_named_dir(faces_dir)
+    )
+    full_faces_p6s_named_dir = (
+        resolve_path(args.full_faces_p6s_named_dir)
+        if args.full_faces_p6s_named_dir
+        else default_p6s_named_dir(full_faces_dir)
+    )
     safe_member_id = "".join(ch for ch in member_id if ch.isalnum() or ch in {"-", "_"}) or "member"
     run_dir = (
         resolve_path(args.run_dir)
@@ -1145,6 +1468,8 @@ def command_refresh_member(args: argparse.Namespace) -> None:
 
         detail_results: list[dict[str, Any]] = []
         full_results: list[dict[str, Any]] = []
+        detail_p6s_results: list[dict[str, Any]] = []
+        full_p6s_results: list[dict[str, Any]] = []
         if args.dry_run:
             print("dry-run: skip image downloads and master CSV write")
         else:
@@ -1182,6 +1507,37 @@ def command_refresh_member(args: argparse.Namespace) -> None:
                     detail_results,
                 )
                 merge_report(faces_dir, detail_results)
+            if not args.skip_p6s_named:
+                if not args.skip_avatar_full:
+                    full_p6s_results = copy_p6s_named_rows(
+                        [member_row],
+                        full_faces_dir,
+                        full_faces_p6s_named_dir,
+                        args.id_column,
+                        [args.p6s_name_column, *args.p6s_fallback_name_column],
+                        image_column=None,
+                        skip_existing=not args.force,
+                    )
+                    write_p6s_report_files(
+                        run_dir / "p6s_avatar_full_report.csv",
+                        run_dir / "p6s_avatar_full_report.json",
+                        full_p6s_results,
+                    )
+                if not args.skip_detail_faces:
+                    detail_p6s_results = copy_p6s_named_rows(
+                        [member_row],
+                        faces_dir,
+                        faces_p6s_named_dir,
+                        args.id_column,
+                        [args.p6s_name_column, *args.p6s_fallback_name_column],
+                        image_column=None,
+                        skip_existing=not args.force,
+                    )
+                    write_p6s_report_files(
+                        run_dir / "p6s_detail_faces_report.csv",
+                        run_dir / "p6s_detail_faces_report.json",
+                        detail_p6s_results,
+                    )
 
         summary = {
             "member_id": member_id,
@@ -1193,11 +1549,15 @@ def command_refresh_member(args: argparse.Namespace) -> None:
             "avatar_full_url_present": bool(member_row.get(args.url_column, "")),
             "detail_face_status": detail_results[0]["status"] if detail_results else "skipped",
             "avatar_full_status": full_results[0]["status"] if full_results else "skipped",
+            "p6s_detail_face_status": detail_p6s_results[0]["status"] if detail_p6s_results else "skipped",
+            "p6s_avatar_full_status": full_p6s_results[0]["status"] if full_p6s_results else "skipped",
             "force": args.force,
             "dry_run": args.dry_run,
             "master_csv": str(master_csv),
             "faces_dir": str(faces_dir),
             "full_faces_dir": str(full_faces_dir),
+            "faces_p6s_named_dir": str(faces_p6s_named_dir),
+            "full_faces_p6s_named_dir": str(full_faces_p6s_named_dir),
             "run_dir": str(run_dir),
         }
         with (run_dir / "refresh_summary.json").open("w", encoding="utf-8") as f:
@@ -1205,6 +1565,52 @@ def command_refresh_member(args: argparse.Namespace) -> None:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
     finally:
         client.close()
+
+
+def command_build_p6s_named(args: argparse.Namespace) -> None:
+    source_csv = resolve_path(args.source_csv)
+    source_dir = resolve_path(args.source_dir)
+    output_dir = resolve_path(args.output_dir)
+    fieldnames, rows = read_csv_rows(source_csv)
+    validate_columns(fieldnames, [args.id_column, args.name_column], source_csv)
+    if args.image_column:
+        validate_columns(fieldnames, [args.image_column], source_csv)
+
+    target_rows = rows
+    if args.id:
+        target_ids = set(args.id)
+        target_rows = [row for row in rows if row.get(args.id_column, "").strip() in target_ids]
+
+    results = copy_p6s_named_rows(
+        target_rows,
+        source_dir,
+        output_dir,
+        args.id_column,
+        [args.name_column, *args.fallback_name_column],
+        image_column=args.image_column,
+        skip_existing=args.skip_existing,
+        limit=args.limit,
+    )
+    write_p6s_report_files(
+        output_dir / "_p6s_named_report.csv",
+        output_dir / "_p6s_named_report.json",
+        results,
+    )
+    print(
+        json.dumps(
+            {
+                "source_csv": str(source_csv),
+                "source_dir": str(source_dir),
+                "output_dir": str(output_dir),
+                "rows": len(results),
+                "ok_or_existing": sum(
+                    1 for result in results if result["status"] in {"ok", "skipped_existing"}
+                ),
+                "failed": sum(1 for result in results if result["status"] == "failed"),
+            },
+            ensure_ascii=False,
+        )
+    )
 
 
 def describe_csv(path: Path) -> dict[str, Any]:
@@ -1224,7 +1630,7 @@ def describe_csv(path: Path) -> dict[str, Any]:
 
 
 def describe_dir(path: Path) -> dict[str, Any]:
-    jpgs = [item for item in path.glob("*.jpg") if item.is_file()]
+    images = [item for item in path.iterdir() if is_image_file(item)]
     report_path = path / "_download_report.csv"
     report: dict[str, Any] | None = None
     if report_path.exists():
@@ -1238,16 +1644,17 @@ def describe_dir(path: Path) -> dict[str, Any]:
             "unique_ids": len({row.get("member_id") for row in rows if row.get("member_id")}),
             "statuses": statuses,
         }
-    sizes = [item.stat().st_size for item in jpgs]
+    sizes = [item.stat().st_size for item in images]
     return {
         "path": str(path),
-        "jpg_files": len(jpgs),
-        "unique_ids": len({item.stem for item in jpgs}),
+        "jpg_files": len([item for item in images if item.suffix.lower() == ".jpg"]),
+        "image_files": len(images),
+        "unique_ids": len({p6s_member_id_from_filename(item) or item.stem for item in images}),
         "total_bytes": sum(sizes),
         "min_bytes": min(sizes, default=0),
         "max_bytes": max(sizes, default=0),
         "report": report,
-        "extra_reports": [item.name for item in sorted(path.glob("_download_report*"))],
+        "extra_reports": [item.name for item in sorted(path.glob("*report*"))],
     }
 
 
@@ -1259,8 +1666,12 @@ def command_summary(args: argparse.Namespace) -> None:
     if not dir_paths:
         dir_paths = [
             PROJECT_ROOT / "styd_member_faces",
+            PROJECT_ROOT / "styd_member_faces_p6s_named",
             PROJECT_ROOT / "styd_member_faces_new_20260630_178",
             PROJECT_ROOT / "styd_member_faces_full",
+            PROJECT_ROOT / "styd_member_faces_full_p6s_named",
+            PROJECT_ROOT / "teacher_p6s_named",
+            PROJECT_ROOT / "staff_p6s_named",
         ]
     payload = {
         "csv": [describe_csv(path) for path in csv_paths if path.exists()],
@@ -1292,6 +1703,10 @@ def parse_args() -> argparse.Namespace:
     detail.add_argument("--f-seed", type=int, default=12000)
     detail.add_argument("--limit", type=int)
     detail.add_argument("--skip-existing", action=argparse.BooleanOptionalAction, default=True)
+    detail.add_argument("--p6s-named-dir", help="Optional P6S named-copy output directory.")
+    detail.add_argument("--p6s-name-column", default="nickname")
+    detail.add_argument("--p6s-fallback-name-column", action="append", default=["member_name"])
+    detail.add_argument("--skip-p6s-named", action="store_true")
     detail.set_defaults(func=command_download_detail_faces)
 
     full = subparsers.add_parser(
@@ -1304,6 +1719,10 @@ def parse_args() -> argparse.Namespace:
     full.add_argument("--url-column", default="avatar_full_url")
     full.add_argument("--limit", type=int)
     full.add_argument("--skip-existing", action=argparse.BooleanOptionalAction, default=True)
+    full.add_argument("--p6s-named-dir", help="Optional P6S named-copy output directory.")
+    full.add_argument("--p6s-name-column", default="nickname")
+    full.add_argument("--p6s-fallback-name-column", action="append", default=["member_name"])
+    full.add_argument("--skip-p6s-named", action="store_true")
     full.set_defaults(func=command_download_avatar_full)
 
     filter_cmd = subparsers.add_parser(
@@ -1337,9 +1756,13 @@ def parse_args() -> argparse.Namespace:
     sync.add_argument("--master-csv", required=True, help="Canonical member CSV to append new ids into.")
     sync.add_argument("--faces-dir", default="styd_member_faces", help="Directory for detail-page face images.")
     sync.add_argument("--full-faces-dir", default="styd_member_faces_full", help="Directory for avatar_full_url images.")
+    sync.add_argument("--faces-p6s-named-dir", help="Directory for P6S-named detail-page face copies.")
+    sync.add_argument("--full-faces-p6s-named-dir", help="Directory for P6S-named avatar_full copies.")
     sync.add_argument("--run-dir", help="Directory for this run's current_members/new_members/reports.")
     sync.add_argument("--id-column", default="id")
     sync.add_argument("--url-column", default="avatar_full_url")
+    sync.add_argument("--p6s-name-column", default="nickname")
+    sync.add_argument("--p6s-fallback-name-column", action="append", default=["member_name"])
     sync.add_argument("--app-brand-id", default=DEFAULT_APP_BRAND_ID)
     sync.add_argument("--app-shop-id", default=DEFAULT_APP_SHOP_ID)
     sync.add_argument("--detail-url-template", help="Optional Python format template with {id}, {app_brand_id}, {app_shop_id}, {f}.")
@@ -1364,6 +1787,7 @@ def parse_args() -> argparse.Namespace:
     )
     sync.add_argument("--skip-detail-faces", action="store_true", help="Do not download detail-page face images.")
     sync.add_argument("--skip-avatar-full", action="store_true", help="Do not download avatar_full_url images.")
+    sync.add_argument("--skip-p6s-named", action="store_true", help="Do not generate P6S-named image copies.")
     sync.add_argument("--dry-run", action="store_true", help="Scrape and diff only; do not write master CSV or download images.")
     sync.set_defaults(func=command_incremental_sync)
 
@@ -1376,9 +1800,13 @@ def parse_args() -> argparse.Namespace:
     refresh.add_argument("--master-csv", required=True, help="Canonical member CSV to update or append into.")
     refresh.add_argument("--faces-dir", default="styd_member_faces", help="Directory for detail-page face images.")
     refresh.add_argument("--full-faces-dir", default="styd_member_faces_full", help="Directory for avatar_full_url images.")
+    refresh.add_argument("--faces-p6s-named-dir", help="Directory for P6S-named detail-page face copies.")
+    refresh.add_argument("--full-faces-p6s-named-dir", help="Directory for P6S-named avatar_full copies.")
     refresh.add_argument("--run-dir", help="Directory for this refresh run's row snapshot and reports.")
     refresh.add_argument("--id-column", default="id")
     refresh.add_argument("--url-column", default="avatar_full_url")
+    refresh.add_argument("--p6s-name-column", default="nickname")
+    refresh.add_argument("--p6s-fallback-name-column", action="append", default=["member_name"])
     refresh.add_argument("--app-brand-id", default=DEFAULT_APP_BRAND_ID)
     refresh.add_argument("--app-shop-id", default=DEFAULT_APP_SHOP_ID)
     refresh.add_argument("--detail-url-template", help="Optional Python format template with {id}, {app_brand_id}, {app_shop_id}, {f}.")
@@ -1398,8 +1826,25 @@ def parse_args() -> argparse.Namespace:
     )
     refresh.add_argument("--skip-detail-faces", action="store_true", help="Do not download the detail-page face image.")
     refresh.add_argument("--skip-avatar-full", action="store_true", help="Do not download the avatar_full_url image.")
+    refresh.add_argument("--skip-p6s-named", action="store_true", help="Do not generate P6S-named image copies.")
     refresh.add_argument("--dry-run", action="store_true", help="Find and diff only; do not write master CSV or download images.")
     refresh.set_defaults(func=command_refresh_member)
+
+    p6s = subparsers.add_parser(
+        "build-p6s-named",
+        help="Build P6S-named image copies from a CSV and a source image directory.",
+    )
+    p6s.add_argument("--source-csv", required=True)
+    p6s.add_argument("--source-dir", required=True)
+    p6s.add_argument("--output-dir", required=True)
+    p6s.add_argument("--id-column", default="id")
+    p6s.add_argument("--name-column", default="nickname")
+    p6s.add_argument("--fallback-name-column", action="append", default=[])
+    p6s.add_argument("--image-column", help="Optional CSV column containing source image filenames.")
+    p6s.add_argument("--id", action="append", help="Only build selected ID; may be repeated.")
+    p6s.add_argument("--limit", type=int)
+    p6s.add_argument("--skip-existing", action=argparse.BooleanOptionalAction, default=False)
+    p6s.set_defaults(func=command_build_p6s_named)
 
     summary = subparsers.add_parser("summary", help="Summarize STYD CSV files and image directories.")
     summary.add_argument("--csv", action="append", default=[], help="CSV path; may be repeated.")

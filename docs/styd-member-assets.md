@@ -201,3 +201,125 @@ the filename stem as `姓名` so no staged face file silently disappears.
 
 The `teacher/`, `staff/`, `teacher.csv`, and `staff.csv` paths contain local
 private face assets and derived personnel data. Keep them ignored by git.
+
+## 11. P6S named image copies
+
+### Technical plan
+
+Goal: every newly added or refreshed person should have both the original
+image file and a P6S-importable named copy. For members this applies to the
+small detail image and the `avatar_full_url` image. For coaches and staff this
+applies to their local staged image directories.
+
+Scope:
+
+- keep the existing source-of-truth files unchanged, such as
+  `styd_member_faces/<id>.jpg`, `styd_member_faces_full/<id>.jpg`,
+  `teacher/<id>_<name>.<ext>`, and `staff/<id>_<name>.<ext>`;
+- generate named copies under sibling `*_p6s_named` directories;
+- use the same member CSV row that drives downloads so the display name and ID
+  stay aligned with the source image;
+- update run reports so a partial run can be audited.
+
+Impact:
+
+- `incremental-sync` and `refresh-member` generate member P6S named copies by
+  default after the relevant source image exists;
+- standalone regeneration is available for members, coaches, or staff when a
+  local directory needs to be rebuilt;
+- generated P6S files remain ignored by git through the existing
+  `styd_member_faces*/`, `teacher_p6s_named/`, and `staff_p6s_named/` rules.
+
+Risks:
+
+- if a name changes, the old P6S-named copy can become stale;
+- if a name contains path separators or `#`, it can break the P6S filename
+  structure;
+- if an image download fails, the named copy should not be created from an
+  empty or missing source file.
+
+Rollback:
+
+- source CSVs and source image files are not modified by P6S copy generation;
+- remove the affected file in the `*_p6s_named` directory and rerun the command;
+- use the run directory reports and `master_before.csv` for member CSV rollback
+  when a refresh or incremental sync also changed the master CSV.
+
+Verification:
+
+- confirm the source image exists and is non-empty;
+- confirm the named target exists and matches the source byte size;
+- confirm the target filename matches `I<name>#S0#T2#M<id>.<ext>`;
+- run `python scripts/styd_member_assets.py summary` and inspect the relevant
+  source and named directories.
+
+### LLD
+
+Filename contract:
+
+```text
+I<display-name>#S0#T2#M<stable-id>.<source-extension>
+```
+
+The `I` prefix, `#S0#T2` segment, and `#M` ID marker are fixed. The display
+name comes from the CSV row. For members prefer `nickname`, then
+`member_name`, then `id`. For coaches and staff use the `姓名` column. The
+source extension is preserved, so `.jpg`, `.jpeg`, and `.png` remain distinct.
+
+Module boundaries:
+
+- source image download remains handled by `download-detail-faces`,
+  `download-avatar-full`, `incremental-sync`, and `refresh-member`;
+- P6S named-copy generation is a local filesystem operation that copies an
+  already downloaded source image;
+- CSV parsing and report writing reuse the existing helper functions in
+  `scripts/styd_member_assets.py`.
+
+Interfaces:
+
+- `incremental-sync` accepts optional `--faces-p6s-named-dir`,
+  `--full-faces-p6s-named-dir`, and `--skip-p6s-named` arguments;
+- `refresh-member` accepts the same arguments and overwrites the target named
+  copies when `--force` is enabled;
+- `build-p6s-named` rebuilds a named directory from any CSV and source image
+  directory, with configurable ID, name, and image filename columns.
+
+Data flow:
+
+1. scrape or read the CSV row;
+2. ensure the source image exists in the relevant source directory;
+3. build the P6S filename from the CSV name and stable ID;
+4. copy the image into the `*_p6s_named` directory;
+5. remove stale named copies for the same ID when the display name changed;
+6. write per-run P6S named-copy reports.
+
+Exception handling:
+
+- missing ID, missing name, or missing source image is recorded as a failed row
+  instead of silently producing an invalid file;
+- stale copies are only removed after the new target file has been written;
+- dry runs never create or remove P6S named files.
+
+Deployment and usage:
+
+```bash
+python scripts/styd_member_assets.py build-p6s-named \
+  --source-csv styd_members_20260703_existing_faces_245.csv \
+  --source-dir styd_member_faces_full \
+  --output-dir styd_member_faces_full_p6s_named \
+  --id-column id \
+  --name-column nickname \
+  --fallback-name-column member_name
+```
+
+For coaches or staff:
+
+```bash
+python scripts/styd_member_assets.py build-p6s-named \
+  --source-csv teacher.csv \
+  --source-dir teacher \
+  --output-dir teacher_p6s_named \
+  --id-column ID \
+  --name-column 姓名 \
+  --image-column 人脸图片名称
+```
