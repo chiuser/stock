@@ -787,6 +787,76 @@ async def validate_final_decision_flow(request_meta: RequestMeta) -> None:
     face_rows = recognition_monitor.build_event_face_rows(record)
     assert face_rows[0]["business_action"] == "known_trigger"
 
+    soft_quality_same_person = _result_for_faces(
+        [
+            _known_face(
+                name="小明",
+                person_id="3427976339944670",
+                person_type="staff",
+                group_id="4dcafc2c9fbd4d1fa267ccbf145c8861",
+                group_name="员工",
+                camera_identity_status="name_and_id_matched",
+                status="filtered",
+                quality_flags=[
+                    "multiple_faces",
+                    "face_too_small",
+                    "face_near_border",
+                    "low_identity_confidence",
+                ],
+                width=36.8,
+                height=45.7,
+                similarity=0.305,
+            )
+        ]
+    )
+    handled, record = await run_case(known_payload, soft_quality_same_person)
+    assert handled.result == "known"
+    primary = record["final_recognition_decision"]["primary_trigger"]
+    assert primary["name"] == "小明"
+    assert primary["reason"] == "camera_insightface_same_person_rescue"
+    face_rows = recognition_monitor.build_event_face_rows(record)
+    assert face_rows[0]["business_action"] == "known_trigger"
+
+    for hard_flag in ["side_face", "blurred", "low_det_score", "head_pitch_bad"]:
+        hard_quality_same_person = _result_for_faces(
+            [
+                _known_face(
+                    name="小明",
+                    person_id="3427976339944670",
+                    person_type="staff",
+                    group_id="4dcafc2c9fbd4d1fa267ccbf145c8861",
+                    group_name="员工",
+                    camera_identity_status="name_and_id_matched",
+                    status="filtered",
+                    quality_flags=["face_too_small", hard_flag],
+                    width=36.8,
+                    height=45.7,
+                    similarity=0.305,
+                )
+            ]
+        )
+        handled, record = await run_case(known_payload, hard_quality_same_person)
+        assert handled.result == "filtered"
+        assert record["final_recognition_decision"]["action"] == "suppress"
+        assert hard_flag in record["final_recognition_decision"]["suppressed_faces"][0]["reason"]
+
+    known_event_low_quality_unknown = _result_for_faces(
+        [
+            _unknown_face(
+                face_index=0,
+                quality_flags=["face_near_border", "low_identity_confidence"],
+                border_margin_ratio=0.01,
+            )
+        ]
+    )
+    handled, record = await run_case(known_payload, known_event_low_quality_unknown)
+    assert handled.result == "filtered"
+    assert record["final_recognition_decision"]["action"] == "suppress"
+    assert (
+        record["final_recognition_decision"]["suppressed_faces"][0]["reason"]
+        == "low_quality_unknown:face_near_border"
+    )
+
     conflict_person = _result_for_faces(
         [
             _known_face(

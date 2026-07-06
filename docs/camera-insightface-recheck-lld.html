@@ -345,7 +345,7 @@
           <tr>
             <td><code>_handle_known_face()</code></td>
             <td>保存图片后立即构建 known 到场草稿并发主飞书。</td>
-            <td>保存图片后调用 <code>run_face_recheck()</code>。<code>shadow</code> 不改变原逻辑；<code>filter</code> 可停止写库/主通知；<code>verify_and_override</code> 仅按规则覆盖陌生人。</td>
+            <td>保存图片后调用 <code>run_face_recheck()</code>。<code>shadow</code> 不改变原逻辑；<code>filter</code> 可停止写库/主通知；<code>verify_and_override</code> 按最终确认决策触发熟人、陌生人或抑制，包括摄像头 known 冲突纠偏和同人确认放行。</td>
           </tr>
           <tr>
             <td><code>_handle_stranger()</code></td>
@@ -396,6 +396,16 @@
             <td>复核不可用语义</td>
             <td>不等同于确认陌生人</td>
             <td><code>no_face</code>、模糊、小脸、侧脸、低检测分、图片读取失败、模型异常都属于不可确认状态。可过滤主飞书和 <code>attendance_events</code>，但必须写入处理记录和监控表。</td>
+          </tr>
+          <tr>
+            <td>摄像头与 InsightFace 同人确认</td>
+            <td>可放行熟人入场</td>
+            <td>摄像头 known 且 Gallery 命中同一人、相似度达到同人阈值时，<code>face_too_small</code>、<code>face_near_border</code>、<code>multiple_faces</code>、<code>low_identity_confidence</code> 只作为质量观测，不阻断熟人 trigger。该规则不用于未知人脸，也不把低质量未知脸升级为陌生人；<code>side_face</code>、<code>blurred</code>、<code>low_det_score</code>、<code>head_pitch_bad</code> 仍作为硬阻断。</td>
+          </tr>
+          <tr>
+            <td>同人确认阈值与开关</td>
+            <td>沿用现有同人阈值，不新增开关</td>
+            <td>同人确认继续使用 <code>FACE_RECHECK_CAMERA_MATCH_SIMILARITY_THRESHOLD=0.30</code>，不额外增加 buffer；<code>low_identity_confidence</code> 不阻断同人确认；不新增环境变量，作为 <code>verify_and_override</code> 固定规则实现。</td>
           </tr>
           <tr>
             <td>Gallery 构建失败</td>
@@ -940,8 +950,8 @@ def build_final_recognition_decision(result, camera_result, camera_person):
             <td><code>face_too_small</code></td>
             <td>人脸框宽或高低于配置。</td>
             <td>记录并发 shadow。</td>
-            <td>抑制。</td>
-            <td>抑制。</td>
+            <td>默认抑制；若满足摄像头与 InsightFace 同人确认放行条件，则只记录不阻断。</td>
+            <td>默认抑制；若满足摄像头与 InsightFace 同人确认放行条件，则只记录不阻断。</td>
           </tr>
           <tr>
             <td><code>blurred</code></td>
@@ -968,7 +978,7 @@ def build_final_recognition_decision(result, camera_result, camera_person):
             <td><code>face_near_border</code></td>
             <td>人脸框过于靠近图片边缘，疑似半张脸、边缘裁切或快速经过。</td>
             <td>记录边距、bbox 和 shadow。</td>
-            <td>若未高置信命中熟人，则降级为低质量未知；若已高置信命中熟人，可继续按熟人触发。</td>
+            <td>若未高置信命中熟人，则降级为低质量未知；若已高置信命中熟人，或满足摄像头与 InsightFace 同人确认放行条件，可继续按熟人触发。</td>
             <td>同 filter；不得把贴边未命中的人脸当作确认陌生人。</td>
           </tr>
           <tr>
@@ -982,15 +992,15 @@ def build_final_recognition_decision(result, camera_result, camera_person):
             <td><code>low_identity_confidence</code></td>
             <td>Gallery Top1 分数低，且 Top1/Top2 分差小，说明身份候选不稳定。</td>
             <td>记录 Top1、Top2、分差和 shadow。</td>
-            <td>不单独过滤清晰陌生人；与 <code>face_near_border</code> 或 <code>motion_blur</code> 组合时，辅助解释低质量未知。</td>
-            <td>同 filter；低身份置信度不能把陌生人改成熟人，也不能单独覆盖摄像头。</td>
+            <td>不单独过滤清晰陌生人；与 <code>face_near_border</code> 或 <code>motion_blur</code> 组合时，辅助解释低质量未知；若满足摄像头与 InsightFace 同人确认放行条件，则只记录不阻断。</td>
+            <td>同 filter；低身份置信度不能把陌生人改成熟人，也不能单独覆盖摄像头，但不阻断双识别同人的熟人触发。</td>
           </tr>
           <tr>
             <td><code>multiple_faces</code></td>
             <td>背景图中检测到多张脸。</td>
             <td>记录每张脸的质量、bbox、TopN 和建议动作。</td>
             <td>不因多人脸整体抑制；逐脸判断，低质量脸抑制，有效未知脸触发陌生人。</td>
-            <td>逐脸判断；熟人高置信命中按熟人触发，有效未知脸按陌生人触发。</td>
+            <td>逐脸判断；熟人高置信命中或双识别同人确认按熟人触发，有效未知脸按陌生人触发。</td>
           </tr>
         </tbody>
       </table>
@@ -1172,9 +1182,48 @@ def build_final_recognition_decision(result, camera_result, camera_person):
         <li>摄像头事件里如果返回人员 ID 或证件号，则同时与 Gallery 的 <code>person_id</code> / <code>credential_no</code> 比对。</li>
         <li>当摄像头已识别为 known，且 Gallery Top1 与摄像头姓名或 ID 对齐时，accepted 相似度阈值使用 <code>FACE_RECHECK_CAMERA_MATCH_SIMILARITY_THRESHOLD</code>，当前用于 shadow 调参默认值为 <code>0.30</code>。</li>
         <li>当摄像头已识别为 known，但 Gallery Top1 是另一个人时，如果 Top5 中存在摄像头同人候选，且同人候选分数达到同人阈值、与 Top1 分差不超过 <code>FACE_RECHECK_CAMERA_MATCH_GAP_THRESHOLD</code>，则返回摄像头同人候选作为本次 <code>GalleryMatch</code>。候选列表仍保留原 Top5，便于 shadow 和监控后台解释。</li>
+        <li>当摄像头已识别为 known，且 <code>BackgroundImage</code> 中某张 <code>scene_face</code> 的 Gallery 命中与摄像头姓名或 ID 对齐、相似度达到同人阈值时，应按“摄像头与 InsightFace 同人确认”放行。此时 <code>face_too_small</code>、<code>face_near_border</code>、<code>multiple_faces</code>、<code>low_identity_confidence</code> 是观测信号，不再阻断该熟人触发。</li>
         <li>姓名一致但 ID 缺失时，shadow 消息标记为 <code>name_matched</code>；姓名或 ID 冲突时标记为 <code>identity_conflict</code>。进入 <code>verify_and_override</code> 后，冲突不再只记录，而是以高置信 Gallery 命中结果纠偏。</li>
         <li>目录角色决定 Gallery 身份类型：会员、员工、教练；不从文件名或摄像头返回字段反推角色。</li>
       </ul>
+      <h3>摄像头与 InsightFace 同人确认放行</h3>
+      <p>事件 <code>1309</code> 暴露出一个需要单独处理的边界：摄像头已经识别为熟人，InsightFace Gallery 也命中同一个熟人，但该人脸同时带有小脸、贴边、多人脸等质量 flag。由于两套识别系统指向同一人，该结果应优先视为强同人证据，而不是普通低质量未知。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>条件</th>
+            <th>要求</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>摄像头结果</td>
+            <td><code>camera_result=known</code> 且可解析出 <code>camera_person</code>。</td>
+            <td>该规则只保护摄像头已识别到的熟人，不用于摄像头陌生人。</td>
+          </tr>
+          <tr>
+            <td>InsightFace 结果</td>
+            <td>Gallery 命中人员与摄像头人员姓名或 ID 一致，且 <code>similarity &gt;= FACE_RECHECK_CAMERA_MATCH_SIMILARITY_THRESHOLD</code>。</td>
+            <td>当前线上同人阈值为 <code>0.30</code>；是否继续保持该阈值由配置控制。</td>
+          </tr>
+          <tr>
+            <td>图片来源</td>
+            <td>优先覆盖 <code>source_role=scene_face</code>；<code>camera_target_fallback</code> 可沿用；<code>camera_target_crop</code> 仍只作为辅助证据，不新增独立人员。</td>
+            <td>修复重点是 Background 场景脸，不改变 CaptureImage 不是独立人员的语义。</td>
+          </tr>
+          <tr>
+            <td>软质量 flag</td>
+            <td><code>face_too_small</code>、<code>face_near_border</code>、<code>multiple_faces</code>、<code>low_identity_confidence</code>。</td>
+            <td>这些 flag 继续写入记录和监控后台，但不再阻断同人熟人 trigger。</td>
+          </tr>
+          <tr>
+            <td>硬质量 flag</td>
+            <td><code>side_face</code>、<code>blurred</code>、<code>low_det_score</code>、<code>head_pitch_bad</code> 仍阻断。</td>
+            <td>避免侧脸、糊脸、头顶也被摄像头结果强行放行。</td>
+          </tr>
+        </tbody>
+      </table>
     </section>
 
     <section class="panel">
@@ -1193,6 +1242,11 @@ def build_final_recognition_decision(result, camera_result, camera_person):
             <td><code>IF-K(A)</code></td>
             <td>InsightFace 检测到质量合格的有效人脸，并且 Gallery 高置信命中熟人 A。</td>
             <td>可以按熟人 A 触发。</td>
+          </tr>
+          <tr>
+            <td><code>C-K(A) + IF-K-SAME(A)</code></td>
+            <td>摄像头识别熟人 A，InsightFace Gallery 也命中同一人 A，且达到同人阈值；即使存在小脸、贴边、多人脸、低身份置信度等软质量 flag，也视为同人确认。</td>
+            <td>可以按熟人 A 触发；软质量 flag 写入记录但不阻断。</td>
           </tr>
           <tr>
             <td><code>IF-U</code></td>
@@ -1996,6 +2050,50 @@ PY'</code></pre>
         <li>扩展 shadow 消息，在不改变主业务结果的前提下展示 Gallery 命中和 <code>name_matched</code> / <code>identity_conflict</code> 等对齐结论。</li>
         <li>本地验证通过后，再由用户确认是否部署到远程 shadow 环境。</li>
       </ol>
+      <h3>摄像头与 InsightFace 同人确认放行开发步骤</h3>
+      <ol>
+        <li>在 <code>app/services/face_recheck.py</code> 增加同人确认 helper，例如 <code>_is_camera_same_person_match(face, camera_person, settings)</code>，统一判断摄像头人员与 Gallery 命中姓名或 ID 是否一致、相似度是否达到 <code>FACE_RECHECK_CAMERA_MATCH_SIMILARITY_THRESHOLD</code>。</li>
+        <li>在质量门控判断中拆分软阻断和硬阻断：软阻断包括 <code>face_too_small</code>、<code>face_near_border</code>、<code>multiple_faces</code>、<code>low_identity_confidence</code>；硬阻断默认包括 <code>side_face</code>、<code>blurred</code>、<code>low_det_score</code>、<code>head_pitch_bad</code>。</li>
+        <li>调整 <code>_face_unavailable()</code> 或最终确认前置判断：如果 <code>source_role=scene_face</code> 且满足同人确认 helper，软阻断不再让该脸进入 <code>IF-NA</code>，而是允许生成 <code>known</code> trigger。</li>
+        <li>保留 <code>camera_target_crop</code> 的辅助证据语义：Capture 裁剪图即使同人命中，也只能纠偏或支持目标脸判断，不新增独立人员；背景无有效脸时的 <code>camera_target_fallback</code> 可按既有兜底规则触发。</li>
+        <li>在 <code>FinalRecognitionTrigger.reason</code> 或 <code>metadata</code> 中记录 <code>camera_insightface_same_person_rescue</code>，并保留原始 <code>quality_flags</code>，让监控后台能解释“为什么有小脸/贴边但仍放行”。</li>
+        <li>同步 <code>recognition_monitor.build_event_face_rows()</code> 的 <code>business_action</code> 映射：这类脸应落为 <code>known_trigger</code>，不再写 <code>suppressed</code>；<code>suppress_reason</code> 为空或改为说明性 <code>quality_flags_observed_only</code>。</li>
+        <li>扩展 <code>scripts/validate_p6s_event_flow.py</code>：新增事件 <code>1309</code> 类 fixture，模拟摄像头 known 柴犬、Background 命中同人、带 <code>face_too_small</code> + <code>face_near_border</code> + <code>multiple_faces</code>，断言最终触发熟人而不是 suppress。</li>
+        <li>补充反例 fixture：摄像头 known 但 Gallery 未命中同人时，低质量未知仍被过滤；摄像头陌生人且低质量未知仍不触发；同人确认但包含 <code>side_face</code>、<code>blurred</code>、<code>low_det_score</code> 或 <code>head_pitch_bad</code> 时仍被硬阻断。</li>
+        <li>本地验证命令：<code>python3 -m py_compile app/services/face_recheck.py scripts/validate_p6s_event_flow.py</code>、<code>python3 scripts/validate_p6s_event_flow.py</code>；部署后重放事件 <code>1309</code>，确认最终决策为柴犬熟人触发。</li>
+      </ol>
+      <h3>本次已拍板执行项</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>事项</th>
+            <th>已确认结论</th>
+            <th>实现要求</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>同人确认放行时，硬质量 flag 是否仍阻断</td>
+            <td>仍阻断 <code>side_face</code>、<code>blurred</code>、<code>low_det_score</code>、<code>head_pitch_bad</code>。</td>
+            <td>同人确认只放行软质量 flag；硬质量 flag 继续进入 suppress，不触发主飞书和 <code>attendance_events</code>。</td>
+          </tr>
+          <tr>
+            <td>是否要求同人命中高于 <code>0.30</code> 之外再加额外 buffer</td>
+            <td>不加。</td>
+            <td>沿用 <code>FACE_RECHECK_CAMERA_MATCH_SIMILARITY_THRESHOLD=0.30</code>；如果后续出现同人误放行，再单独加 buffer 或候选分差约束。</td>
+          </tr>
+          <tr>
+            <td><code>low_identity_confidence</code> 是否阻断同人确认</td>
+            <td>不阻断。</td>
+            <td>如果摄像头与 Gallery 同时指向同一人，<code>low_identity_confidence</code> 只记录为观测信息，不阻断熟人触发。</td>
+          </tr>
+          <tr>
+            <td>是否新增环境变量开关控制该规则</td>
+            <td>不新增。</td>
+            <td>直接作为 <code>verify_and_override</code> 的固定规则；如需回滚，可切回 <code>shadow</code> 或回滚本次提交。</td>
+          </tr>
+        </tbody>
+      </table>
     </section>
   </main>
 </body>

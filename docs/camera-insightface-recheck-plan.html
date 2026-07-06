@@ -1003,6 +1003,11 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
             <td>避免 <code>837</code> 这种正确 Capture 小脸被尺寸阈值一刀切过滤。</td>
           </tr>
           <tr>
+            <td>Background 场景脸同人确认放行</td>
+            <td>当摄像头为 known，<code>BackgroundImage</code> 中某张 <code>scene_face</code> 的 Gallery 命中与摄像头姓名或 ID 一致，且相似度达到 <code>FACE_RECHECK_CAMERA_MATCH_SIMILARITY_THRESHOLD</code> 时，将该脸按熟人放行。<code>face_too_small</code>、<code>face_near_border</code>、<code>multiple_faces</code>、<code>low_identity_confidence</code> 只保留为质量观测，不再阻断同人入场。</td>
+            <td>避免 <code>1309</code> 这种摄像头和 InsightFace 都识别为同一人，却因小脸、贴边或多人脸被 suppress，最终没有会员提醒。</td>
+          </tr>
+          <tr>
             <td>额外陌生脸门控</td>
             <td>当摄像头已识别 known 且同一事件已找到摄像头目标脸时，其他未命中 Gallery 的额外人脸必须满足更高的陌生人触发尺寸阈值，才按陌生人通知。</td>
             <td>减少目标熟人旁边的小脸、弱脸被误报为陌生人；真正清晰的大陌生脸仍会触发。</td>
@@ -1011,9 +1016,9 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
       </table>
       <ul>
         <li><strong>范围：</strong>只修改服务器侧 InsightFace Gallery 匹配和最终确认逻辑，不修改摄像头配置、摄像头脸库、飞书模板、数据库 schema 或监控 UI。</li>
-        <li><strong>风险：</strong>同人候选保护依赖摄像头姓名/ID 的正确性，只在 Top5 分差很小时生效；额外陌生脸门控可能降低已知人员同框小陌生脸的提醒概率，但符合“低质小脸先不误报”的当前调参目标。</li>
+        <li><strong>风险：</strong>同人候选保护依赖摄像头姓名/ID 的正确性，只在 Top5 分差很小时生效；同人确认放行也依赖摄像头 known 结果本身可信，因此只能用于摄像头和 Gallery 指向同一人的场景，不能用于低质量未知脸；额外陌生脸门控可能降低已知人员同框小陌生脸的提醒概率，但符合“低质小脸先不误报”的当前调参目标。</li>
         <li><strong>回滚：</strong>最快可将 <code>FACE_RECHECK_MODE</code> 切回 <code>shadow</code> 或 <code>FACE_RECHECK_ENABLED=false</code>；代码层面可回滚本次提交。</li>
-        <li><strong>验证：</strong>本地 fixture 覆盖 Top1/Top2 极近同人保护、Capture 小图同人救援、已知人员场景额外小陌生脸抑制、侧脸/模糊仍过滤；部署后重点复查事件 <code>837</code>、<code>838</code> 同类行为。</li>
+        <li><strong>验证：</strong>本地 fixture 覆盖 Top1/Top2 极近同人保护、Capture 小图同人救援、Background 同人确认放行、已知人员场景额外小陌生脸抑制、侧脸/模糊仍过滤；部署后重点复查事件 <code>837</code>、<code>838</code>、<code>1309</code> 同类行为。</li>
       </ul>
     </section>
 
@@ -1183,6 +1188,11 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
             <td>已知人员与服务器比对冲突时如何处理</td>
             <td>在 <code>verify_and_override</code> 模式下信任 InsightFace。</td>
             <td>如果 InsightFace 对有效人脸高置信命中 B，而摄像头识别为 A，则纠偏为 B。若 InsightFace 结果属于复核不可用，则不推翻摄像头结果，只记录原因。</td>
+          </tr>
+          <tr>
+            <td>摄像头与 InsightFace 同人确认但存在软质量标记时如何处理</td>
+            <td>放行。</td>
+            <td>当摄像头 known 且 Gallery 命中同一人，并达到同人阈值时，<code>face_too_small</code>、<code>face_near_border</code>、<code>multiple_faces</code>、<code>low_identity_confidence</code> 只作为观测记录，不阻断熟人入场。<code>side_face</code>、<code>blurred</code>、<code>low_det_score</code>、<code>head_pitch_bad</code> 仍作为硬阻断。</td>
           </tr>
           <tr>
             <td>摄像头陌生人但服务器高置信命中时如何处理</td>

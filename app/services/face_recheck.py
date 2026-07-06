@@ -29,6 +29,18 @@ _BLOCKING_QUALITY_FLAGS = {
     "side_face",
     "head_pitch_bad",
 }
+_SAME_PERSON_SOFT_QUALITY_FLAGS = {
+    "face_too_small",
+    "face_near_border",
+    "multiple_faces",
+    "low_identity_confidence",
+}
+_SAME_PERSON_HARD_QUALITY_FLAGS = {
+    "low_det_score",
+    "blurred",
+    "side_face",
+    "head_pitch_bad",
+}
 
 
 class FaceRecheckMode(str, Enum):
@@ -860,11 +872,25 @@ def _append_face_decision(
     if not _face_business_trigger_eligible(face):
         suppressed.append(_suppressed_face(face, reason="capture_supporting_evidence_only"))
         return
+    same_person_rescued = _scene_same_person_rescued(
+        face,
+        recheck_result.thresholds,
+        camera_person,
+    )
     if _face_unavailable(face, recheck_result, camera_person):
         suppressed.append(_suppressed_face(face))
         return
-    if _gallery_accepted(face.gallery_match):
-        triggers.append(_known_trigger(face))
+    if _gallery_accepted(face.gallery_match) or same_person_rescued:
+        triggers.append(
+            _known_trigger(
+                face,
+                reason=(
+                    "camera_insightface_same_person_rescue"
+                    if same_person_rescued
+                    else "gallery_high_confidence_match"
+                ),
+            )
+        )
         return
     if face.selected_face is None:
         suppressed.append(_suppressed_face(face))
@@ -971,7 +997,43 @@ def _face_unavailable(
         return True
     if face.status == "passed":
         return False
+    if _scene_same_person_rescued(face, recheck_result.thresholds, camera_person):
+        return False
     return not _camera_match_rescued(face, recheck_result.thresholds, camera_person)
+
+
+def _scene_same_person_rescued(
+    face: FaceRecheckFaceResult,
+    thresholds: FaceRecheckThresholds | None,
+    camera_person: dict[str, Any] | None,
+) -> bool:
+    if (
+        thresholds is None
+        or camera_person is None
+        or face.selected_face is None
+        or _face_source_role(face) != "scene_face"
+    ):
+        return False
+    if not _camera_same_person_confirmed(face, thresholds):
+        return False
+    flags = set(face.selected_face.quality_flags)
+    if not flags:
+        return False
+    if flags.intersection(_SAME_PERSON_HARD_QUALITY_FLAGS):
+        return False
+    return flags.issubset(_SAME_PERSON_SOFT_QUALITY_FLAGS)
+
+
+def _camera_same_person_confirmed(
+    face: FaceRecheckFaceResult,
+    thresholds: FaceRecheckThresholds,
+) -> bool:
+    match = face.gallery_match
+    return (
+        _gallery_identity_matched(match)
+        and match is not None
+        and match.similarity >= thresholds.camera_match_similarity_threshold
+    )
 
 
 def _camera_match_rescued(
