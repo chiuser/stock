@@ -797,13 +797,13 @@ Attendance DB + Event Records + Feishu Notification</code></pre>
           </tr>
           <tr>
             <td><code>FACE_RECHECK_MIN_FACE_WIDTH</code></td>
-            <td><code>80</code></td>
-            <td>最小人脸宽度。</td>
+            <td><code>30</code></td>
+            <td>最小人脸宽度。线上观察到 <code>face_too_small</code> 过滤偏严格后，下调到 <code>30x40</code>，降低正面小脸被误过滤的概率。</td>
           </tr>
           <tr>
             <td><code>FACE_RECHECK_MIN_FACE_HEIGHT</code></td>
-            <td><code>80</code></td>
-            <td>最小人脸高度。</td>
+            <td><code>40</code></td>
+            <td>最小人脸高度。与宽度阈值配套使用，当前运行阈值为 <code>30x40</code>。</td>
           </tr>
           <tr>
             <td><code>FACE_RECHECK_BLUR_THRESHOLD</code></td>

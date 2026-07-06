@@ -547,15 +547,15 @@
           </tr>
           <tr>
             <td><code>FACE_RECHECK_MIN_FACE_WIDTH</code></td>
-            <td><code>80</code></td>
+            <td><code>30</code></td>
             <td><code>FaceQualityGate</code></td>
-            <td>最低人脸框宽度，单位像素。</td>
+            <td>最低人脸框宽度，单位像素。线上观察到 <code>face_too_small</code> 过滤偏严格后，下调到 <code>30x40</code>，降低正面小脸误过滤。</td>
           </tr>
           <tr>
             <td><code>FACE_RECHECK_MIN_FACE_HEIGHT</code></td>
-            <td><code>80</code></td>
+            <td><code>40</code></td>
             <td><code>FaceQualityGate</code></td>
-            <td>最低人脸框高度，单位像素。</td>
+            <td>最低人脸框高度，单位像素。与宽度阈值配套使用，当前运行阈值为 <code>30x40</code>。</td>
           </tr>
           <tr>
             <td><code>FACE_RECHECK_BLUR_THRESHOLD</code></td>
